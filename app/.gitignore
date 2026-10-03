@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Skia's CanvasKit for the web preview (copied by `npm run web`)
+public/canvaskit.wasm
