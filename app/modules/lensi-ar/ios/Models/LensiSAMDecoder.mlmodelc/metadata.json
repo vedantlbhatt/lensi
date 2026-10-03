@@ -1,0 +1,126 @@
+[
+  {
+    "shortDescription" : "SAM prompt encoder + mask decoder (SamOnnxModel without mask input or upscaling), 5 fixed prompt slots.",
+    "metadataOutputVersion" : "3.0",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 4 × 256 × 256)",
+        "shortDescription" : "[1,4,256,256] low-res mask logits over the 1024 canvas; 0 single-mask, 1-3 multimask",
+        "shape" : "[1, 4, 256, 256]",
+        "name" : "masks",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 4)",
+        "shortDescription" : "[1,4] predicted IoU per mask",
+        "shape" : "[1, 4]",
+        "name" : "scores",
+        "type" : "MultiArray"
+      }
+    ],
+    "version" : "mobile_sam@f706ad9c4eb7",
+    "modelParameters" : [
+
+    ],
+    "author" : "Lensi; MobileSAM by Chaoning Zhang et al. (Apache-2.0), SAM by Meta (Apache-2.0)",
+    "specificationVersion" : 8,
+    "storagePrecision" : "Float16",
+    "license" : "Apache-2.0",
+    "mlProgramOperationTypeHistogram" : {
+      "Ios17.cos" : 1,
+      "Ios17.equal" : 9,
+      "Ios17.notEqual" : 1,
+      "Ios17.reshape" : 33,
+      "Ios16.softmax" : 7,
+      "Ios16.reduceMean" : 2,
+      "Ios17.matmul" : 15,
+      "Ios17.sin" : 1,
+      "Ios17.transpose" : 30,
+      "Ios17.expandDims" : 1,
+      "Ios17.convTranspose" : 2,
+      "Ios17.add" : 29,
+      "Ios16.reduceMax" : 1,
+      "Ios17.sliceByIndex" : 6,
+      "Ios17.layerNorm" : 9,
+      "Ios17.batchNorm" : 1,
+      "Ios17.clip" : 1,
+      "Ios17.sub" : 5,
+      "Ios16.relu" : 12,
+      "Ios17.cast" : 15,
+      "Ios17.pow" : 1,
+      "Ios17.linear" : 49,
+      "Ios17.concat" : 3,
+      "Ios17.sqrt" : 1,
+      "Ios17.realDiv" : 1,
+      "Ios16.gelu" : 2,
+      "Stack" : 1,
+      "Ios17.mul" : 19
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "stateSchema" : [
+
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "14.0",
+      "tvOS" : "17.0",
+      "visionOS" : "1.0",
+      "watchOS" : "10.0",
+      "iOS" : "17.0",
+      "macCatalyst" : "17.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 256 × 64 × 64)",
+        "shortDescription" : "LensiSAMEncoder output [1,256,64,64]",
+        "shape" : "[1, 256, 64, 64]",
+        "name" : "image_embeddings",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 5 × 2)",
+        "shortDescription" : "[1,5,2] x,y in 1024-input pixels (point * resized size)",
+        "shape" : "[1, 5, 2]",
+        "name" : "point_coords",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 5)",
+        "shortDescription" : "[1,5] 1 fg, 0 bg, 2 box top-left, 3 box bottom-right, -1 padding (put padding last)",
+        "shape" : "[1, 5]",
+        "name" : "point_labels",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source" : "torch==2.7.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript",
+      "mobile_sam_commit" : "f706ad9c4eb7f219c00d9050e46328518ffb65d2",
+      "com.github.apple.coremltools.conversion_date" : "2026-10-03",
+      "pad_mask" : "1",
+      "num_points" : "5",
+      "image_size" : "1024"
+    },
+    "generatedClassName" : "LensiSAMDecoder",
+    "method" : "predict"
+  }
+]
