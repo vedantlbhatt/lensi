@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Lensi",
+    "slug": "lensi",
+    "scheme": "lensi",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.vedantbhatt.lensi",
+      "appleTeamId": "A4YA8NU8Y8",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Lensi uses the camera to recognize and annotate what you point at.",
+        "UIRequiredDeviceCapabilities": [
+          "arkit"
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true,
+          "NSAllowsArbitraryLoads": true
+        },
+        "NSLocalNetworkUsageDescription": "Lensi talks to your development server on the local network."
+      }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
+          }
+        }
+      ],
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
