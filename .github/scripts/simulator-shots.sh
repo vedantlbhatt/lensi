@@ -8,9 +8,12 @@
 # may ask "Open in Lensi?", which nothing here can tap.
 set -uo pipefail
 APP="$1"
-OUT="$2"
 BUNDLE=com.vedantbhatt.lensi
-mkdir -p "$OUT"
+mkdir -p "$2"
+# Absolute: the app's stdout/stderr files are opened by the launched process
+# inside the Simulator, where a relative path lands on a read-only volume and
+# the launch itself fails ("Read-only file system").
+OUT=$(cd "$2" && pwd)
 START=$(date "+%Y-%m-%d %H:%M:%S")
 
 RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"]]; print(r[-1]["identifier"])')
