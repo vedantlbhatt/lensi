@@ -27,3 +27,6 @@ export const LensiARView = requireNativeView<LensiARViewProps>('LensiAR');
 
 /** Web preview hook; the real recogniser hears the real question. */
 export function setDemoQuestion(_q: string) {}
+
+/** Web preview hook (scripted hands-free turns); a no-op on a device. */
+export function setDemoTalk(_lines: string[]) {}

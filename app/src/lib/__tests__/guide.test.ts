@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { currentStep, guideReducer, initialGuide, parseCommand, shortLabel, type GuideAction, type GuideState } from '../guide';
+import { currentStep, guideReducer, heard, initialGuide, parseCommand, shortLabel, type GuideAction, type GuideState } from '../guide';
 
 const run = (actions: GuideAction[], from: GuideState = initialGuide) => actions.reduce(guideReducer, from);
 
@@ -100,4 +100,22 @@ test('short phrases are commands; anything else is a question', () => {
   assert.deepEqual(parseCommand("What's next to the valve?"), { type: 'ask', text: "What's next to the valve?" });
   assert.deepEqual(parseCommand('How tight should the slip nut be?'), { type: 'ask', text: 'How tight should the slip nut be?' });
   assert.equal(parseCommand('   '), null);
+});
+
+test('hands free, room talk is let go; commands, questions and "Lensi, …" count', () => {
+  // Tapped to talk: everything is for the app.
+  assert.deepEqual(heard('the cap is off', false), { type: 'ask', text: 'the cap is off' });
+  // Hands free: the same words could be anyone in the room.
+  assert.equal(heard('the cap is off', true), null);
+  assert.equal(heard('yeah I told him about it yesterday', true), null);
+  assert.equal(heard('what', true), null);
+  assert.deepEqual(heard('next', true), { type: 'next' });
+  assert.deepEqual(heard('Okay, done.', true), { type: 'next' });
+  assert.deepEqual(heard('Which tyre is it?', true), { type: 'ask', text: 'Which tyre is it?' });
+  assert.deepEqual(heard('how tight does this go', true), { type: 'ask', text: 'how tight does this go' });
+  assert.deepEqual(heard("it won't come loose", true), { type: 'ask', text: "it won't come loose" });
+  // Said to Lensi by name: always for the app, and the name isn't part of it.
+  assert.deepEqual(heard('Lensi, the cap is off', true), { type: 'ask', text: 'the cap is off' });
+  assert.deepEqual(heard('Hey Lensi next', true), { type: 'next' });
+  assert.equal(heard('Lensi', true), null);
 });

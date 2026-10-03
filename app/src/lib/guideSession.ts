@@ -3,7 +3,7 @@ import { useCallback, useEffect, useReducer, useRef, type RefObject } from 'reac
 import { LensiAR, type GuideChangeEvent, type GuideFrame } from '../../modules/lensi-ar/src';
 import type { CameraHandle } from '../components/camera/CameraSurface';
 import { pickEngine, visionEngine } from './engines';
-import { currentStep, guideReducer, initialGuide, parseCommand, type GuideState } from './guide';
+import { currentStep, guideReducer, initialGuide, parseCommand, type GuideCommand, type GuideState } from './guide';
 import { hush, say } from './narrate';
 import { anchorFor, buildRegions, type AnalysisLike } from './regions';
 import { getSettings } from './settings';
@@ -187,11 +187,14 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     [capture, runBrain, speak, start],
   );
 
+  // Moving on means nothing until there's a plan, and must not cancel the one being made.
   const next = useCallback(() => {
+    if (latest.current.status === 'idle' || latest.current.status === 'planning') return;
     cancelWork();
     dispatch({ type: 'next' });
   }, [cancelWork]);
   const back = useCallback(() => {
+    if (latest.current.status === 'idle' || latest.current.status === 'planning') return;
     cancelWork();
     dispatch({ type: 'back' });
   }, [cancelWork]);
@@ -208,10 +211,10 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     dispatch({ type: 'reset' });
   }, [camera, cancelWork]);
 
-  /** Whatever was said or typed: a command, a question, or a new job. */
+  /** Whatever was said or typed (or already read as a command): a command, a question, or a new job. */
   const handle = useCallback(
-    (text: string) => {
-      const cmd = parseCommand(text);
+    (input: string | GuideCommand) => {
+      const cmd = typeof input === 'string' ? parseCommand(input) : input;
       if (!cmd) return;
       const s = latest.current;
       if (cmd.type === 'ask') {

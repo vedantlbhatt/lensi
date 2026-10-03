@@ -29,10 +29,25 @@ const timers = new Map<string, ReturnType<typeof setTimeout>[]>();
 let demoQuestion = 'How do I use this?';
 let speechTimer: ReturnType<typeof setInterval> | null = null;
 let heard = '';
+/** Hands-free films: what is said on later turns, after the scene's question. */
+let talk: string[] | null = null;
+let questionHeard = false;
 
 /** The fake recogniser "hears" the current scene's question, a word at a time. */
 export function setDemoQuestion(q: string) {
   demoQuestion = q;
+}
+
+/**
+ * Script the turns after the question (a hands-free film): each time the mic
+ * opens it waits a moment, then says the next line; once they run out it
+ * hears nothing. A line is only used up once its first word is heard, so a
+ * mic that closes early (the app started talking) hears it next time.
+ * `"4:check"` waits 4 s of quiet before saying it (2.4 s otherwise).
+ */
+export function setDemoTalk(lines: string[]) {
+  talk = lines.map((l) => l.trim()).filter(Boolean);
+  questionHeard = false;
 }
 
 const box = (b: [number, number, number, number]): NBox => ({ x: b[0], y: b[1], w: b[2], h: b[3] });
@@ -170,7 +185,8 @@ export const LensiAR = {
         at(300, { kind: 'callout', label: near.label, mark: m.mark });
       } else {
         // Point at the part the question names, or at the two that matter most.
-        const q = req.question.toLowerCase();
+        // (A guide question carries the step it was asked on; that isn't what it names.)
+        const q = req.question.split(' (They are on this step:')[0].toLowerCase();
         const named = sc.callouts.find((c) => c.label.toLowerCase().split(/[\s-]+/).some((w) => w.length > 3 && q.includes(w)));
         at(0, { kind: 'answer', text: named ? `That's the ${named.label.toLowerCase()}.` : sc.summary });
         at(380, { kind: 'answer', text: sc.facts[0] });
@@ -201,13 +217,26 @@ export const LensiAR = {
     return true;
   },
   async speechStart() {
-    const words = demoQuestion.split(' ');
-    let i = 0;
-    heard = '';
     if (speechTimer) clearInterval(speechTimer);
+    heard = '';
+    const scripted = talk !== null && questionHeard;
+    const raw = scripted ? (talk?.[0] ?? '') : demoQuestion;
+    const timed = /^(\d+(?:\.\d+)?):(.*)$/.exec(raw);
+    const line = (timed ? timed[2] : raw).trim();
+    const words = line ? line.split(' ') : [];
+    // A scripted turn starts after a beat of quiet, like someone finishing a turn of the wrench.
+    const quietUntil = Date.now() + (scripted ? (timed ? Number(timed[1]) * 1000 : 2400) : 0);
+    let i = 0;
     speechTimer = setInterval(() => {
-      if (i < words.length) heard = words.slice(0, ++i).join(' ');
-      const e: SpeechEvent = { transcript: heard, isFinal: false, level: 0.35 + Math.random() * 0.5 };
+      const talking = Date.now() >= quietUntil && i < words.length;
+      if (talking) {
+        if (i === 0) {
+          if (scripted) talk?.shift();
+          else questionHeard = true;
+        }
+        heard = words.slice(0, ++i).join(' ');
+      }
+      const e: SpeechEvent = { transcript: heard, isFinal: false, level: talking ? 0.35 + Math.random() * 0.5 : 0.03 + Math.random() * 0.05 };
       listeners.onSpeech.forEach((fn) => fn(e));
     }, 230);
   },

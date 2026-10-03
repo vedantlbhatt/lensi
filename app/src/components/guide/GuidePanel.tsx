@@ -24,6 +24,7 @@ export function GuidePanel({
   watching,
   pen,
   listening,
+  handsFree,
   transcript,
   level,
   onMic,
@@ -40,6 +41,8 @@ export function GuidePanel({
   watching: boolean;
   pen: string;
   listening: boolean;
+  /** The mic keeps opening by itself between the app's lines. */
+  handsFree: boolean;
   transcript: string;
   level: SharedValue<number>;
   onMic: () => void;
@@ -61,10 +64,12 @@ export function GuidePanel({
   const working = state.status === 'planning';
   const finished = state.status === 'finished';
   const busy = state.status === 'checking' || state.status === 'answering';
+  // Tapped to talk: the panel is all ears. Hands free, the step stays put and what's heard shows under it.
+  const talking = listening && !handsFree;
 
   return (
     <Animated.View entering={FadeInDown.springify().damping(18)} style={styles.card}>
-      {listening ? (
+      {talking ? (
         <Animated.View key="listening" entering={FadeIn.duration(160)} style={styles.block}>
           <Text style={styles.kicker}>Listening. Pause when you&rsquo;re done.</Text>
           <Text style={styles.heard} numberOfLines={3}>
@@ -120,21 +125,21 @@ export function GuidePanel({
               {step.text}
             </Text>
           ) : finished ? (
-            <Text style={styles.step}>Nice work. Say what&rsquo;s next, or tap the mic.</Text>
+            <Text style={styles.step}>Nice work. Tap the mic and say what&rsquo;s next.</Text>
           ) : null}
-          <Status state={state} part={part} watching={watching} busy={busy} pen={pen} />
+          <Status state={state} part={part} watching={watching} busy={busy} pen={pen} handsFree={handsFree} heard={handsFree && listening ? transcript : ''} />
         </Animated.View>
       )}
 
       <View style={styles.controls}>
-        {!idle && !working && !listening && step ? (
+        {!idle && !working && !talking && step ? (
           <PressScale onPress={onBack} accessibilityRole="button" accessibilityLabel="Previous step" scaleTo={0.9} disabled={state.index === 0}>
             <View style={[styles.round, state.index === 0 && styles.off]}>
               <Icon name="left" size={20} color={paper} />
             </View>
           </PressScale>
         ) : null}
-        {idle && !listening ? (
+        {idle && !talking ? (
           <View style={styles.inputWrap}>
             <TextInput
               value={typed}
@@ -148,8 +153,8 @@ export function GuidePanel({
             />
           </View>
         ) : null}
-        <MicToggle pen={pen} listening={listening} level={level} onPress={onMic} />
-        {!idle && !working && !listening && step && !finished ? (
+        <MicToggle pen={pen} mode={handsFree ? 'free' : listening ? 'talking' : 'off'} listening={listening} level={level} onPress={onMic} />
+        {!idle && !working && !talking && step && !finished ? (
           <>
             <PressScale onPress={onCheck} accessibilityRole="button" accessibilityLabel="Check this step" scaleTo={0.92} disabled={busy}>
               <View style={[styles.pill, busy && styles.off]}>
@@ -165,7 +170,7 @@ export function GuidePanel({
             </PressScale>
           </>
         ) : null}
-        {finished && !listening ? (
+        {finished && !talking ? (
           <PressScale onPress={onStop} accessibilityRole="button" accessibilityLabel="Start another job" scaleTo={0.92}>
             <View style={[styles.pill, styles.primary, { backgroundColor: pen }]}>
               <Text style={[styles.pillText, { color: ink }]}>Another job</Text>
@@ -177,10 +182,33 @@ export function GuidePanel({
   );
 }
 
-/** One line under the step: what was seen or said, else what is being watched. */
-function Status({ state, part, watching, busy, pen }: { state: GuideState; part: GuidePart | null; watching: boolean; busy: boolean; pen: string }) {
+/** One line under the step: what was heard, seen or said, else what is being watched. */
+function Status({
+  state,
+  part,
+  watching,
+  busy,
+  pen,
+  handsFree,
+  heard,
+}: {
+  state: GuideState;
+  part: GuidePart | null;
+  watching: boolean;
+  busy: boolean;
+  pen: string;
+  handsFree: boolean;
+  heard: string;
+}) {
   if (busy) {
     return <ShinyText text={state.status === 'checking' ? 'Checking' : 'Thinking'} style={styles.status} />;
+  }
+  if (heard) {
+    return (
+      <Text style={styles.heardLine} numberOfLines={2}>
+        {`“${heard}”`}
+      </Text>
+    );
   }
   if (state.note) {
     return (
@@ -189,23 +217,43 @@ function Status({ state, part, watching, busy, pen }: { state: GuideState; part:
       </Animated.Text>
     );
   }
+  const say = 'Say “next” when it’s done, or ask anything.';
   if (watching && part) {
-    return <Text style={styles.status}>{`Watching the ${part.label.toLowerCase()}. It checks when something changes.`}</Text>;
+    return <Text style={styles.status}>{`Watching the ${part.label.toLowerCase()}. ${handsFree ? say : 'It checks when something changes.'}`}</Text>;
   }
-  return null;
+  return handsFree ? <Text style={styles.status}>{say}</Text> : null;
 }
 
 function toneColor(tone: 'info' | 'done' | 'warn', pen: string) {
   return tone === 'done' ? pen : tone === 'warn' ? '#FF9C8F' : mist;
 }
 
-/** Tap to talk, tap again (or pause) to send: no holding with busy hands. */
-function MicToggle({ pen, listening, level, onPress }: { pen: string; listening: boolean; level: SharedValue<number>; onPress: () => void }) {
+/**
+ * Tap to talk, tap again (or pause) to send: no holding with busy hands.
+ * Hands free it stays lit, breathing while it listens; a tap turns it off.
+ */
+function MicToggle({
+  pen,
+  mode,
+  listening,
+  level,
+  onPress,
+}: {
+  pen: string;
+  mode: 'off' | 'talking' | 'free';
+  listening: boolean;
+  level: SharedValue<number>;
+  onPress: () => void;
+}) {
   const ring = useAnimatedStyle(() => ({ transform: [{ scale: 1 + (listening ? level.value * 0.35 : 0) }] }));
+  const lit = mode !== 'off';
+  const label = mode === 'free' ? 'Stop hands-free listening' : mode === 'talking' ? 'Stop listening' : 'Talk';
   return (
-    <PressScale onPress={onPress} accessibilityRole="button" accessibilityLabel={listening ? 'Stop listening' : 'Talk'} scaleTo={0.9} haptic="medium">
-      <Animated.View style={[styles.mic, { backgroundColor: listening ? pen : 'rgba(255,255,255,0.12)' }, ring]}>
-        <Icon name={listening ? 'send' : 'mic'} size={22} color={listening ? ink : paper} />
+    <PressScale onPress={onPress} accessibilityRole="button" accessibilityLabel={label} scaleTo={0.9} haptic="medium">
+      <Animated.View
+        style={[styles.mic, { backgroundColor: lit ? pen : 'rgba(255,255,255,0.12)' }, mode === 'free' && !listening && styles.micWaiting, ring]}
+      >
+        <Icon name={mode === 'talking' ? 'send' : 'mic'} size={22} color={lit ? ink : paper} />
       </Animated.View>
     </PressScale>
   );
@@ -233,6 +281,7 @@ const styles = StyleSheet.create({
   heard: { color: paper, ...face.semibold, fontSize: 20, lineHeight: 25 },
   step: { color: paper, ...face.bold, fontSize: 22, lineHeight: 27, letterSpacing: -0.3 },
   status: { color: faint, ...face.medium, fontSize: 14, lineHeight: 19 },
+  heardLine: { color: paper, ...face.semibold, fontSize: 15, lineHeight: 20 },
   note: { ...face.semibold, fontSize: 15, lineHeight: 20 },
   chipScroll: { marginHorizontal: -18, marginTop: 4 },
   chips: { gap: 8, paddingHorizontal: 18 },
@@ -241,6 +290,8 @@ const styles = StyleSheet.create({
   controls: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   round: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)' },
   mic: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
+  // Hands free while the app is talking: still on, not listening this second.
+  micWaiting: { opacity: 0.55 },
   pill: {
     height: 52,
     paddingHorizontal: 18,

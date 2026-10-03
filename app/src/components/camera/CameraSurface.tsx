@@ -68,6 +68,7 @@ export const CameraSurface = forwardRef<
   // The web preview's camera is a still picture, so nothing it watches can
   // change. It fakes one change 7 s into watching a part, to show the flow.
   const fakeChange = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const faked = useRef(false);
 
   useImperativeHandle(
     ref,
@@ -90,12 +91,17 @@ export const CameraSurface = forwardRef<
             watch: async (id: string | null) => {
               if (fakeChange.current) clearTimeout(fakeChange.current);
               fakeChange.current = null;
-              if (Platform.OS !== 'web' || !id) return;
-              fakeChange.current = setTimeout(() => onGuideChange.current?.({ id, distance: 0.5 }), 7000);
+              // The web preview fakes one change per job, to show the watch flow.
+              if (Platform.OS !== 'web' || !id || faked.current) return;
+              fakeChange.current = setTimeout(() => {
+                faked.current = true;
+                onGuideChange.current?.({ id, distance: 0.5 });
+              }, 7000);
             },
             clear: async () => {
               if (fakeChange.current) clearTimeout(fakeChange.current);
               fakeChange.current = null;
+              faked.current = false;
             },
           },
         };

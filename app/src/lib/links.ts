@@ -17,6 +17,8 @@ export type ScriptParams = {
   guide?: string;
   /** Virtual camera: show this demo scene (cars, truck, board, …). */
   scene?: string;
+  /** Web preview: what the fake recogniser hears after the scene's question, lines split by `|` (films hands-free). */
+  talk?: string;
 };
 
 /** `"0.3,0.33"` as a point on the photo, or null when it isn't one. */

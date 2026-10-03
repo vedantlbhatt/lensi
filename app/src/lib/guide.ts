@@ -163,3 +163,25 @@ export function parseCommand(raw: string): GuideCommand | null {
   }
   return { type: 'ask', text };
 }
+
+/** "Lensi, …" or "hey Lensi …" just says who it's for (as the recogniser tends to spell it). */
+const ADDRESS = /^((hey|hi|ok(ay)?|so)[\s,]+)?(lensi|lenzi|lensy|lenzy|lenzie)\b[\s,.:!?]*/i;
+
+/** Opens that put something to the app, as opposed to talk in the room. */
+const REQUEST =
+  /^(how|what|what'?s|where|where'?s|which|why|when|who|is|are|was|were|can|could|should|would|will|do|does|did|have|has|tell me|show me|help|explain|find|i can'?t|i cannot|i don'?t|it won'?t|it doesn'?t|it isn'?t|it'?s (stuck|not)|there'?s no|wait)\b/;
+
+/**
+ * What heard speech means. Tapped to talk, everything is for the app. Hands
+ * free, the mic hears the whole room too, so besides the short commands only
+ * a question, or something said to Lensi by name, counts; the rest is let go.
+ */
+export function heard(raw: string, handsFree: boolean): GuideCommand | null {
+  const trimmed = raw.trim();
+  const addressed = ADDRESS.test(trimmed);
+  const text = trimmed.replace(ADDRESS, '').trim();
+  const cmd = parseCommand(text);
+  if (!cmd || cmd.type !== 'ask' || !handsFree || addressed) return cmd;
+  const plain = text.toLowerCase();
+  return plain.includes('?') || (REQUEST.test(plain) && plain.split(/\s+/).length >= 2) ? cmd : null;
+}

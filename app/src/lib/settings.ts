@@ -10,6 +10,8 @@ export type Settings = {
   brain: Brain;
   /** Read walkthrough steps out loud. */
   narrate: boolean;
+  /** Once you've talked to the guide, keep the mic open until the job is done. */
+  handsFree: boolean;
   haptics: boolean;
   /** Draw live detection brackets on the camera. */
   liveBrackets: boolean;
@@ -19,7 +21,7 @@ export type Settings = {
   lens: Lens;
 };
 
-const DEFAULTS: Settings = { brain: 'auto', narrate: true, haptics: true, liveBrackets: true, serverURL: '', lens: 'guide' };
+const DEFAULTS: Settings = { brain: 'auto', narrate: true, handsFree: true, haptics: true, liveBrackets: true, serverURL: '', lens: 'guide' };
 
 let state: Settings = DEFAULTS;
 let loaded = false;

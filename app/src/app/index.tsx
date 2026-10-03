@@ -7,7 +7,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DEMO_SCENES, isVirtual, LensiAR, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
+import { DEMO_SCENES, isVirtual, LensiAR, setDemoTalk, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
 import { BrainChip } from '../components/camera/BrainChip';
 import { CameraBlocked } from '../components/camera/CameraBlocked';
 import { CameraSurface, type CameraHandle } from '../components/camera/CameraSurface';
@@ -28,7 +28,9 @@ import { SettingsSheet } from '../components/ui/SettingsSheet';
 import { toast, ToastHost } from '../components/ui/Toast';
 import { devhooks } from '../lib/devhooks';
 import { pickEngine } from '../lib/engines';
+import { heard } from '../lib/guide';
 import { useGuide } from '../lib/guideSession';
+import { useHandsFree } from '../lib/handsFree';
 import { useLivePins } from '../lib/live';
 import { assetPhoto, pasteFromClipboard, pickedFromFile, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
 import { pointOf, queryOf, type ScriptParams } from '../lib/links';
@@ -125,32 +127,64 @@ export default function Camera() {
     },
     [guideStop],
   );
-  // Hands are busy: tap to talk, and a pause sends it.
+  // Hands are busy: tap to talk, and a pause sends it. Once they've talked,
+  // the mic keeps opening between the app's lines (hands free) while a step is
+  // up, until the job is done or they tap it off.
+  const guideStatus = guide.state.status;
+  const handsFree = useHandsFree(voice, guideOn && (guideStatus === 'active' || guideStatus === 'checking' || guideStatus === 'answering'));
+  const setHandsFree = handsFree.setOn;
+  const freeRef = useRef(false);
+  freeRef.current = handsFree.on;
+  const onHeard = useCallback(
+    (q: string, free: boolean) => {
+      // Half a line that was still being heard when hands free was switched off.
+      if (free && !freeRef.current) return;
+      const cmd = heard(q, free);
+      if (!cmd) return;
+      guideHandle(cmd);
+      if (!free && cmd.type !== 'stop' && getSettings().handsFree) setHandsFree(true);
+    },
+    [guideHandle, setHandsFree],
+  );
   const guideMic = useCallback(async () => {
+    if (freeRef.current) {
+      // Hands free already: a tap turns it off, and lets go of anything half heard.
+      setHandsFree(false);
+      return;
+    }
     if (voice.isListening()) {
       const q = await voice.stop();
-      if (q) guideHandle(q);
+      if (q) onHeard(q, false);
       return;
     }
     hush();
     setTouched(true);
     await voice.start();
-  }, [voice, guideHandle]);
+  }, [voice, onHeard, setHandsFree]);
+  // A pause sends it: soon after a short command, a beat later after anything else.
+  const stopVoice = voice.stop;
   useEffect(() => {
     if (!guideOn || !voice.listening || !voice.transcript) return;
+    const quick = heard(voice.transcript, false)?.type !== 'ask';
+    const free = freeRef.current;
     const t = setTimeout(() => {
-      void voice.stop().then((q) => q && guideHandle(q));
-    }, 1500);
+      void stopVoice().then((q) => q && onHeard(q, free));
+    }, quick ? 900 : 1500);
     return () => clearTimeout(t);
-  }, [guideOn, voice, voice.listening, voice.transcript, guideHandle]);
-  // A mic left open by mistake: stop after 15 s and use whatever was heard.
+  }, [guideOn, voice.listening, voice.transcript, stopVoice, onHeard]);
+  // A mic left open: after 15 s, use whatever was heard (hands free opens it again).
   useEffect(() => {
     if (!guideOn || !voice.listening) return;
+    const free = freeRef.current;
     const t = setTimeout(() => {
-      void voice.stop().then((q) => q && guideHandle(q));
+      void stopVoice().then((q) => q && onHeard(q, free));
     }, 15000);
     return () => clearTimeout(t);
-  }, [guideOn, voice, voice.listening, guideHandle]);
+  }, [guideOn, voice.listening, stopVoice, onHeard]);
+  // Hands free ends with the job.
+  useEffect(() => {
+    if (guideStatus === 'idle' || guideStatus === 'finished') setHandsFree(false);
+  }, [guideStatus, setHandsFree]);
 
   // Re-checked whenever the camera is back in front: a model that just failed
   // is resting, a server may have come up.
@@ -277,6 +311,7 @@ export default function Camera() {
     if (params.tap) devhooks.autoTap = pointOf(params.tap);
     if (params.moment && /^\d+$/.test(params.moment)) devhooks.autoMoment = Number(params.moment);
     if (params.memories) setMemories(true);
+    if (params.talk) setDemoTalk(params.talk.split('|'));
     if (params.brain === 'auto' || params.brain === 'apple' || params.brain === 'cloud' || params.brain === 'vision') {
       setSettings({ brain: params.brain });
     }
@@ -313,7 +348,7 @@ export default function Camera() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide]);
+  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk]);
 
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera
   // and the demo scene on the virtual one.
@@ -415,7 +450,7 @@ export default function Camera() {
 
         {guideLens ? (
           <View style={[styles.bottom, { paddingBottom: insets.bottom + 10 }]} pointerEvents="box-none">
-            {guide.state.status === 'idle' && !voice.listening ? (
+            {guideStatus === 'idle' && !voice.listening ? (
               <>
                 <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : null} pen={pen} />
                 <LensCarousel lens={lens} onChange={setLens} />
@@ -428,6 +463,7 @@ export default function Camera() {
               watching={guide.watching}
               pen={pen}
               listening={voice.listening}
+              handsFree={handsFree.on}
               transcript={voice.transcript}
               level={voice.level}
               onMic={() => void guideMic()}
