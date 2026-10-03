@@ -26,6 +26,55 @@ export function counted(word: string, n: number): string {
   return `${num(n)} ${many}`;
 }
 
+const area = (r: Region) => r.box.w * r.box.h;
+const overlap = (a: Region, b: Region) => {
+  const w = Math.min(a.box.x + a.box.w, b.box.x + b.box.w) - Math.max(a.box.x, b.box.x);
+  const h = Math.min(a.box.y + a.box.h, b.box.y + b.box.h) - Math.max(a.box.y, b.box.y);
+  return w > 0 && h > 0 ? (w * h) / Math.max(1e-9, Math.min(area(a), area(b))) : 0;
+};
+const contains = (r: Region, x: number, y: number) => x >= r.box.x && x <= r.box.x + r.box.w && y >= r.box.y && y <= r.box.y + r.box.h;
+
+/**
+ * A tapped part, answered from what the eyes found there: the text or code it
+ * carries, or the detected thing it belongs to. Never a guess at a name.
+ */
+export function tapAnswer(part: Region, regions: Region[]): EngineEvent[] {
+  const others = regions.filter((r) => r.id !== part.id);
+  const code = others.find((r) => r.kind === 'barcode' && r.text && overlap(r, part) > 0.5);
+  if (code?.text) {
+    const m = readCode(code.text);
+    const said = m.kind === 'url' ? `A code that links to ${m.host}.` : m.kind === 'wifi' ? `A Wi-Fi code for “${m.ssid}”.` : `A code that reads “${clip(m.text, 60)}”.`;
+    return [
+      { kind: 'answer', text: said },
+      { kind: 'callout', label: clip(codeLabel(code.text), 26), mark: part.mark },
+    ];
+  }
+  const text = others.filter((r) => r.kind === 'text' && r.text && overlap(r, part) > 0.5);
+  if (text.length) {
+    const read = text.map((t) => t.text!.trim()).join(' ');
+    return [
+      { kind: 'answer', text: `It reads “${clip(read, 80)}”.` },
+      { kind: 'callout', label: clip(read, 26), mark: part.mark },
+    ];
+  }
+  const cx = part.box.x + part.box.w / 2;
+  const cy = part.box.y + part.box.h / 2;
+  const thing = others
+    .filter((r) => (r.kind === 'object' || r.kind === 'subject') && r.text && contains(r, cx, cy))
+    .sort((a, b) => area(a) - area(b))[0];
+  if (thing?.text) {
+    // About the size of the thing itself: that's what it is. Much smaller: a part of it.
+    if (area(part) > area(thing) * 0.5) {
+      return [
+        { kind: 'answer', text: `That's ${counted(thing.text, 1)}, going by the detector on this phone.` },
+        { kind: 'callout', label: cap(DISPLAY[thing.text] ?? thing.text), mark: part.mark },
+      ];
+    }
+    return [{ kind: 'answer', text: `Part of the ${thing.text.toLowerCase()}, outlined on this phone. Naming the part itself needs Apple Intelligence.` }];
+  }
+  return [{ kind: 'answer', text: 'Outlined on this phone. Naming it needs Apple Intelligence.' }];
+}
+
 const and = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : (parts[0] ?? ''));
 
 /**
@@ -47,7 +96,12 @@ export const visionEngine: Engine = {
     const codes = req.regions.filter((r) => r.kind === 'barcode');
     const objects = req.regions.filter((r) => r.kind === 'object' && r.text);
 
-    if (req.question && !req.walkthrough) {
+    // A tap on the print arrives as a question about one mark.
+    const tapped = req.question ? /mark (\d+)/.exec(req.question)?.[1] : undefined;
+    const part = tapped ? req.regions.find((r) => r.mark === Number(tapped)) : undefined;
+    if (req.question && !req.walkthrough && part) {
+      out.push(...tapAnswer(part, req.regions));
+    } else if (req.question && !req.walkthrough) {
       out.push({
         kind: 'answer',
         text: 'Answers and walkthroughs need Apple Intelligence or the cloud brain. Turn one on in Settings.',

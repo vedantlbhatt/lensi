@@ -88,6 +88,15 @@ shot 06-capture-20s 6
 alive cars
 unrec
 
+# Tap-to-ask, scripted: once the labels are in, the app taps the headlamp itself.
+# SAM outlines the part under the point (marching ants) and the eyes say what they can.
+rec tap
+launch "lensi:///?demo=cars&brain=vision&tap=0.3,0.33"
+shot 15-tap-10s 10
+shot 16-tap-16s 6
+alive tap
+unrec
+
 rec board
 launch "lensi:///?demo=board&lens=learn&brain=vision"
 shot 07-board-9s 9

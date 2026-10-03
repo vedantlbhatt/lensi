@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { counted, visionEngine } from '../engines/vision';
+import { counted, tapAnswer, visionEngine } from '../engines/vision';
 import type { EngineEvent, EngineRequest, Region } from '../types';
 
 const box = { x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
@@ -61,4 +61,32 @@ test('eyes only: questions get an honest answer, not a guess', async () => {
   const ev = await run({ question: 'what is the wifi password?' });
   assert.equal(ev.length, 1);
   assert.equal(ev[0].kind, 'answer');
+});
+
+test('eyes only: a tap is answered from what was found there', async () => {
+  const scene: Region[] = [
+    { id: 's', mark: 1, kind: 'subject', box: { x: 0.1, y: 0.2, w: 0.8, h: 0.6 }, text: 'truck' },
+    { id: 't', mark: 2, kind: 'text', box: { x: 0.8, y: 0.7, w: 0.1, h: 0.04 }, text: 'CUBA' },
+    { id: 'd', mark: 3, kind: 'object', box: { x: 0.0, y: 0.0, w: 0.1, h: 0.1 }, text: 'dog' },
+  ];
+  const plate: Region = { id: 'p', mark: 9, kind: 'part', box: { x: 0.79, y: 0.69, w: 0.12, h: 0.06 } };
+  const lamp: Region = { id: 'l', mark: 10, kind: 'part', box: { x: 0.25, y: 0.3, w: 0.1, h: 0.1 } };
+  const dog: Region = { id: 'g', mark: 11, kind: 'part', box: { x: 0.0, y: 0.0, w: 0.09, h: 0.1 } };
+  const sky: Region = { id: 'k', mark: 12, kind: 'part', box: { x: 0.5, y: 0.0, w: 0.2, h: 0.1 } };
+
+  const read = tapAnswer(plate, [...scene, plate]);
+  assert.deepEqual(read[0], { kind: 'answer', text: 'It reads “CUBA”.' });
+  assert.deepEqual(read[1], { kind: 'callout', label: 'CUBA', mark: 9 });
+
+  const part = tapAnswer(lamp, [...scene, lamp]);
+  assert.equal(part.length, 1);
+  assert.match(part[0].kind === 'answer' ? part[0].text : '', /^Part of the truck/);
+
+  const whole = tapAnswer(dog, [...scene, dog]);
+  assert.deepEqual(whole[1], { kind: 'callout', label: 'Dog', mark: 11 });
+
+  assert.match((tapAnswer(sky, [...scene, sky])[0] as { text: string }).text, /^Outlined on this phone/);
+
+  const ev = await run({ regions: [...scene, plate], question: 'The user tapped the part at mark 9. What is it, and what is it for? Label it.' });
+  assert.deepEqual(ev.map((e) => e.kind), ['answer', 'callout']);
 });

@@ -9,7 +9,16 @@ export type ScriptParams = {
   export?: string;
   /** Force a brain for the run (CI demos use `vision`: its VM can't run Apple Intelligence). */
   brain?: string;
+  /** Tap the print here once it's annotated, as `x,y` in 0–1 of the photo (CI films tap-to-ask). */
+  tap?: string;
 };
+
+/** `"0.3,0.33"` as a point on the photo, or null when it isn't one. */
+export function pointOf(s: string | null | undefined): { x: number; y: number } | null {
+  const [x, y] = (s ?? '').split(',').map((v) => Number(v.trim()));
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return { x, y };
+}
 
 /** The query of a lensi:// URL, without leaning on URL.searchParams (not in every RN runtime). */
 export function queryOf(url: string | null | undefined): ScriptParams {

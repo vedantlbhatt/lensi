@@ -327,6 +327,15 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   const sparks = useRef<SparksRef>(null);
   const [focus, setFocus] = useState<Pt[] | null>(null);
   const focusAsked = useRef<number>(0);
+  const tapAt = (at: Pt) => {
+    const p = toView(at, frame);
+    sparks.current?.burst(p.x, p.y, lens.pen);
+    haptic.tap();
+    setFocus(null);
+    setExpanded(false);
+    focusAsked.current = capture.thread.length;
+    void askAbout(capture.id, at).then(setFocus);
+  };
   const tapPrint = Gesture.Tap()
     .maxDuration(250)
     .runOnJS(true)
@@ -334,13 +343,22 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
       if (!ok || !settled) return;
       const at = fromView({ x: frame.x + e.x, y: frame.y + e.y }, frame);
       if (at.x < 0 || at.y < 0 || at.x > 1 || at.y > 1) return;
-      sparks.current?.burst(frame.x + e.x, frame.y + e.y, lens.pen);
-      haptic.tap();
-      setFocus(null);
-      setExpanded(false);
-      focusAsked.current = capture.thread.length;
-      void askAbout(capture.id, at).then(setFocus);
+      tapAt(at);
     });
+  // CI: a scripted run taps the print once the labels are in.
+  const autoTapped = useRef(false);
+  useEffect(() => {
+    const at = devhooks.autoTap;
+    if (!at || autoTapped.current || !settled || capture.status !== 'ready') return;
+    const t = setTimeout(() => {
+      autoTapped.current = true;
+      devhooks.autoTap = null;
+      tapAt(at);
+    }, 1600);
+    return () => clearTimeout(t);
+    // tapAt is rebuilt every render; the tap only needs to happen once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled, capture.status]);
   // Let the marching ants go once the answer to that tap has landed.
   useEffect(() => {
     if (!focus) return;

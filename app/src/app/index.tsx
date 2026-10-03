@@ -29,7 +29,7 @@ import { devhooks } from '../lib/devhooks';
 import { pickEngine } from '../lib/engines';
 import { useLivePins } from '../lib/live';
 import { assetPhoto, pasteFromClipboard, pickedFromFile, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
-import { queryOf, type ScriptParams } from '../lib/links';
+import { pointOf, queryOf, type ScriptParams } from '../lib/links';
 import { ingest } from '../lib/pipeline';
 import { getSettings, setSettings, useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
@@ -225,6 +225,7 @@ export default function Camera() {
   const params: ScriptParams = linked.demo || linked.memories || linked.file ? linked : launched;
   useEffect(() => {
     if (params.export) devhooks.autoExport = true;
+    if (params.tap) devhooks.autoTap = pointOf(params.tap);
     if (params.memories) setMemories(true);
     if (params.brain === 'auto' || params.brain === 'apple' || params.brain === 'cloud' || params.brain === 'vision') {
       setSettings({ brain: params.brain });
@@ -254,7 +255,7 @@ export default function Camera() {
     return () => {
       alive = false;
     };
-  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain]);
+  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap]);
 
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera
   // and the demo scene on the virtual one.
