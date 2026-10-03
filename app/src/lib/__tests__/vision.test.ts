@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { counted, tapAnswer, visionEngine } from '../engines/vision';
+import { counted, factAnswer, tapAnswer, visionEngine } from '../engines/vision';
 import type { EngineEvent, EngineRequest, Region } from '../types';
 
 const box = { x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
@@ -99,4 +99,20 @@ test('eyes only: with no name, many lines of text are counted rather than one qu
   assert.deepEqual(ev[0], { kind: 'title', text: 'Four lines of text' });
   const one = await run({ regions: [{ id: 'x', mark: 1, kind: 'text', box, text: 'EXIT' }] });
   assert.deepEqual(one[0], { kind: 'title', text: 'EXIT' });
+});
+
+test('eyes only: answers what it can from what it found, and only that', () => {
+  const room: Region[] = [
+    { id: 's', mark: 1, kind: 'subject', box, text: 'person' },
+    { id: 'a', mark: 2, kind: 'object', box, text: 'person' },
+    { id: 'b', mark: 3, kind: 'object', box, text: 'chair' },
+    { id: 't', mark: 4, kind: 'text', box, text: 'EXIT' },
+    { id: 'c', mark: 5, kind: 'barcode', box, text: 'https://example.com/menu' },
+  ];
+  assert.equal(factAnswer('How many people are there?', room), 'Two, going by the detector on this phone.');
+  assert.equal(factAnswer('how many chairs', room), 'One, going by the detector on this phone.');
+  assert.match(factAnswer('How many dogs?', room) ?? '', /^None that the detector recognised/);
+  assert.equal(factAnswer('What does the sign say?', room), 'It reads “EXIT”.');
+  assert.equal(factAnswer('Where does the QR code go?', room), 'The code links to example.com. Hold its label to open it.');
+  assert.equal(factAnswer('Is this safe to eat?', room), null);
 });

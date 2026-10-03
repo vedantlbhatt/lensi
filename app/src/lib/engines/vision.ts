@@ -77,6 +77,46 @@ export function tapAnswer(part: Region, regions: Region[]): EngineEvent[] {
 
 const and = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : (parts[0] ?? ''));
 
+/** "people" → "person", "bottles" → "bottle": a word from a question, as the detector names it. */
+function singular(word: string): string {
+  const w = word.toLowerCase();
+  const irregular = Object.entries(PLURALS).find(([, many]) => many.toLowerCase() === w);
+  if (irregular) return irregular[0];
+  if (/(ches|shes|sses|xes|zes)$/.test(w)) return w.slice(0, -2);
+  return w.endsWith('s') ? w.slice(0, -1) : w;
+}
+
+/**
+ * A typed or spoken question the eyes can answer from what they found: how many
+ * of something, what the text says, where a code goes. Null when it needs a model.
+ */
+export function factAnswer(question: string, regions: Region[]): string | null {
+  const q = question.toLowerCase();
+  const texts = regions.filter((r) => r.kind === 'text' && r.text);
+  const codes = regions.filter((r) => r.kind === 'barcode' && r.text);
+  const howMany = /how many ([a-z][a-z -]*?)s?\b(?:\s+(?:are|is|do|can|in|on|here|there)\b|\?|$)/.exec(q);
+  if (howMany) {
+    const asked = singular(howMany[1].trim().split(/\s+/).pop() ?? '');
+    const n = regions.filter((r) => (r.kind === 'object' || r.kind === 'subject') && r.text?.toLowerCase() === asked).length;
+    if (n) return `${cap(num(n))}, going by the detector on this phone.`;
+    return `None that the detector recognised. Counting anything else needs Apple Intelligence.`;
+  }
+  if (/\b(qr|code|link|url|wi-?fi|password)\b/.test(q) && codes.length) {
+    const m = readCode(codes[0].text!);
+    return m.kind === 'url'
+      ? `The code links to ${m.host}. Hold its label to open it.`
+      : m.kind === 'wifi'
+        ? `It's a Wi-Fi code for “${m.ssid}”.${m.password ? ' Hold its label to copy the password.' : ''}`
+        : `The code reads “${clip(m.text, 80)}”.`;
+  }
+  if (/\b(say|says|read|reads|written|text|label|sign|word|words)\b/.test(q)) {
+    if (!texts.length) return 'There is no text here the phone could read.';
+    const lines = texts.slice(0, 6).map((t) => `“${clip(t.text!.trim(), 40)}”`);
+    return `It reads ${and(lines)}.`;
+  }
+  return null;
+}
+
 /**
  * No model at all: say only what the on-device eyes actually found. Always
  * available, instant, and honest about being limited.
@@ -104,7 +144,7 @@ export const visionEngine: Engine = {
     } else if (req.question && !req.walkthrough) {
       out.push({
         kind: 'answer',
-        text: 'Answers and walkthroughs need Apple Intelligence or the cloud brain. Turn one on in Settings.',
+        text: factAnswer(req.question, req.regions) ?? 'Answers and walkthroughs need Apple Intelligence or the cloud brain. Turn one on in Settings.',
       });
     } else {
       // What was found, by name and count, most common first: "two oranges and a lemon".
