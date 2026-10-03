@@ -14,6 +14,11 @@ public class LensiARModule: Module {
 
     Constant("isSupported") { ARWorldTrackingConfiguration.isSupported }
 
+    // A scripted run (CI) can hand the app a lensi:// URL through the launch
+    // environment (`SIMCTL_CHILD_LENSI_URL=…`), which skips the system's
+    // "Open in Lensi?" prompt that `simctl openurl` can raise.
+    Constant("launchURL") { ProcessInfo.processInfo.environment["LENSI_URL"] }
+
     // MARK: Eyes: Vision + YOLO (+ SAM) on a still image
 
     AsyncFunction("analyze") { (uri: String, promise: Promise) in

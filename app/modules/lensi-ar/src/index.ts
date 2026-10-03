@@ -8,6 +8,7 @@ export { DEMO_SCENES, sceneForUri } from './demo';
 
 declare class LensiARNative extends NativeModule<LensiAREvents> implements LensiARModuleShape {
   isSupported: boolean;
+  launchURL?: string | null;
   analyze: LensiARModuleShape['analyze'];
   segment: LensiARModuleShape['segment'];
   intelligenceStatus: LensiARModuleShape['intelligenceStatus'];

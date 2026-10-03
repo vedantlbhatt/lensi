@@ -76,7 +76,8 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 120
         }
-      ]
+      ],
+      "./plugins/withSceneLifecycle"
     ],
     "experiments": {
       "typedRoutes": false

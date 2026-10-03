@@ -95,6 +95,8 @@ export type LensiAREvents = {
 
 export type LensiARModuleShape = {
   isSupported: boolean;
+  /** A lensi:// URL handed over in the launch environment (scripted runs), if any. */
+  launchURL?: string | null;
   analyze(uri: string): Promise<Analysis>;
   /** Point prompt in normalized image coords. */
   segment(uri: string, x: number, y: number): Promise<Segment | null>;
