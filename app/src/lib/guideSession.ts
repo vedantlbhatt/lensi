@@ -22,6 +22,9 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
   latest.current = state;
   const frame = useRef<GuideFrame | null>(null);
   const pinned = useRef(new Set<string>());
+  /** Parts whose shape was asked for (SAM at the part's point) or sent to the camera. */
+  const shaped = useRef(new Set<string>());
+  const drawn = useRef(new Set<string>());
   const work = useRef<AbortController | null>(null);
   const advance = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -67,6 +70,8 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
       cancelWork();
       hush();
       pinned.current.clear();
+      shaped.current.clear();
+      drawn.current.clear();
       await camera.current?.guide.clear().catch(() => {});
       dispatch({ type: 'plan', task: text });
       const f = await capture();
@@ -88,11 +93,12 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         const ok = await runBrain(f, { regions, hint, question: text, walkthrough: true, guide: true }, (e) => {
           const region = 'mark' in e && e.mark ? regions.find((r) => r.mark === e.mark) : undefined;
           const at = region ? anchorFor(region) : 'at' in e ? e.at : undefined;
+          const outline = region?.polygon;
           if (e.kind === 'title') dispatch({ type: 'title', text: e.text });
           else if (e.kind === 'step') {
             const label = e.label ?? (region?.kind === 'object' || region?.kind === 'text' ? region.text : undefined);
-            dispatch({ type: 'step', text: e.text, label, at, mark: region?.mark });
-          } else if (e.kind === 'callout' && at) dispatch({ type: 'part', label: e.label, at, mark: region?.mark });
+            dispatch({ type: 'step', text: e.text, label, at, mark: region?.mark, outline });
+          } else if (e.kind === 'callout' && at) dispatch({ type: 'part', label: e.label, at, mark: region?.mark, outline });
           // Eyes only: the summary says why there are no steps.
           else if (e.kind === 'summary') noModel = e.text;
           else if (e.kind === 'error') dispatch({ type: 'note', note: { text: e.text, tone: 'warn' } });
@@ -109,7 +115,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
             (e) => {
               const region = 'mark' in e && e.mark ? regions.find((r) => r.mark === e.mark) : undefined;
               const at = region ? anchorFor(region) : 'at' in e ? e.at : undefined;
-              if (e.kind === 'callout' && at) dispatch({ type: 'part', label: e.label, at, mark: region?.mark });
+              if (e.kind === 'callout' && at) dispatch({ type: 'part', label: e.label, at, mark: region?.mark, outline: region?.polygon });
               else if (e.kind === 'title') dispatch({ type: 'title', text: e.text });
               else if (e.kind === 'summary') noModel = e.text;
             },
@@ -213,6 +219,8 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     cancelWork();
     hush();
     pinned.current.clear();
+    shaped.current.clear();
+    drawn.current.clear();
     frame.current = null;
     void camera.current?.guide.clear().catch(() => {});
     dispatch({ type: 'reset' });
@@ -245,6 +253,33 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
       if (pinned.current.has(p.id)) continue;
       pinned.current.add(p.id);
       void camera.current?.guide.pin(f.frameId, p).catch(() => {});
+    }
+  }, [state.parts, camera]);
+
+  // Each part's shape: SAM at its point when the eyes didn't already outline it.
+  // (A shape that covers half the frame is the whole scene, not a part.)
+  useEffect(() => {
+    const f = frame.current;
+    if (!f) return;
+    for (const p of state.parts) {
+      if (p.outline || shaped.current.has(p.id)) continue;
+      shaped.current.add(p.id);
+      void LensiAR.segment(f.uri, p.at.x, p.at.y)
+        .then((seg) => {
+          if (!seg || frame.current !== f || seg.box.w * seg.box.h > 0.5) return;
+          dispatch({ type: 'outline', id: p.id, outline: seg.polygon });
+        })
+        .catch(() => {});
+    }
+  }, [state.parts]);
+  // ...and on the camera, laid on the part in the world.
+  useEffect(() => {
+    const f = frame.current;
+    if (!f) return;
+    for (const p of state.parts) {
+      if (!p.outline || drawn.current.has(p.id) || !pinned.current.has(p.id)) continue;
+      drawn.current.add(p.id);
+      void camera.current?.guide.outline(f.frameId, p.id, p.outline).catch(() => {});
     }
   }, [state.parts, camera]);
 

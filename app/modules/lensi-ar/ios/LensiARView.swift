@@ -369,7 +369,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         if !inView {
           // Out of view: the current step's tag waits on the edge, pointing the
           // way to its part; the others keep out of the way.
-          if pin.label.emphasis == .focused, placeOnEdge(pin, in: visible) { continue }
+          if pin.label.emphasis == .focused, placeOnEdge(pin, in: visible) {
+            pin.guideShape?.isHidden = true
+            continue
+          }
           pin.label.pointing = nil
           pin.setHidden(true)
           continue
@@ -383,6 +386,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let half = pin.label.bounds.width / 2 + 8
       let y = pin.parentId == Self.guideParent ? min(max(p.y, visible.minY + 13), visible.maxY - 13) : p.y
       pin.label.center = CGPoint(x: min(max(p.x, half), bounds.width - half), y: y)
+      if pin.parentId == Self.guideParent { drawGuideOutline(pin) }
 
       if let outline = pin.outline {
         let s = CGFloat(pin.outlineDistance / max(dist, 0.05))
@@ -790,6 +794,59 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
     let world = ctx.anchor(at: CGPoint(x: x, y: y), session: sceneView.session)
     addPin(Pin(id: pinId, parentId: Self.guideParent, world: world, text: label, color: accent))
+  }
+
+  /// A part's shape (flat x,y pairs, upright 0…1 in its frame), laid on a
+  /// plane through its pin facing the camera that took the frame, so it stays
+  /// on the part as the phone moves. Drawn while its step is up.
+  func guideOutline(frameId: String, id: String, points: [Double]) {
+    guard let ctx = guideFrames[frameId], let pin = pins["\(Self.guideParent):\(id)"], points.count >= 6 else { return }
+    let plane = ctx.selection.withPlane(through: pin.world)
+    var world: [simd_float3] = []
+    var i = 0
+    while i + 1 < points.count {
+      if let w = plane.onPlane(CGPoint(x: points[i], y: points[i + 1])) { world.append(w) }
+      i += 2
+    }
+    guard world.count >= 3 else { return }
+    pin.guideOutline = world
+    if pin.guideShape == nil {
+      let shape = CAShapeLayer()
+      shape.lineWidth = 2.5
+      shape.lineJoin = .round
+      shape.isHidden = true
+      // Under the tags.
+      pinLayer.layer.insertSublayer(shape, at: 0)
+      pin.guideShape = shape
+    }
+    layoutPins()
+  }
+
+  /// The current step's part, outlined where it is now; nothing for the rest,
+  /// or while any corner of it is behind the phone.
+  private func drawGuideOutline(_ pin: Pin) {
+    guard let shape = pin.guideShape else { return }
+    guard pin.label.emphasis == .focused, pin.label.pointing == nil, !pin.label.isHidden,
+          let camera = sceneView.session.currentFrame?.camera else {
+      shape.isHidden = true
+      return
+    }
+    let toCamera = camera.transform.inverse
+    let path = UIBezierPath()
+    for (i, w) in pin.guideOutline.enumerated() {
+      guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else {
+        shape.isHidden = true
+        return
+      }
+      let q = sceneView.projectPoint(SCNVector3(w.x, w.y, w.z))
+      let p = CGPoint(x: CGFloat(q.x), y: CGFloat(q.y))
+      if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+    }
+    path.close()
+    shape.path = path.cgPath
+    shape.strokeColor = accent.cgColor
+    shape.fillColor = accent.withAlphaComponent(0.14).cgColor
+    shape.isHidden = false
   }
 
   /// The current step's part stands out in the lens colour; the rest step back.

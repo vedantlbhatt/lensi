@@ -11,8 +11,11 @@ import type { Pt } from './types';
  * the voice.
  */
 
-/** A tagged part, pinned where it was in the frame the plan was made from. */
-export type GuidePart = { id: string; label: string; at: Pt; mark?: number };
+/**
+ * A tagged part, pinned where it was in the frame the plan was made from.
+ * `outline` is its shape in that frame (SAM), drawn around it while its step is up.
+ */
+export type GuidePart = { id: string; label: string; at: Pt; mark?: number; outline?: Pt[] };
 
 export type GuideStep = { text: string; partId?: string };
 
@@ -47,9 +50,11 @@ export const initialGuide: GuideState = {
 export type GuideAction =
   | { type: 'plan'; task: string }
   | { type: 'title'; text: string }
-  | { type: 'step'; text: string; label?: string; at?: Pt; mark?: number }
+  | { type: 'step'; text: string; label?: string; at?: Pt; mark?: number; outline?: Pt[] }
   /** A labelled part with no step of its own (what the eyes found when there is no model). */
-  | { type: 'part'; label: string; at: Pt; mark?: number }
+  | { type: 'part'; label: string; at: Pt; mark?: number; outline?: Pt[] }
+  /** A part's shape, once it's known. */
+  | { type: 'outline'; id: string; outline: Pt[] }
   | { type: 'planned' }
   | { type: 'go'; index: number }
   | { type: 'next' }
@@ -64,14 +69,25 @@ export type GuideAction =
 const SAME_PART = 0.05;
 const MAX_PARTS = 6;
 
-function addPart(parts: GuidePart[], label: string, at: Pt, mark?: number): { parts: GuidePart[]; id: string | null } {
+function addPart(parts: GuidePart[], label: string, at: Pt, mark?: number, outline?: Pt[]): { parts: GuidePart[]; id: string | null } {
   const clean = shortLabel(label);
   if (!clean) return { parts, id: null };
   const same = parts.find((p) => (mark !== undefined && p.mark === mark) || Math.hypot(p.at.x - at.x, p.at.y - at.y) < SAME_PART);
   if (same) return { parts, id: same.id };
   if (parts.length >= MAX_PARTS) return { parts, id: null };
   const id = `p${parts.length + 1}`;
-  return { parts: [...parts, { id, label: clean, at, ...(mark !== undefined ? { mark } : {}) }], id };
+  const shape = outline && outline.length >= 3 ? { outline: simplify(outline) } : {};
+  return { parts: [...parts, { id, label: clean, at, ...(mark !== undefined ? { mark } : {}), ...shape }], id };
+}
+
+/** At most this many corners: an outline is redrawn every frame. */
+const MAX_OUTLINE = 48;
+
+/** Evenly thins a polygon to at most MAX_OUTLINE points. */
+export function simplify(points: Pt[]): Pt[] {
+  if (points.length <= MAX_OUTLINE) return points;
+  const step = points.length / MAX_OUTLINE;
+  return Array.from({ length: MAX_OUTLINE }, (_, i) => points[Math.floor(i * step)]);
 }
 
 /** Tags are short: at most three words, no trailing punctuation, first letter up. */
@@ -88,13 +104,16 @@ export function guideReducer(s: GuideState, a: GuideAction): GuideState {
     case 'title':
       return s.title ? s : { ...s, title: a.text };
     case 'step': {
-      const placed = a.label && a.at ? addPart(s.parts, a.label, a.at, a.mark) : { parts: s.parts, id: null };
+      const placed = a.label && a.at ? addPart(s.parts, a.label, a.at, a.mark, a.outline) : { parts: s.parts, id: null };
       const step: GuideStep = { text: a.text.trim(), ...(placed.id ? { partId: placed.id } : {}) };
       if (!step.text) return s;
       return { ...s, parts: placed.parts, steps: [...s.steps, step] };
     }
     case 'part':
-      return { ...s, parts: addPart(s.parts, a.label, a.at, a.mark).parts };
+      return { ...s, parts: addPart(s.parts, a.label, a.at, a.mark, a.outline).parts };
+    case 'outline':
+      if (a.outline.length < 3) return s;
+      return { ...s, parts: s.parts.map((p) => (p.id === a.id && !p.outline ? { ...p, outline: simplify(a.outline) } : p)) };
     case 'planned':
       return { ...s, status: s.steps.length || s.parts.length ? 'active' : 'idle', index: 0 };
     case 'go': {

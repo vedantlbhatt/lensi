@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import Svg, { Polygon } from 'react-native-svg';
 import Animated, {
   Easing,
   FadeIn,
@@ -87,7 +88,8 @@ export const VirtualCamera = forwardRef<
     <View style={StyleSheet.absoluteFill} collapsable={false}>
       <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
         <Image source={scene.asset} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
-        {/* Inside the drifting layer, so the tags ride the scene like pins on a real camera. */}
+        {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
+        <GuideOutline part={guidePins?.parts.find((p) => p.id === guidePins.focus)} fit={fit} pen={pen} />
         {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}
       </Animated.View>
       <Grain opacity={0.05} />
@@ -95,6 +97,19 @@ export const VirtualCamera = forwardRef<
     </View>
   );
 });
+
+/** The current step's part, outlined in the lens colour. */
+function GuideOutline({ part, fit, pen }: { part: GuidePart | undefined; fit: Fit; pen: string }) {
+  if (!part?.outline) return null;
+  const points = part.outline.map((q) => toView(q, fit)).map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ');
+  return (
+    <Animated.View key={part.id} entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+        <Polygon points={points} fill={pen} fillOpacity={0.14} stroke={pen} strokeWidth={2.5} strokeLinejoin="round" />
+      </Svg>
+    </Animated.View>
+  );
+}
 
 /** A live-guide tag on the virtual scene: white, or on the lens colour when its step is current. */
 function GuideTag({ part, fit, pen, focus, screenW }: { part: GuidePart; fit: Fit; pen: string; focus: string | null; screenW: number }) {

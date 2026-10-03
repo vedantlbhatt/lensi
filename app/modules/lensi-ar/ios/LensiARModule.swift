@@ -182,6 +182,10 @@ public class LensiARModule: Module {
         }
       }.runOnQueue(.main)
 
+      AsyncFunction("guideOutline") { (view: LensiARView, frameId: String, id: String, points: [Double]) in
+        view.guideOutline(frameId: frameId, id: id, points: points)
+      }.runOnQueue(.main)
+
       AsyncFunction("guidePin") { (view: LensiARView, frameId: String, id: String, x: Double, y: Double, label: String) in
         view.guidePin(frameId: frameId, id: id, x: x, y: y, label: label)
       }.runOnQueue(.main)

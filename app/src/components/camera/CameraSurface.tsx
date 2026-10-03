@@ -13,6 +13,7 @@ import {
 } from '../../../modules/lensi-ar/src';
 import type { GuidePart } from '../../lib/guide';
 import type { Picked } from '../../lib/media';
+import type { Pt } from '../../lib/types';
 import { VirtualCamera, type VirtualHandle } from './VirtualCamera';
 
 /** One camera API whether we have ARKit or the virtual stand-in. */
@@ -34,6 +35,8 @@ export type CameraHandle = {
   guide: {
     capture(): Promise<GuideFrame | null>;
     pin(frameId: string, part: GuidePart): Promise<void>;
+    /** A pinned part's shape in that frame: drawn on it while its step is up. */
+    outline(frameId: string, id: string, points: Pt[]): Promise<void>;
     focus(id: string | null): Promise<void>;
     watch(id: string | null): Promise<void>;
     clear(): Promise<void>;
@@ -89,6 +92,7 @@ export const CameraSurface = forwardRef<
               return p ? { frameId: 'virtual', uri: p.uri, width: p.width, height: p.height } : null;
             },
             pin: async () => {},
+            outline: async () => {},
             focus: async () => {},
             watch: async (id: string | null) => {
               if (fakeChange.current) clearTimeout(fakeChange.current);
@@ -141,6 +145,9 @@ export const CameraSurface = forwardRef<
           capture: async () => (await native.current?.guideCapture()) ?? null,
           pin: async (frameId: string, part: GuidePart) => {
             await native.current?.guidePin(frameId, part.id, part.at.x, part.at.y, part.label);
+          },
+          outline: async (frameId: string, id: string, points: Pt[]) => {
+            await native.current?.guideOutline(frameId, id, points.flatMap((q) => [q.x, q.y]));
           },
           focus: async (id: string | null) => {
             await native.current?.guideFocus(id);

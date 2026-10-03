@@ -53,6 +53,8 @@ export type LensiARViewRef = {
   guideCapture(): Promise<GuideFrame>;
   /** Pin a tag in the world at x, y (0…1 in that frame's upright image). */
   guidePin(frameId: string, id: string, x: number, y: number, label: string): Promise<void>;
+  /** A pinned part's shape in its frame, as flat x,y pairs (upright, 0-1). */
+  guideOutline(frameId: string, id: string, points: number[]): Promise<void>;
   /** The part the current step is about: its tag stands out, the others step back. Null for none. */
   guideFocus(id: string | null): Promise<void>;
   /** Watch the part for a change that settles (a cap off, a valve turned); fires onGuideChange. Null stops. */

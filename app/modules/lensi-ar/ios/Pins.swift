@@ -102,6 +102,10 @@ final class Pin {
   let line = CAShapeLayer()
   /// Segmentation outline captured at creation, in view space.
   var outline: CAShapeLayer?
+  /// Live guide: the part's shape laid in the world, and the layer that draws
+  /// it (only while its step is up).
+  var guideOutline: [simd_float3] = []
+  var guideShape: CAShapeLayer?
   var outlineScreenOrigin: CGPoint = .zero
   var outlineDistance: Float = 1
   var side: CGFloat = 1
@@ -137,6 +141,7 @@ final class Pin {
     dot.isHidden = hidden
     line.isHidden = hidden
     outline?.isHidden = hidden
+    if hidden { guideShape?.isHidden = true }
   }
 
   func removeFromSuperview() {
@@ -144,6 +149,7 @@ final class Pin {
     dot.removeFromSuperlayer()
     line.removeFromSuperlayer()
     outline?.removeFromSuperlayer()
+    guideShape?.removeFromSuperlayer()
   }
 
   func popIn() {

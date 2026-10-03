@@ -119,3 +119,19 @@ test('hands free, room talk is let go; commands, questions and "Lensi, …" coun
   assert.deepEqual(heard('Hey Lensi next', true), { type: 'next' });
   assert.equal(heard('Lensi', true), null);
 });
+
+test('a part keeps the first shape it gets, thinned for drawing every frame', () => {
+  const ring = (n: number) => Array.from({ length: n }, (_, i) => ({ x: 0.5 + 0.1 * Math.cos(i), y: 0.5 + 0.1 * Math.sin(i) }));
+  let s = guideReducer({ ...initialGuide, status: 'planning', task: 'x' }, { type: 'step', text: 'Loosen the nut.', label: 'Slip nut', at: { x: 0.5, y: 0.5 }, outline: ring(200) });
+  assert.equal(s.parts[0].outline?.length, 48);
+  // A later shape doesn't replace it.
+  s = guideReducer(s, { type: 'outline', id: s.parts[0].id, outline: ring(5) });
+  assert.equal(s.parts[0].outline?.length, 48);
+  // A part with none takes one when it arrives; a line is not a shape.
+  s = guideReducer(s, { type: 'part', label: 'Trap', at: { x: 0.2, y: 0.8 } });
+  assert.equal(s.parts[1].outline, undefined);
+  s = guideReducer(s, { type: 'outline', id: s.parts[1].id, outline: ring(2) });
+  assert.equal(s.parts[1].outline, undefined);
+  s = guideReducer(s, { type: 'outline', id: s.parts[1].id, outline: ring(12) });
+  assert.equal(s.parts[1].outline?.length, 12);
+});
