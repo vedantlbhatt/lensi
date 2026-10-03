@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -20,6 +20,7 @@ const BRAINS: { key: Brain; name: string; note: string }[] = [
 export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => void }) {
   const s = useSettings();
   const insets = useSafeAreaInsets();
+  const screen = useWindowDimensions();
   const [apple, setApple] = useState<IntelligenceStatus | null>(null);
   const [cloudOk, setCloudOk] = useState<boolean | null>(null);
   useEffect(() => {
@@ -38,60 +39,68 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
       <Animated.View
         entering={SlideInDown.springify().damping(20).stiffness(190)}
         exiting={SlideOutDown.duration(220)}
-        style={[styles.sheet, { paddingBottom: insets.bottom + 18 }]}
+        style={[styles.sheet, { maxHeight: screen.height - insets.top - 24 }]}
       >
         <View style={styles.grab} />
-        <Text style={styles.h1}>Settings</Text>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 18 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
+        >
+          <Text style={styles.h1}>Settings</Text>
 
-        <Text style={styles.section}>BRAIN</Text>
-        <View style={styles.segment}>
-          {BRAINS.map((b) => {
-            const on = s.brain === b.key;
-            return (
-              <PressScale key={b.key} onPress={() => setSettings({ brain: b.key })} scaleTo={0.94} haptic="selection" style={{ flex: 1 }} accessibilityRole="button" accessibilityLabel={b.name}>
-                <Animated.View layout={LinearTransition.springify().damping(20)} style={[styles.segItem, on && { backgroundColor: pen }]}>
-                  <Text style={[styles.segText, on && { color: ink }]} numberOfLines={1}>
-                    {b.name}
-                  </Text>
-                </Animated.View>
-              </PressScale>
-            );
-          })}
-        </View>
-        <Animated.Text key={s.brain} entering={FadeIn.duration(200)} style={styles.note}>
-          {BRAINS.find((b) => b.key === s.brain)?.note}
-        </Animated.Text>
+          <Text style={styles.section}>BRAIN</Text>
+          <View style={styles.segment}>
+            {BRAINS.map((b) => {
+              const on = s.brain === b.key;
+              return (
+                <PressScale key={b.key} onPress={() => setSettings({ brain: b.key })} scaleTo={0.94} haptic="selection" containerStyle={{ flex: 1 }} style={{ flex: 1 }} accessibilityRole="button" accessibilityLabel={b.name}>
+                  <Animated.View layout={LinearTransition.springify().damping(20)} style={[styles.segItem, on && { backgroundColor: pen }]}>
+                    <Text style={[styles.segText, on && { color: ink }]} numberOfLines={1}>
+                      {b.name}
+                    </Text>
+                  </Animated.View>
+                </PressScale>
+              );
+            })}
+          </View>
+          <Animated.Text key={s.brain} entering={FadeIn.duration(200)} style={styles.note}>
+            {BRAINS.find((b) => b.key === s.brain)?.note}
+          </Animated.Text>
 
-        <View style={styles.status}>
-          <StatusLine label="APPLE INTELLIGENCE" ok={apple?.available ?? null} detail={apple ? (apple.available ? (apple.images ? 'Ready · sees images' : 'Ready · text only') : apple.reason) : 'Checking…'} pen={pen} />
-          <StatusLine label="LENSI SERVER" ok={cloudOk} detail={cloudOk === null ? 'Checking…' : cloudOk ? serverURL() : `Not reachable at ${serverURL()}`} pen={pen} />
-        </View>
+          <View style={styles.status}>
+            <StatusLine label="APPLE INTELLIGENCE" ok={apple?.available ?? null} detail={apple ? (apple.available ? (apple.images ? 'Ready · sees images' : 'Ready · text only') : apple.reason) : 'Checking…'} pen={pen} />
+            <StatusLine label="LENSI SERVER" ok={cloudOk} detail={cloudOk === null ? 'Checking…' : cloudOk ? serverURL() : `Not reachable at ${serverURL()}`} pen={pen} />
+          </View>
 
-        <Text style={styles.section}>BEHAVIOUR</Text>
-        <Row label="Read steps aloud" value={s.narrate} onChange={(v) => setSettings({ narrate: v })} pen={pen} />
-        <Row label="Live brackets on the camera" value={s.liveBrackets} onChange={(v) => setSettings({ liveBrackets: v })} pen={pen} />
-        <Row label="Haptics" value={s.haptics} onChange={(v) => setSettings({ haptics: v })} pen={pen} />
+          <Text style={styles.section}>BEHAVIOUR</Text>
+          <Row label="Read steps aloud" value={s.narrate} onChange={(v) => setSettings({ narrate: v })} pen={pen} />
+          <Row label="Live brackets on the camera" value={s.liveBrackets} onChange={(v) => setSettings({ liveBrackets: v })} pen={pen} />
+          <Row label="Haptics" value={s.haptics} onChange={(v) => setSettings({ haptics: v })} pen={pen} />
 
-        <Text style={styles.section}>SERVER URL</Text>
-        <TextInput
-          value={s.serverURL}
-          onChangeText={(v) => setSettings({ serverURL: v })}
-          placeholder={serverURL()}
-          placeholderTextColor={faint}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          style={styles.input}
-          selectionColor={pen}
-        />
+          <Text style={styles.section}>SERVER URL</Text>
+          <TextInput
+            value={s.serverURL}
+            onChangeText={(v) => setSettings({ serverURL: v })}
+            placeholder={serverURL()}
+            placeholderTextColor={faint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            style={styles.input}
+            selectionColor={pen}
+          />
 
-        <Text style={styles.section}>MADE WITH</Text>
-        <Text style={styles.credits}>
-          Apple Foundation Models · Vision · ARKit. MobileSAM (Apache-2.0) for part outlines, YOLO11n (AGPL-3.0) for
-          live detection. Type: Bricolage Grotesque, Funnel Sans, Fragment Mono, Instrument Serif (OFL). Motion ideas
-          from React Bits, rebuilt for React Native. Demo photos from the Segment Anything and OpenCV samples
-          (Apache-2.0).
-        </Text>
+          <Text style={styles.section}>MADE WITH</Text>
+          <Text style={styles.credits}>
+            Apple Foundation Models · Vision · ARKit. MobileSAM (Apache-2.0) for part outlines, YOLO11n (AGPL-3.0) for
+            live detection. Type: Bricolage Grotesque, Funnel Sans, Fragment Mono, Instrument Serif (OFL). Motion ideas
+            from React Bits, rebuilt for React Native. Demo photos from the Segment Anything and OpenCV samples
+            (Apache-2.0).
+          </Text>
+        </ScrollView>
       </Animated.View>
     </View>
   );
@@ -133,6 +142,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 10,
   },
+  scroll: { flexGrow: 0 },
   grab: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(244,241,234,0.2)', marginBottom: 12 },
   h1: { color: paper, fontFamily: fonts.serifItalic, fontSize: 38, letterSpacing: -0.6, marginBottom: 6 },
   section: { color: faint, fontFamily: fonts.mono, fontSize: 10.5, letterSpacing: 1.4, marginTop: 18, marginBottom: 8 },
@@ -156,5 +166,6 @@ const styles = StyleSheet.create({
     color: paper,
     fontFamily: fonts.mono,
     fontSize: 13,
+    outlineWidth: 0,
   },
 });

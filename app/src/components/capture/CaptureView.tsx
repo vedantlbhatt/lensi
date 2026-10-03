@@ -21,7 +21,7 @@ import { devhooks } from '../../lib/devhooks';
 import { fromView, toView } from '../../lib/geometry';
 import { haptic } from '../../lib/haptics';
 import { say } from '../../lib/narrate';
-import { analyze, ask, askAbout, cancel, isHowTo, switchMoment } from '../../lib/pipeline';
+import { analyze, ask, askAbout, cancel, isHowTo, relens, removeCallout, renameCallout, switchMoment } from '../../lib/pipeline';
 import { setSettings, useSettings } from '../../lib/settings';
 import { getCapture, removeCapture, useCapture } from '../../lib/store';
 import type { Capture, Pt } from '../../lib/types';
@@ -38,8 +38,10 @@ import { AnnotationOverlay } from './AnnotationOverlay';
 import { AskBar } from './AskBar';
 import { CalloutLabels } from './CalloutLabels';
 import { InfoCard } from './InfoCard';
+import { LabelEditor } from './LabelEditor';
+import { LabelMenu, MENU } from './LabelMenu';
 import { MomentStrip } from './MomentStrip';
-import { activeSteps, CARD_PEEK, FRAME_RADIUS, placeCallouts, stageFor } from './layout';
+import { activeSteps, CARD_PEEK, FRAME_RADIUS, LABEL, placeCallouts, stageFor, type PlacedCallout } from './layout';
 import { renderAnnotated, shareCapture } from './share';
 import { StepPlayer } from './StepPlayer';
 import { WalkPointer } from './WalkPointer';
@@ -155,19 +157,39 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
     });
 
   // ---- annotations ---------------------------------------------------------------
-  const placed = useMemo(() => (settled ? placeCallouts(capture.annotation.callouts, stage) : []), [capture.annotation.callouts, stage, settled]);
+  // Removing a label shouldn't reshuffle the ones that stay: when every label
+  // already has a slot on this stage, keep it; anything new lays them out again.
+  const lastPlaced = useRef<{ stage: typeof stage; placed: PlacedCallout[] }>({ stage, placed: [] });
+  const placed = useMemo(() => {
+    if (!settled) return [];
+    const callouts = capture.annotation.callouts;
+    const last = lastPlaced.current;
+    const prev = new Map(last.placed.map((p) => [p.id, p]));
+    const known =
+      last.stage === stage &&
+      callouts.length > 0 &&
+      callouts.every((c) => {
+        const p = prev.get(c.id);
+        return !!p && p.label === c.label && p.at.x === c.at.x && p.at.y === c.at.y;
+      });
+    const next = known ? callouts.map((c) => ({ ...prev.get(c.id)!, ...c })) : placeCallouts(callouts, stage);
+    lastPlaced.current = { stage, placed: next };
+    return next;
+  }, [capture.annotation.callouts, stage, settled]);
   const { steps, key: stepsKey, pending: stepsPending } = activeSteps(capture);
   const [walking, setWalking] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const autoWalked = useRef<string | null>(null);
+  // A re-annotation (another lens) brings new steps under the same key.
+  const walkKey = `${stepsKey}:${steps[0]?.id ?? ''}`;
 
   // A walkthrough that was asked for starts itself as soon as step one lands.
   useEffect(() => {
-    if (!steps.length || autoWalked.current === stepsKey) return;
-    autoWalked.current = stepsKey;
+    if (!steps.length || autoWalked.current === walkKey) return;
+    autoWalked.current = walkKey;
     setStepIndex(0);
     setWalking(true);
-  }, [steps.length, stepsKey]);
+  }, [steps.length, walkKey]);
 
   const step = walking ? (steps[Math.min(stepIndex, steps.length - 1)] ?? null) : null;
   useEffect(() => {
@@ -195,6 +217,18 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
 
   // ---- card ------------------------------------------------------------------------
   const [expanded, setExpanded] = useState(false);
+
+  // ---- editing labels: hold one to rename or remove it ---------------------------------
+  const [menuFor, setMenuFor] = useState<PlacedCallout | null>(null);
+  const [renaming, setRenaming] = useState<PlacedCallout | null>(null);
+  const menuAt = useMemo(() => {
+    if (!menuFor) return null;
+    const cx = menuFor.slot.x + menuFor.width / 2;
+    const x = Math.min(screen.width - MENU.w - 10, Math.max(10, cx - MENU.w / 2));
+    const above = menuFor.slot.y - MENU.h - 8;
+    const below = above < insets.top + 56;
+    return { x, y: below ? menuFor.slot.y + LABEL.height + 8 : above, below };
+  }, [menuFor, screen.width, insets.top]);
 
   // ---- tap the print: "what's this?" ------------------------------------------------
   const sparks = useRef<SparksRef>(null);
@@ -294,7 +328,22 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
           pen={lens.pen}
           focus={walking ? null : focus}
         />
-        <CalloutLabels placed={placed} pen={lens.pen} dim={walking} onPress={(c) => onAsk(`Tell me about the ${c.label.toLowerCase()}`)} />
+        <CalloutLabels
+          placed={placed}
+          pen={lens.pen}
+          dim={walking}
+          focusId={menuFor?.id ?? renaming?.id ?? null}
+          onPress={(c) => onAsk(`Tell me about the ${c.label.toLowerCase()}`)}
+          onLongPress={
+            walking
+              ? undefined
+              : (c) => {
+                  haptic.thud();
+                  setRenaming(null);
+                  setMenuFor(c);
+                }
+          }
+        />
         {walking ? <WalkPointer target={pointerTarget} index={stepIndex} pen={lens.pen} home={{ x: screen.width / 2, y: screen.height - CARD_PEEK }} /> : null}
       </Animated.View>
 
@@ -305,6 +354,27 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
       ) : null}
 
       <Sparks ref={sparks} color={lens.pen} />
+
+      {menuFor && menuAt ? (
+        <LabelMenu
+          x={menuAt.x}
+          y={menuAt.y}
+          below={menuAt.below}
+          onClose={() => setMenuFor(null)}
+          onRename={() => {
+            setRenaming(menuFor);
+            setMenuFor(null);
+          }}
+          onRemove={() => {
+            const c = menuFor;
+            setMenuFor(null);
+            sparks.current?.burst(c.slot.x + c.width / 2, c.slot.y + LABEL.height / 2, lens.pen);
+            haptic.thud();
+            const undo = removeCallout(capture.id, c.id);
+            if (undo) toast(`Removed “${c.label}”`, { label: 'Undo', run: undo });
+          }}
+        />
+      ) : null}
 
       {/* Top bar */}
       <Animated.View style={[styles.top, { top: insets.top + 6 }, chrome]} pointerEvents="box-none">
@@ -350,9 +420,21 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
       {/* Bottom card */}
       <Animated.View style={[styles.cardWrap, { paddingBottom: insets.bottom + 8 }, chrome, cardStyle]} pointerEvents="box-none">
         <GestureDetector gesture={cardDrag}>
-          <View style={styles.card}>
+          <View style={[styles.card, renaming && styles.cardCompact]}>
             <View style={styles.handle} />
-            {walking && steps.length ? (
+            {renaming ? (
+              <LabelEditor
+                key={renaming.id}
+                initial={renaming.label}
+                pen={lens.pen}
+                onCancel={() => setRenaming(null)}
+                onDone={(label) => {
+                  renameCallout(capture.id, renaming.id, label);
+                  haptic.tick();
+                  setRenaming(null);
+                }}
+              />
+            ) : walking && steps.length ? (
               <StepPlayer
                 steps={steps}
                 question={stepsKey === 'capture' ? capture.prompt : capture.thread.find((x) => x.id === stepsKey)?.question}
@@ -385,9 +467,14 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
                 }}
                 onRetry={() => void analyze(capture.id, { walkthrough: capture.lens === 'guide' })}
                 onSuggest={onAsk}
+                onLens={(l) => {
+                  haptic.thud();
+                  setFocus(null);
+                  relens(capture.id, l);
+                }}
               />
             )}
-            {!walking ? (
+            {!walking && !renaming ? (
               <View style={styles.ask}>
                 <AskBar pen={lens.pen} busy={false} onAsk={onAsk} onFocus={() => setExpanded(true)} />
               </View>
@@ -481,10 +568,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 10,
     paddingBottom: 12,
-    minHeight: CARD_PEEK - 12,
+    minHeight: CARD_PEEK - 8,
   },
+  cardCompact: { minHeight: 0 },
   handle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(244,241,234,0.22)', marginBottom: 10 },
-  ask: { marginTop: 14 },
+  // Pinned to the bottom of the card, so the card keeps one height while the answer streams in.
+  ask: { marginTop: 'auto', paddingTop: 14 },
   videoBadge: { position: 'absolute', right: 12, bottom: 12 },
   moments: { position: 'absolute' },
   playBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: paper, alignItems: 'center', justifyContent: 'center' },

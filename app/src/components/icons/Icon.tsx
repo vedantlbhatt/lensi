@@ -33,7 +33,8 @@ export type IconName =
   | 'cloud'
   | 'eye'
   | 'chip'
-  | 'download';
+  | 'download'
+  | 'pencil';
 
 export function Icon({
   name,
@@ -191,6 +192,12 @@ function glyph(name: IconName, p: P, color: string, fill?: string) {
       );
     case 'check':
       return <Path {...p} d="M5.2 12.6l4.3 4.3 9.3-9.6" />;
+    case 'pencil':
+      return (
+        <>
+          <Path {...p} d="M14.6 5.6l3.8 3.8M5 19l.9-4.1L15.7 5.1a1.9 1.9 0 012.7 0l.5.5a1.9 1.9 0 010 2.7L9.1 18.1 5 19z" />
+        </>
+      );
     case 'cloud':
       return <Path {...p} d="M7.4 18.5a4.4 4.4 0 01-.7-8.7 5.6 5.6 0 0110.9 1.3 3.7 3.7 0 01-.6 7.4H7.4z" />;
     case 'eye':

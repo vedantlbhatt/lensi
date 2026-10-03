@@ -96,24 +96,34 @@ async function runEyes(c: Capture): Promise<{ subject: Region | null; regions: R
   }
 }
 
+type AnalyzeOpts = {
+  walkthrough: boolean;
+  /** Keep the regions the eyes already found (a re-annotation of the same still). */
+  reuseEyes?: boolean;
+  /** Re-ask the question that started the capture. Default true. */
+  withPrompt?: boolean;
+  hint?: string | null;
+};
+
 /** Eyes first (instant, on-device), then whichever brain is available. */
-export async function analyze(id: string, opts: { walkthrough: boolean }) {
+export async function analyze(id: string, opts: AnalyzeOpts) {
   const c0 = getCapture(id);
   if (!c0) return;
   controllers.get(id)?.abort();
   const controller = new AbortController();
   controllers.set(id, controller);
 
-  const eyes = await runEyes(c0);
+  const reuse = opts.reuseEyes && (!!c0.subject || c0.regions.length > 0);
+  const eyes = reuse ? { subject: c0.subject, regions: c0.regions, hint: opts.hint ?? c0.subject?.text ?? null } : await runEyes(c0);
   if (controller.signal.aborted) return;
-  patchCapture(id, (c) => ({ ...c, subject: eyes.subject, regions: eyes.regions }));
+  if (!reuse) patchCapture(id, (c) => ({ ...c, subject: eyes.subject, regions: eyes.regions }));
 
   const engine = await pickEngine(getSettings().brain);
   if (controller.signal.aborted) return;
   patchCapture(id, (c) => ({ ...c, engine: engine.id }));
 
   const c = getCapture(id)!;
-  const question = c.prompt ?? undefined;
+  const question = opts.withPrompt === false ? undefined : (c.prompt ?? undefined);
   // A spoken question that isn't a how-to gets an answer thread of its own.
   const exchangeId = question && !opts.walkthrough ? startExchange(id, question, false) : null;
 
@@ -237,6 +247,48 @@ export function switchMoment(id: string, uri: string) {
     error: null,
   }));
   void analyze(id, { walkthrough: false });
+}
+
+/**
+ * Look again through a different lens. The eyes' regions are reused (they
+ * don't depend on the lens), the drawing is redone, the thread is kept.
+ */
+export function relens(id: string, lens: Lens) {
+  const c = getCapture(id);
+  if (!c || c.lens === lens) return;
+  const hint = c.annotation.title ?? c.subject?.text ?? null;
+  cancel(id);
+  patchCapture(id, (x) => ({ ...x, lens, annotation: emptyAnnotation(), status: 'analyzing', error: null }));
+  void analyze(id, { walkthrough: lens === 'guide', reuseEyes: true, withPrompt: false, hint });
+}
+
+/** The user's own word for a part wins over the model's. */
+export function renameCallout(id: string, calloutId: string, label: string) {
+  const text = label.replace(/\s+/g, ' ').trim();
+  if (!text) return;
+  patchCapture(id, (x) => ({
+    ...x,
+    annotation: { ...x.annotation, callouts: x.annotation.callouts.map((k) => (k.id === calloutId ? { ...k, label: text } : k)) },
+  }));
+}
+
+/** Removes a label; returns an undo that puts it back where it was. */
+export function removeCallout(id: string, calloutId: string): (() => void) | null {
+  const c = getCapture(id);
+  const i = c ? c.annotation.callouts.findIndex((k) => k.id === calloutId) : -1;
+  if (!c || i < 0) return null;
+  const removed = c.annotation.callouts[i];
+  patchCapture(id, (x) => ({
+    ...x,
+    annotation: { ...x.annotation, callouts: x.annotation.callouts.filter((k) => k.id !== calloutId) },
+  }));
+  return () =>
+    patchCapture(id, (x) => {
+      if (x.annotation.callouts.some((k) => k.id === removed.id)) return x;
+      const callouts = [...x.annotation.callouts];
+      callouts.splice(Math.min(i, callouts.length), 0, removed);
+      return { ...x, annotation: { ...x.annotation, callouts } };
+    });
 }
 
 export function cancel(id: string) {

@@ -13,6 +13,7 @@ import { springs } from '../theme/motion';
 export function PressScale({
   children,
   style,
+  containerStyle,
   scaleTo = 0.9,
   haptic = 'light',
   onPressIn,
@@ -21,6 +22,8 @@ export function PressScale({
 }: Omit<PressableProps, 'style' | 'children'> & {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  /** Style for the touch target itself, e.g. `flex: 1` when it shares a row. */
+  containerStyle?: StyleProp<ViewStyle>;
   scaleTo?: number;
   haptic?: 'light' | 'medium' | 'selection' | null;
 }) {
@@ -29,6 +32,7 @@ export function PressScale({
   return (
     <Pressable
       {...rest}
+      style={containerStyle}
       onPressIn={(e: GestureResponderEvent) => {
         s.value = withSpring(scaleTo, springs.press);
         if (haptic && getSettings().haptics) {

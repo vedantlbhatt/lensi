@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeOutUp, SlideInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { glassStrong, hairline, paper } from '../../theme/tokens';
+import { glassStrong, hairline, ink, paper } from '../../theme/tokens';
+import { haptic } from '../../lib/haptics';
 import { fonts } from '../../theme/type';
 
-type T = { id: number; text: string };
+type Action = { label: string; run: () => void };
+type T = { id: number; text: string; action?: Action };
 let push: ((t: T) => void) | null = null;
 
-/** Fire-and-forget status line at the top of the screen. */
-export function toast(text: string) {
-  push?.({ id: Date.now(), text });
+/** Status line at the top of the screen; with an action (Undo) it stays a little longer and takes a tap. */
+export function toast(text: string, action?: Action) {
+  push?.({ id: Date.now(), text, action });
 }
 
 export function ToastHost() {
@@ -25,14 +27,36 @@ export function ToastHost() {
   }, []);
   useEffect(() => {
     if (!t) return;
-    const h = setTimeout(() => setT((cur) => (cur?.id === t.id ? null : cur)), 2400);
+    const h = setTimeout(() => setT((cur) => (cur?.id === t.id ? null : cur)), t.action ? 3600 : 2400);
     return () => clearTimeout(h);
   }, [t]);
   return (
-    <View pointerEvents="none" style={[styles.host, { top: insets.top + 54 }]}>
+    <View pointerEvents="box-none" style={[styles.host, { top: insets.top + 54 }]}>
       {t ? (
-        <Animated.View key={t.id} entering={SlideInUp.springify().damping(18)} exiting={FadeOutUp.duration(200)} style={styles.pill}>
+        <Animated.View
+          key={t.id}
+          entering={SlideInUp.springify().damping(18)}
+          exiting={FadeOutUp.duration(200)}
+          style={[styles.pill, t.action && styles.pillAction]}
+          pointerEvents={t.action ? 'auto' : 'none'}
+        >
           <Text style={styles.text}>{t.text}</Text>
+          {t.action ? (
+            <Pressable
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={t.action.label}
+              onPress={() => {
+                haptic.tap();
+                t.action?.run();
+                setT(null);
+              }}
+            >
+              <View style={styles.actionPill}>
+                <Text style={styles.action}>{t.action.label}</Text>
+              </View>
+            </Pressable>
+          ) : null}
         </Animated.View>
       ) : null}
     </View>
@@ -50,5 +74,8 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
   },
+  pillAction: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6, paddingRight: 6 },
   text: { color: paper, fontFamily: fonts.mono, fontSize: 12.5, letterSpacing: 0.2, textAlign: 'center' },
+  actionPill: { height: 26, paddingHorizontal: 11, borderRadius: 13, backgroundColor: paper, justifyContent: 'center' },
+  action: { color: ink, fontFamily: fonts.textBold, fontSize: 13 },
 });

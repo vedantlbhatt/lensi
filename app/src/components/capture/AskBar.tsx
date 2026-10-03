@@ -109,7 +109,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
   },
-  input: { flex: 1, color: paper, fontFamily: fonts.text, fontSize: 16, paddingVertical: 0, height: 48 },
+  input: { flex: 1, color: paper, fontFamily: fonts.text, fontSize: 16, paddingVertical: 0, height: 48, outlineWidth: 0 },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   sendGhost: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   micGlow: { position: 'absolute', width: 34, height: 34, borderRadius: 17 },

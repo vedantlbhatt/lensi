@@ -1,14 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
-import type { Capture } from '../../lib/types';
+import type { Capture, Lens } from '../../lib/types';
 import { BlurText } from '../../motion/BlurText';
 import { PressScale } from '../../motion/PressScale';
 import { ShinyText } from '../../motion/ShinyText';
 import { faint, hairline, ink, lensInfo, mist, paper } from '../../theme/tokens';
 import { fonts } from '../../theme/type';
 import { Icon } from '../icons/Icon';
+import { LensPicker } from './LensPicker';
 
 const SOURCE_COPY: Record<Capture['source'], string> = {
   camera: 'PHOTO',
@@ -37,6 +38,7 @@ export function InfoCard({
   onWalk,
   onRetry,
   onSuggest,
+  onLens,
 }: {
   capture: Capture;
   expanded: boolean;
@@ -44,6 +46,8 @@ export function InfoCard({
   onWalk: () => void;
   onRetry: () => void;
   onSuggest: (q: string) => void;
+  /** Look again through another lens. */
+  onLens: (l: Lens) => void;
 }) {
   const lens = lensInfo(capture.lens);
   const a = capture.annotation;
@@ -52,20 +56,45 @@ export function InfoCard({
   const suggestions = useMemo(() => suggest(capture), [capture]);
   // The newest exchange, shown in place of the summary while the card is down.
   const latest = capture.thread.length ? capture.thread[capture.thread.length - 1] : null;
+  const [lensOpen, setLensOpen] = useState(false);
 
   return (
     <View style={styles.wrap}>
-      <View style={styles.meta}>
-        <View style={[styles.lensDot, { backgroundColor: lens.pen }]} />
-        <Text style={styles.metaText}>{lens.name.toUpperCase()}</Text>
-        <Text style={styles.metaFaint}>· {SOURCE_COPY[capture.source]}</Text>
-        <Text style={styles.metaFaint}>· {when(capture.createdAt)}</Text>
-        {!expanded && a.facts.length ? (
-          <Text style={[styles.metaFaint, styles.metaRight]}>
-            {a.facts.length} {a.facts.length === 1 ? 'FACT' : 'FACTS'} ↑
-          </Text>
-        ) : null}
-      </View>
+      {lensOpen ? (
+        <View style={styles.metaSlot}>
+          <LensPicker
+            lens={capture.lens}
+            onPick={(l) => {
+              setLensOpen(false);
+              if (l !== capture.lens) onLens(l);
+            }}
+          />
+        </View>
+      ) : (
+        <View style={styles.meta}>
+          <PressScale
+            onPress={() => setLensOpen(true)}
+            scaleTo={0.9}
+            haptic="selection"
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={`${lens.name} lens. Change lens`}
+          >
+            <View style={styles.lensChip}>
+              <View style={[styles.lensDot, { backgroundColor: lens.pen }]} />
+              <Text style={styles.metaText}>{lens.name.toUpperCase()}</Text>
+              <Icon name="down" size={10} color={faint} stroke={2.6} />
+            </View>
+          </PressScale>
+          <Text style={styles.metaFaint}>· {SOURCE_COPY[capture.source]}</Text>
+          <Text style={styles.metaFaint}>· {when(capture.createdAt)}</Text>
+          {!expanded && a.facts.length ? (
+            <Text style={[styles.metaFaint, styles.metaRight]}>
+              {a.facts.length} {a.facts.length === 1 ? 'FACT' : 'FACTS'} ↑
+            </Text>
+          ) : null}
+        </View>
+      )}
 
       <View style={styles.titleSlot}>
         {a.title ? (
@@ -196,7 +225,9 @@ function Skeleton({ w }: { w: `${number}%` }) {
 
 const styles = StyleSheet.create({
   wrap: { gap: 10 },
-  meta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 24 },
+  metaSlot: { height: 24, justifyContent: 'center' },
+  lensChip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 24 },
   lensDot: { width: 7, height: 7, borderRadius: 4 },
   metaText: { color: paper, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
   metaFaint: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
