@@ -28,10 +28,15 @@ final class PinLabel: UIView {
     self.color = color
     self.isCallout = isCallout
     super.init(frame: .zero)
-    layer.cornerRadius = isCallout ? 11 : 15
+    layer.cornerRadius = isCallout ? 9 : 14
     layer.cornerCurve = .continuous
-    label.font = .systemFont(ofSize: isCallout ? 13 : 16, weight: isCallout ? .medium : .semibold)
-    label.textColor = .white
+    layer.shadowColor = UIColor.black.cgColor
+    layer.shadowOpacity = 0.3
+    layer.shadowRadius = 8
+    layer.shadowOffset = CGSize(width: 0, height: 3)
+    label.font = isCallout
+      ? (UIFont(name: "FragmentMono-Regular", size: 12) ?? .monospacedSystemFont(ofSize: 12, weight: .regular))
+      : (UIFont(name: "BricolageGrotesque-Bold", size: 16) ?? .systemFont(ofSize: 16, weight: .bold))
     label.text = text
     addSubview(label)
     apply()
@@ -39,8 +44,10 @@ final class PinLabel: UIView {
 
   required init?(coder: NSCoder) { fatalError() }
 
+  /// Titles sit on the lens pen in ink; callouts are ink pills with paper text.
   private func apply() {
-    backgroundColor = isCallout ? UIColor(white: 0.08, alpha: 0.82) : color
+    backgroundColor = isCallout ? UIColor(red: 0.043, green: 0.043, blue: 0.047, alpha: 0.86) : color
+    label.textColor = isCallout ? UIColor(red: 0.957, green: 0.945, blue: 0.918, alpha: 1) : UIColor(red: 0.043, green: 0.043, blue: 0.047, alpha: 1)
   }
 
   var text: String {
@@ -53,10 +60,10 @@ final class PinLabel: UIView {
   }
 
   func sizeToFitContent() {
-    let pad: CGFloat = isCallout ? 9 : 12
+    let pad: CGFloat = isCallout ? 10 : 13
     let size = label.sizeThatFits(CGSize(width: 220, height: 40))
     let w = min(size.width, 220)
-    bounds = CGRect(x: 0, y: 0, width: w + pad * 2, height: isCallout ? 22 : 30)
+    bounds = CGRect(x: 0, y: 0, width: w + pad * 2, height: isCallout ? 26 : 32)
     label.frame = CGRect(x: pad, y: 0, width: w, height: bounds.height)
   }
 }

@@ -1,12 +1,16 @@
 import ARKit
+import AVFoundation
+import CoreImage
 import ExpoModulesCore
+import ImageIO
 import SceneKit
 import UIKit
 
 /// Live camera with world tracking. Every ~66 ms the newest frame goes through
-/// YOLO on the Neural Engine; boxes are smoothed at display rate. A tap (or the
-/// shutter) freezes the camera pose, crops the subject, emits it to JS and drops
-/// a world anchor so annotations stay on the object as the phone moves.
+/// YOLO on the Neural Engine; boxes are smoothed at display rate. In live-pin
+/// mode a tap freezes the camera pose, crops the subject, emits it to JS and
+/// drops a world anchor so annotations stay on the object as the phone moves.
+/// The same session also takes full-resolution photos and records video.
 final class LensiARView: ExpoView, ARSessionDelegate {
   let onSelect = EventDispatcher()
   let onFocusChange = EventDispatcher()
@@ -14,6 +18,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   let onPinTap = EventDispatcher()
 
   var showDetections = true
+  /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
+  var livePins = false
+  /// The current lens pen: focused bracket, its tag and new pins.
+  var accent: UIColor = .white {
+    didSet {
+      focusLayer.strokeColor = accent.cgColor
+      focusTag.color = accent
+    }
+  }
 
   private let sceneView = ARSCNView()
   private let boxLayer = CAShapeLayer()
@@ -37,6 +50,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var pins: [String: Pin] = [:]
   private var pinOrder: [String] = []
   private var contexts: [String: Selection] = [:]
+
+  private var paused = false
+  private var configuration: ARWorldTrackingConfiguration?
+  private var recorder: Recorder?
+  private let photoContext = CIContext(options: [.useSoftwareRenderer: false])
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -81,13 +99,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   func start() {
-    guard !running, ARWorldTrackingConfiguration.isSupported else { return }
+    guard !running, !paused, ARWorldTrackingConfiguration.isSupported else { return }
     running = true
-    let config = ARWorldTrackingConfiguration()
-    config.planeDetection = [.horizontal, .vertical]
-    if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-      config.sceneReconstruction = .mesh
-    }
+    let config = configuration ?? makeConfiguration()
+    configuration = config
     sceneView.session.run(config)
     let link = CADisplayLink(target: self, selector: #selector(tick))
     link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
@@ -100,7 +115,32 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     running = false
     displayLink?.invalidate()
     displayLink = nil
+    if recorder != nil { stopRecording { _ in } }
     sceneView.session.pause()
+  }
+
+  private func makeConfiguration() -> ARWorldTrackingConfiguration {
+    let config = ARWorldTrackingConfiguration()
+    config.planeDetection = [.horizontal, .vertical]
+    if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+      config.sceneReconstruction = .mesh
+    }
+    // A format that can also deliver full-resolution stills on demand.
+    if let format = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
+      config.videoFormat = format
+    }
+    return config
+  }
+
+  /// Pausing keeps the world map, so pins are still there when we come back.
+  func setPaused(_ value: Bool) {
+    guard value != paused else { return }
+    paused = value
+    if value {
+      stop()
+    } else if window != nil {
+      start()
+    }
   }
 
   // MARK: - Coordinate spaces
@@ -145,6 +185,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   // MARK: - Live detection
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
+    recorder?.append(pixelBuffer: frame.capturedImage, time: frame.timestamp)
     guard showDetections, !visionBusy, frame.timestamp - lastVisionTime > 0.066 else { return }
     visionBusy = true
     lastVisionTime = frame.timestamp
@@ -320,6 +361,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         return
       }
     }
+    guard livePins else { return }
     select(at: p)
   }
 
@@ -349,8 +391,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     contexts[id] = selection.withPlane(through: world)
     let tapDistance = -simd_mul(frame.camera.transform.inverse, simd_float4(world, 1)).z
 
-    let color = LensiARView.palette[pins.values.filter { $0.parentId == nil }.count % LensiARView.palette.count]
-    let pin = Pin(id: id, parentId: nil, world: world, text: target?.label ?? "Looking", color: color)
+    let pin = Pin(id: id, parentId: nil, world: world, text: target?.label ?? "Looking", color: accent)
     addPin(pin)
 
     for old in pins.values where old.parentId == nil && old.id != id {
@@ -449,6 +490,132 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     layoutPins()
     pin.popIn()
     UIImpactFeedbackGenerator(style: pin.parentId == nil ? .medium : .light).impactOccurred()
+  }
+
+  // MARK: - Photo, video, torch
+
+  /// Full-resolution still (when the format allows it), written upright as JPEG.
+  func takePhoto(_ done: @escaping (Result<[String: Any], Error>) -> Void) {
+    let session = sceneView.session
+    let finish: (ARFrame?) -> Void = { [weak self] frame in
+      guard let self else { return }
+      guard let frame = frame ?? session.currentFrame else {
+        done(.failure(LensiError.unavailable("The camera isn't ready yet.")))
+        return
+      }
+      let buffer = frame.capturedImage
+      self.visionQueue.async {
+        let result = self.writePhoto(buffer)
+        DispatchQueue.main.async { done(result) }
+      }
+    }
+    guard running else {
+      finish(session.currentFrame)
+      return
+    }
+    session.captureHighResolutionFrame { frame, _ in
+      DispatchQueue.main.async { finish(frame) }
+    }
+  }
+
+  private func writePhoto(_ buffer: CVPixelBuffer) -> Result<[String: Any], Error> {
+    let image = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    let extent = image.extent
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("lensi-\(UUID().uuidString).jpg")
+    guard let data = photoContext.jpegRepresentation(
+      of: image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)),
+      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+      options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.9]
+    ) else {
+      return .failure(LensiError.unavailable("Couldn't encode the photo."))
+    }
+    do {
+      try data.write(to: url, options: .atomic)
+    } catch {
+      return .failure(error)
+    }
+    return .success(["uri": url.absoluteString, "width": Int(extent.width), "height": Int(extent.height)])
+  }
+
+  func startRecording(_ done: @escaping (Error?) -> Void) {
+    guard recorder == nil else {
+      done(nil)
+      return
+    }
+    guard running, let frame = sceneView.session.currentFrame else {
+      done(LensiError.unavailable("The camera isn't ready yet."))
+      return
+    }
+    let width = CVPixelBufferGetWidth(frame.capturedImage)
+    let height = CVPixelBufferGetHeight(frame.capturedImage)
+    AVAudioApplication.requestRecordPermission { [weak self] granted in
+      DispatchQueue.main.async {
+        guard let self else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("lensi-\(UUID().uuidString).mov")
+        do {
+          let r = try Recorder(url: url, sensorWidth: width, sensorHeight: height, withAudio: granted)
+          self.recorder = r
+          if granted, let config = self.configuration {
+            // Ask the session for microphone buffers only while recording.
+            config.providesAudioData = true
+            self.sceneView.session.run(config)
+          }
+          done(nil)
+        } catch {
+          done(error)
+        }
+      }
+    }
+  }
+
+  func stopRecording(_ done: @escaping (Result<[String: Any], Error>) -> Void) {
+    guard let r = recorder else {
+      done(.failure(LensiError.unavailable("Not recording.")))
+      return
+    }
+    recorder = nil
+    if let config = configuration, config.providesAudioData {
+      config.providesAudioData = false
+      if running { sceneView.session.run(config) }
+    }
+    r.finish { result in
+      DispatchQueue.main.async {
+        switch result {
+        case .success(let (url, seconds)):
+          done(.success([
+            "uri": url.absoluteString,
+            "width": Int(r.size.width),
+            "height": Int(r.size.height),
+            "durationMs": Int(seconds * 1000),
+          ]))
+        case .failure(let error):
+          done(.failure(error))
+        }
+      }
+    }
+  }
+
+  func session(_ session: ARSession, didOutputAudioSampleBuffer audioSampleBuffer: CMSampleBuffer) {
+    recorder?.append(audio: audioSampleBuffer)
+  }
+
+  /// Returns whether the torch is now on.
+  func setTorch(_ on: Bool) -> Bool {
+    guard let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera, device.hasTorch else {
+      return false
+    }
+    do {
+      try device.lockForConfiguration()
+      if on, device.isTorchModeSupported(.on) {
+        try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+      } else {
+        device.torchMode = .off
+      }
+      device.unlockForConfiguration()
+      return on
+    } catch {
+      return false
+    }
   }
 
   // MARK: - Commands from JS

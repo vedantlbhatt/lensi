@@ -43,6 +43,18 @@ final class Detector {
     guard let request = yolo else { return [] }
     let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .right)
     do { try handler.perform([request]) } catch { return [] }
+    return Detector.detections(request)
+  }
+
+  /// Same detector on an already-upright still image.
+  func detect(cgImage: CGImage) -> [Detection] {
+    guard let request = yolo else { return [] }
+    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+    do { try handler.perform([request]) } catch { return [] }
+    return Detector.detections(request)
+  }
+
+  private static func detections(_ request: VNCoreMLRequest) -> [Detection] {
     let results = request.results as? [VNRecognizedObjectObservation] ?? []
     return results.compactMap { obs in
       guard let top = obs.labels.first, top.confidence >= 0.35 else { return nil }

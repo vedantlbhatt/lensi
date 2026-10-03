@@ -1,11 +1,12 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { useGlobalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isVirtual, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
+import { DEMO_SCENES, isVirtual, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
 import { BrainChip } from '../components/camera/BrainChip';
 import { CameraSurface, type CameraHandle } from '../components/camera/CameraSurface';
 import { DropMenu, type DropChoice } from '../components/camera/DropMenu';
@@ -23,7 +24,7 @@ import { SettingsSheet } from '../components/ui/SettingsSheet';
 import { toast, ToastHost } from '../components/ui/Toast';
 import { pickEngine } from '../lib/engines';
 import { useLivePins } from '../lib/live';
-import { pasteFromClipboard, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
+import { assetPhoto, pasteFromClipboard, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
 import { ingest } from '../lib/pipeline';
 import { useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
@@ -172,6 +173,27 @@ export default function Camera() {
     }
     await takePhoto(q);
   }, [voice, takePhoto]);
+
+  // Scripted runs (CI screenshots, the web preview): lensi:///?demo=cars&lens=guide&ask=…
+  const params = useGlobalSearchParams<{ demo?: string; lens?: string; ask?: string; memories?: string }>();
+  useEffect(() => {
+    if (params.memories) setMemories(true);
+    const scene = DEMO_SCENES.find((s) => s.key === params.demo);
+    if (!scene) return;
+    const l = LENSES.find((x) => x.key === params.lens)?.key ?? 'identify';
+    setLens(l);
+    let alive = true;
+    (async () => {
+      const picked = await assetPhoto(scene.asset, scene.width, scene.height);
+      if (!alive) return;
+      flash.current?.fire();
+      const id = await ingest(params.ask ? { ...picked, source: 'voice' } : picked, { lens: l, prompt: params.ask ?? null });
+      if (alive) setOpen({ id, origin: 'camera' });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [params.demo, params.lens, params.ask, params.memories]);
 
   // Swipe up anywhere for Memories; sideways to change lens (real camera only,
   // the virtual one uses sideways swipes for scenes).

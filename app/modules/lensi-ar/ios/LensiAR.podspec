@@ -10,7 +10,10 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'ARKit', 'SceneKit', 'Vision', 'CoreML'
+  s.swift_version = '5.9'
+  s.frameworks = 'ARKit', 'SceneKit', 'Vision', 'CoreML', 'AVFoundation', 'Speech', 'CoreImage', 'ImageIO'
+  # Apple Intelligence is iOS 26+; weak-link so the app still launches on 17-25.
+  s.weak_frameworks = 'FoundationModels'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

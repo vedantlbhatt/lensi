@@ -1,0 +1,131 @@
+name: ios
+
+# Real-Apple checks for the parts Linux can't run: converts and verifies the
+# SAM Core ML models, builds the app for the iOS 27 Simulator, drives a few
+# scripted captures through deep links and screenshots them. Everything a
+# person (or agent) needs to look at is pushed to the `ci-results` branch.
+
+on:
+  push:
+    branches: [camera-first, main]
+    paths-ignore: ['**/*.md', 'tools/sam/report/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sam:
+    name: SAM models
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tools/sam/requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/lensi-sam
+          key: lensi-sam-${{ hashFiles('tools/sam/convert.py', 'tools/sam/sam_common.py') }}
+      - name: Install
+        run: pip install -r tools/sam/requirements.txt
+      - name: Convert MobileSAM to Core ML
+        run: python tools/sam/convert.py --out build/sam 2>&1 | tee build-convert.txt
+      - name: Compile .mlmodelc
+        run: |
+          mkdir -p out/models
+          xcrun coremlcompiler compile build/sam/LensiSAMEncoder.mlpackage out/models/
+          xcrun coremlcompiler compile build/sam/LensiSAMDecoder.mlpackage out/models/
+          du -sh out/models/* | tee out/model-sizes.txt
+      - name: Verify with Core ML (CPU)
+        run: python tools/sam/verify_coreml.py --models build/sam --compute-units CPU_ONLY 2>&1 | tee out/verify-cpu.txt
+      - name: Verify with Core ML (all compute units)
+        if: always()
+        run: python tools/sam/verify_coreml.py --models build/sam --compute-units ALL 2>&1 | tee out/verify-all.txt
+      - if: always()
+        run: cp build-convert.txt out/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sam
+          path: out/
+
+  app:
+    name: Simulator build + screenshots
+    runs-on: xcode-27
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: npm ci
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck + unit tests
+        working-directory: app
+        run: |
+          npx tsc --noEmit
+          npx -y tsx --test src/lib/__tests__/*.test.ts
+      - name: Prebuild
+        working-directory: app
+        env:
+          EXPO_NO_TELEMETRY: 1
+          CI: 1
+        run: npx expo prebuild --platform ios --no-install
+      - name: Pods
+        working-directory: app/ios
+        run: pod install
+      - name: Build (Release, Simulator)
+        working-directory: app
+        run: |
+          set -o pipefail
+          mkdir -p ../out
+          xcodebuild -workspace ios/Lensi.xcworkspace -scheme Lensi -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO build \
+            > ../out/xcodebuild.log 2>&1 || { grep -E "error:|fatal error|Undefined symbol|ld: " ../out/xcodebuild.log | head -150 > ../out/build-errors.txt; cat ../out/build-errors.txt; exit 1; }
+          grep -E "warning: .*(LensiAR|lensi-ar)" ../out/xcodebuild.log | sort -u | head -100 > ../out/lensi-warnings.txt || true
+      - name: Run in Simulator
+        working-directory: app
+        run: bash ../.github/scripts/simulator-shots.sh build/Build/Products/Release-iphonesimulator/Lensi.app ../out/shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app
+          path: out/
+
+  publish:
+    name: Publish results
+    needs: [sam, app]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+      - name: Push to ci-results
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN: ${{ github.run_id }}
+          SAM: ${{ needs.sam.result }}
+          APP: ${{ needs.app.result }}
+        run: |
+          cd results
+          printf "commit %s\nrun %s\nsam %s\napp %s\n" "$SHA" "$RUN" "$SAM" "$APP" > STATUS.txt
+          git init -q
+          git checkout -q -b ci-results
+          git add -A
+          git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "CI results for $SHA (run $RUN)"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-results
