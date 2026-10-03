@@ -14,7 +14,19 @@ A running log of the camera-first rebuild on branch `camera-first`: what exists,
 | App launch + scripted runs in the iOS 27 Simulator | same job; screenshots, device log, timeline and capture JSON on the `ci-results` branch | launches; Vision OCR, YOLO and SAM (CPU) annotate the demo scenes |
 | Eyes on public images (Vision + YOLO + SAM on macOS) | `tools/eyes` in the `sam` job | SAM part outlines on every image; QR payloads read |
 | Native crash review | a read-only pass over every Swift file (recording, speech, torch, photo, threading) | 10 issues found and fixed |
-| ARKit capture, recording, torch, live pins, speech, Apple Intelligence | need a physical iPhone | not yet run on device |
+| ARKit capture, recording, torch, live pins, live-guide tags and change watch, speech, Apple Intelligence | need a physical iPhone | not yet run on device |
+
+## Live guide (the default mode)
+
+What it is: someone mid-job (car, plumbing, wiring) props the phone up, says what they're doing, and gets short tags pinned on the parts plus one step at a time in a directions panel, read aloud, checked when something changes.
+
+How it fits together:
+
+- `guide.ts` is the session as a pure reducer (plan, steps, one tag per part, next/back/finish, check results, answers) plus the voice-command reader; `guideSession.ts` (`useGuide`) wires it to the camera, the brain, the voice and narration. 7 tests.
+- The brain gets a `guide: true` walkthrough request (steps name their part in 1-3 words: `LensiStep.part`, server `G` lines) and `check: <step>` requests (`LensiCheck {done, say}`, server `C|yes/no/unsure`). Eyes only can't judge a step and says so (`done: null`).
+- Native: `guideCapture` freezes the frame's pose and feature points; `guidePin` raycasts a part's point into the world; `guideFocus` highlights the current step's tag; `guideWatch` runs the change watch and fires `onGuideChange`.
+- Change watch (`GuideWatch.swift`): only while the phone is steady (moved < 2 cm, turned < 3 degrees since the last sample) and the part is on screen; a crop around the part is feature-printed twice a second; "changed" is distance > 0.42 from the baseline, "settled" is < 0.22 from the previous sample; three in a row fire once, then 4 s of quiet. A hand passing through isn't settled, so it doesn't count. These thresholds are a first guess: the distances are logged (`[lensi] watch base … prev …`) so they can be tuned on a phone.
+- The Simulator and the web preview have no ARKit: their tags are drawn over the virtual camera's drifting scene. The web preview fakes one change 7 s into watching a part, to show the flow; nothing else is faked.
 
 ## Things that need a device
 

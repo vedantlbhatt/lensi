@@ -1,11 +1,12 @@
 # lensi
 
-heyclicky for your camera. Lensi opens straight into a full-screen camera. Point it at anything, tap for a photo, hold for video, or hold the mic and ask out loud. It outlines the thing, labels its parts, and walks you through using it, step by step, with a pointer that lands on each part as you go. It runs on Apple's on-device model first.
+heyclicky for your camera. Lensi opens straight into a live guide: prop the phone up, point it at the job (a car, the pipes under a sink, a breaker box), tap the mic and say what you're doing. It tags the parts with short labels that stay on them as you and the phone move, and walks you through it one step at a time, checking each step when something changes where you're working. Tap for a photo, hold for video, or swipe to the other lenses for the photo-and-answer flow. It runs on Apple's on-device model first.
 
 ## What it does
 
 | | |
 |---|---|
+| **Live guide (default)** | Say, type or pick what you're working on. Lensi looks once, pins a short tag on each part the job touches (ARKit world anchors, so the tags stay put while your hands and the phone move), and shows one step at a time in a directions panel, read aloud. The current step's part is highlighted and watched: when it changes and settles (a cap off, a valve turned), Lensi checks the step from a fresh look and either moves on or says what to do. Hands-free: tap the mic once, talk, pause; say "next", "go back", "say that again", "is this right?" or ask anything. |
 | **Capture anything** | Tap the shutter for a photo, hold it for up to 15 s of video, or drop in a photo, video, file or clipboard image from the rail. |
 | **Ask out loud** | Hold the mic, ask "how do I descale this?", let go. Lensi takes the photo and answers. "How do I…" questions become walkthroughs. |
 | **Annotate** | The photo springs back into a framed print. The subject's outline draws itself while the model thinks, then each part's name settles onto the part as a plain white tag. |
@@ -28,6 +29,8 @@ heyclicky for your camera. Lensi opens straight into a full-screen camera. Point
 | Part outlines | MobileSAM (Meta's Segment Anything, mobile variant) on Core ML. A grid of point prompts over the subject proposes parts (knobs, ports, handles) that become numbered marks for the model (never drawn for you); taps and labels are point-prompted | Falls back to Vision instances |
 | The brain | Apple Intelligence (Foundation Models). On iOS 27 the photo goes in with numbered marks drawn on it, and the model answers by mark number | Claude (via `server/`) or vision-only as fallbacks |
 | The ears | On-device speech recognition | |
+| Live guide tags | The plan is made on one frame whose camera pose is frozen; each part's point is raycast into the world (or given the median depth of tracked feature points near the ray) and pinned there | ARKit, re-projected every frame |
+| Change watch | Twice a second, while the phone is steady and the part is in view, a Vision feature print of a ~15 cm crop around it is compared with how it looked; a difference that holds for ~1.5 s triggers a check | Thresholds still to be tuned on a device |
 
 The model never invents coordinates. It points by **mark number** (set-of-marks prompting), so every label lands on something the phone actually found. Claude can also point by coordinate, and its points are snapped to the nearest region and refined with SAM.
 

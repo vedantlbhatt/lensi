@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useRef } from 'react';
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 
 import {
   isVirtual,
@@ -63,6 +63,11 @@ export const CameraSurface = forwardRef<
 >(function CameraSurface(props, ref) {
   const native = useRef<LensiARViewRef>(null);
   const virtual = useRef<VirtualHandle>(null);
+  const onGuideChange = useRef(props.onGuideChange);
+  onGuideChange.current = props.onGuideChange;
+  // The web preview's camera is a still picture, so nothing it watches can
+  // change. It fakes one change 7 s into watching a part, to show the flow.
+  const fakeChange = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useImperativeHandle(
     ref,
@@ -82,8 +87,16 @@ export const CameraSurface = forwardRef<
             },
             pin: async () => {},
             focus: async () => {},
-            watch: async () => {},
-            clear: async () => {},
+            watch: async (id: string | null) => {
+              if (fakeChange.current) clearTimeout(fakeChange.current);
+              fakeChange.current = null;
+              if (Platform.OS !== 'web' || !id) return;
+              fakeChange.current = setTimeout(() => onGuideChange.current?.({ id, distance: 0.5 }), 7000);
+            },
+            clear: async () => {
+              if (fakeChange.current) clearTimeout(fakeChange.current);
+              fakeChange.current = null;
+            },
           },
         };
       }

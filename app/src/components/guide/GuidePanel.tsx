@@ -94,7 +94,7 @@ export function GuidePanel({
           </Text>
         </Animated.View>
       ) : (
-        <Animated.View key={`step-${state.index}-${finished}`} entering={FadeIn.duration(220)} style={styles.block}>
+        <Animated.View key={`step-${state.index}-${finished}`} entering={FadeIn.duration(120)} style={styles.block}>
           <View style={styles.head}>
             <Text style={styles.kicker} numberOfLines={1}>
               {finished ? 'All done' : step ? `Step ${state.index + 1} of ${state.steps.length}` : 'What the phone found'}
