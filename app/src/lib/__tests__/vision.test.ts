@@ -140,3 +140,15 @@ test('eyes only: a step check says it cannot judge, rather than guessing', async
   assert.equal(ev[0].kind, 'check');
   assert.equal((ev[0] as { done: boolean | null }).done, null);
 });
+
+test('eyes only, live guide: the thing itself gets a tag when nothing smaller was found', async () => {
+  const truck: Region[] = [{ id: 'r1', mark: 1, kind: 'subject', box: { x: 0.05, y: 0.3, w: 0.9, h: 0.4 }, text: 'truck' }];
+  const guide = await run({ regions: truck, question: 'How do I check the tyre pressure?', walkthrough: true, guide: true });
+  assert.deepEqual(
+    guide.filter((e) => e.kind === 'callout'),
+    [{ kind: 'callout', label: 'Truck', mark: 1 }],
+  );
+  // Outside the guide the title already names it; no tag repeats it.
+  const plain = await run({ regions: truck, question: 'How do I check the tyre pressure?', walkthrough: true });
+  assert.equal(plain.filter((e) => e.kind === 'callout').length, 0);
+});

@@ -212,8 +212,16 @@ export const visionEngine: Engine = {
             : 'Outlined on this phone. Names and answers need Apple Intelligence.',
       });
       const callouts: Region[] = [...codes, ...texts.slice(0, 4), ...objects.slice(0, 4)].slice(0, 7);
+      // The live guide tags what it can: when the thing itself is all the eyes
+      // found (a truck, not its parts), that one tag still says what it's looking at.
+      if (req.guide && !callouts.length && subject?.text) callouts.push(subject);
       for (const r of callouts) {
-        const label = r.kind === 'barcode' && r.text ? codeLabel(r.text) : r.kind === 'object' && r.text ? cap(DISPLAY[r.text] ?? r.text) : (r.text ?? r.kind);
+        const label =
+          r.kind === 'barcode' && r.text
+            ? codeLabel(r.text)
+            : (r.kind === 'object' || r.kind === 'subject') && r.text
+              ? cap(DISPLAY[r.text] ?? r.text)
+              : (r.text ?? r.kind);
         out.push({ kind: 'callout', label: clip(label, 26), mark: r.mark });
       }
       for (const c of codes) {

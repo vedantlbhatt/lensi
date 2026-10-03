@@ -119,7 +119,14 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
       }
       dispatch({ type: 'planned' });
       if (noModel && !latest.current.steps.length) {
-        dispatch({ type: 'note', note: { text: 'Step-by-step help needs Apple Intelligence or the Lensi server. The tags show what the phone found.', tone: 'info' } });
+        const tagged = latest.current.parts.length > 0;
+        dispatch({
+          type: 'note',
+          note: {
+            text: `Step-by-step help needs Apple Intelligence or the Lensi server. ${tagged ? 'The tags show what the phone found.' : 'The phone found nothing here it can name.'}`,
+            tone: 'info',
+          },
+        });
       }
     },
     [camera, cancelWork, capture, runBrain],
