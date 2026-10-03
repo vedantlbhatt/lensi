@@ -257,7 +257,14 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
     : tour && tourPoint
       ? { id: `${tour.ex}:${tour.i}`, text: tourPoint.label, at: tourCallout?.at ?? tourPoint.at, polygon: tourCallout?.polygon ?? tourPoint.polygon }
       : null;
-  const pointerTarget = shown?.at ? toView(shown.at, frame) : null;
+  // A part the answer names already wears its tag: aim just under the tag's
+  // corner so the pointer never covers the name it's pointing at.
+  const tourTag = !walking && tourCallout ? placed.find((k) => k.id === tourCallout.id) : undefined;
+  const pointerTarget = tourTag
+    ? { x: tourTag.slot.x + 12, y: tourTag.slot.y + LABEL.height + 2 }
+    : shown?.at
+      ? toView(shown.at, frame)
+      : null;
   const replayPoints =
     latestEx && latestPoints && !walking
       ? () => {
