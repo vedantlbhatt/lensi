@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInLeft } from 'react-native-reanimated';
 
@@ -10,12 +11,18 @@ import { fonts } from '../../theme/type';
  * redraws the photo through that lens; picking the current one folds it away.
  */
 export function LensPicker({ lens, onPick }: { lens: Lens; onPick: (l: Lens) => void }) {
+  const scroll = useRef<ScrollView>(null);
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scroll} contentContainerStyle={styles.row}>
+    <ScrollView ref={scroll} horizontal showsHorizontalScrollIndicator={false} style={styles.scroll} contentContainerStyle={styles.row}>
       {LENSES.map((l, i) => {
         const on = l.key === lens;
         return (
-          <Animated.View key={l.key} entering={FadeInLeft.delay(i * 32).springify().damping(17).stiffness(260)}>
+          <Animated.View
+            key={l.key}
+            entering={FadeInLeft.delay(i * 32).springify().damping(17).stiffness(260)}
+            // Open with the current lens in view, even when it's one of the last.
+            onLayout={on && i > 2 ? (e) => scroll.current?.scrollTo({ x: Math.max(0, e.nativeEvent.layout.x - 60), animated: false }) : undefined}
+          >
             <PressScale
               onPress={() => onPick(l.key)}
               scaleTo={0.9}
