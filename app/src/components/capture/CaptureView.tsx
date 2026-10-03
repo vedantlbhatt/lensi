@@ -551,7 +551,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
             )}
             {!walking && !renaming ? (
               <View style={styles.ask}>
-                <AskBar pen={lens.pen} busy={false} onAsk={onAsk} onFocus={() => setExpanded(true)} />
+                <AskBar pen={lens.pen} busy={false} onAsk={onAsk} onFocus={() => setExpanded(true)} placeholder={ASK_HINT[capture.lens]} />
               </View>
             ) : null}
           </View>
@@ -560,6 +560,16 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
     </View>
   );
 }
+
+/** What the ask bar suggests you ask, per lens. */
+const ASK_HINT: Record<Capture['lens'], string> = {
+  identify: 'Ask about this, or how to…',
+  guide: 'How do I…',
+  fix: "What's wrong? What should I try?",
+  shop: 'Is it worth it? What to check…',
+  safe: 'Is this safe for…',
+  learn: 'How does it work? Why…',
+};
 
 function Media({ capture, annotating }: { capture: Capture; annotating: boolean }) {
   if (capture.media.kind === 'video') return <VideoMedia capture={capture} annotating={annotating} />;
