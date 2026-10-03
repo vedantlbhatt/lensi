@@ -117,6 +117,8 @@ export type Capture = {
   error: string | null;
   /** The spoken or typed question that started this capture, if any. */
   prompt: string | null;
+  /** What the eyes reported before any naming (scene labels, detections, time): kept for debugging. */
+  seen?: { labels: string[]; objects: string[]; ms: number };
 };
 
 export const emptyAnnotation = (): Annotation => ({

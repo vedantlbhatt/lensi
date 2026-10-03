@@ -88,11 +88,17 @@ export async function ingest(
   return id;
 }
 
-async function runEyes(c: Capture): Promise<{ subject: Region | null; regions: Region[]; hint: string | null }> {
+async function runEyes(c: Capture): Promise<{ subject: Region | null; regions: Region[]; hint: string | null; seen?: Capture['seen'] }> {
   try {
-    const a = (await LensiAR.analyze(c.media.stillUri)) as AnalysisLike & { labels: { label: string }[] };
+    const a = (await LensiAR.analyze(c.media.stillUri)) as AnalysisLike & { ms?: number };
     const { subject, regions } = buildRegions(a);
-    return { subject, regions, hint: subject?.text ?? thingLabel(a.labels) ?? null };
+    const pct = (x: { confidence: number }) => Math.round(x.confidence * 100);
+    const seen = {
+      labels: a.labels.slice(0, 6).map((l) => `${l.label} ${pct(l)}`),
+      objects: a.objects.slice(0, 8).map((o) => `${o.label} ${pct(o)}`),
+      ms: a.ms ?? 0,
+    };
+    return { subject, regions, hint: subject?.text ?? thingLabel(a.labels) ?? null, seen };
   } catch (e) {
     console.warn('[lensi] analysis failed', e);
     return { subject: null, regions: [], hint: null };
@@ -119,7 +125,7 @@ export async function analyze(id: string, opts: AnalyzeOpts) {
   const reuse = opts.reuseEyes && (!!c0.subject || c0.regions.length > 0);
   const eyes = reuse ? { subject: c0.subject, regions: c0.regions, hint: opts.hint ?? c0.subject?.text ?? null } : await runEyes(c0);
   if (controller.signal.aborted) return;
-  if (!reuse) patchCapture(id, (c) => ({ ...c, subject: eyes.subject, regions: eyes.regions }));
+  if (!reuse) patchCapture(id, (c) => ({ ...c, subject: eyes.subject, regions: eyes.regions, seen: 'seen' in eyes ? eyes.seen : c.seen }));
 
   const engine = await pickEngine(getSettings().brain);
   if (controller.signal.aborted) return;
