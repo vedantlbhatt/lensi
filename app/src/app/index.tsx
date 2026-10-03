@@ -1,3 +1,4 @@
+import { File, Paths } from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGlobalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -27,7 +28,7 @@ import { toast, ToastHost } from '../components/ui/Toast';
 import { devhooks } from '../lib/devhooks';
 import { pickEngine } from '../lib/engines';
 import { useLivePins } from '../lib/live';
-import { assetPhoto, pasteFromClipboard, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
+import { assetPhoto, pasteFromClipboard, pickedFromFile, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
 import { queryOf, type ScriptParams } from '../lib/links';
 import { ingest } from '../lib/pipeline';
 import { getSettings, setSettings, useSettings } from '../lib/settings';
@@ -221,17 +222,30 @@ export default function Camera() {
   // A deep link wins; otherwise the URL the launch environment carried (CI).
   const linked = useGlobalSearchParams<ScriptParams>();
   const launched = useMemo(() => queryOf(LensiAR.launchURL), []);
-  const params: ScriptParams = linked.demo || linked.memories ? linked : launched;
+  const params: ScriptParams = linked.demo || linked.memories || linked.file ? linked : launched;
   useEffect(() => {
     if (params.export) devhooks.autoExport = true;
     if (params.memories) setMemories(true);
+    if (params.brain === 'auto' || params.brain === 'apple' || params.brain === 'cloud' || params.brain === 'vision') {
+      setSettings({ brain: params.brain });
+    }
     const scene = DEMO_SCENES.find((s) => s.key === params.demo);
-    if (!scene) return;
+    const file = Platform.OS !== 'web' && params.file ? new File(Paths.document, params.file) : null;
+    if (!scene && !file) return;
     const l = LENSES.find((x) => x.key === params.lens)?.key ?? 'identify';
     setLens(l);
     let alive = true;
     (async () => {
-      const picked = await assetPhoto(scene.asset, scene.width, scene.height);
+      let picked: Picked;
+      if (file) {
+        if (!file.exists) {
+          toast(`No ${params.file} in Documents`);
+          return;
+        }
+        picked = await pickedFromFile(file.uri, file.name, undefined, 'files');
+      } else {
+        picked = await assetPhoto(scene!.asset, scene!.width, scene!.height);
+      }
       if (!alive) return;
       flash.current?.fire();
       const id = await ingest(params.ask ? { ...picked, source: 'voice' } : picked, { lens: l, prompt: params.ask ?? null });
@@ -240,7 +254,7 @@ export default function Camera() {
     return () => {
       alive = false;
     };
-  }, [params.demo, params.lens, params.ask, params.memories, params.export]);
+  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain]);
 
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera
   // and the demo scene on the virtual one.

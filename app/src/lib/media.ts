@@ -4,6 +4,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
+import { createVideoPlayer } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Image, Platform } from 'react-native';
 
@@ -72,18 +73,42 @@ export async function pickFromFiles(): Promise<Picked | null> {
   const res = await DocumentPicker.getDocumentAsync({ type: ['image/*', 'video/*'], copyToCacheDirectory: true });
   if (res.canceled || !res.assets?.[0]) return null;
   const a = res.assets[0];
-  if (isVideoName(a.name, a.mimeType)) {
-    const frame = await VideoThumbnails.getThumbnailAsync(a.uri, { time: 0, quality: 0.9 }).catch(() => null);
-    return {
-      kind: 'video',
-      uri: a.uri,
-      width: frame?.width ?? 1080,
-      height: frame?.height ?? 1920,
-      source: 'files',
-    };
+  return pickedFromFile(a.uri, a.name, a.mimeType, 'files');
+}
+
+/** A photo or video file on the phone, as a capture's input. */
+export async function pickedFromFile(uri: string, name: string, mimeType: string | undefined, source: Picked['source']): Promise<Picked> {
+  if (isVideoName(name, mimeType)) {
+    const [frame, durationMs] = await Promise.all([
+      VideoThumbnails.getThumbnailAsync(uri, { time: 0, quality: 0.9 }).catch(() => null),
+      videoDurationMs(uri),
+    ]);
+    return { kind: 'video', uri, width: frame?.width ?? 1080, height: frame?.height ?? 1920, durationMs, source };
   }
-  const size = await imageSize(a.uri);
-  return { kind: 'image', uri: a.uri, ...size, source: 'files' };
+  const size = await imageSize(uri);
+  return { kind: 'image', uri, ...size, source };
+}
+
+/**
+ * How long a video is. The pickers don't say for files, and without it every
+ * keyframe would come from the first three seconds of the clip.
+ */
+export async function videoDurationMs(uri: string): Promise<number | undefined> {
+  if (Platform.OS === 'web') return undefined;
+  const player = createVideoPlayer(uri);
+  try {
+    return await new Promise<number | undefined>((resolve) => {
+      const done = (seconds?: number) => {
+        sub.remove();
+        clearTimeout(timer);
+        resolve(seconds && Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : undefined);
+      };
+      const sub = player.addListener('sourceLoad', (e) => done(e.duration));
+      const timer = setTimeout(() => done(player.duration), 4000);
+    });
+  } finally {
+    player.release();
+  }
 }
 
 export async function pasteFromClipboard(): Promise<Picked | null> {

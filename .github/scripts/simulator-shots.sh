@@ -48,42 +48,84 @@ alive() { if running; then tl "alive after $1"; else tl "NOT RUNNING after $1"; 
 # Grant what the app may ask for so no system alert covers the screenshots.
 xcrun simctl privacy "$DEV" grant all "$BUNDLE" >/dev/null 2>&1 || true
 
+# Screen recordings, one mp4 per scenario (the morning demos).
+REC=""
+rec() { xcrun simctl io "$DEV" recordVideo --codec=h264 --force "$OUT/demo-$1.mp4" >/dev/null 2>&1 & REC=$!; sleep 1; }
+unrec() { [ -n "$REC" ] && kill -INT "$REC" 2>/dev/null; wait "$REC" 2>/dev/null || true; REC=""; }
+
+# Stock footage for the video pipeline: Intel IoT Devkit sample videos (CC BY 4.0),
+# dropped into the app's Documents and opened with lensi:///?file=…
+DATA=$(xcrun simctl get_app_container "$DEV" "$BUNDLE" data 2>/dev/null || true)
+STOCK=(car-detection store-aisle-detection fruit-and-vegetable-detection)
+if [ -n "$DATA" ]; then
+  mkdir -p "$DATA/Documents"
+  for v in "${STOCK[@]}"; do
+    curl -fsSL --max-time 60 -o "$DATA/Documents/$v.mp4" "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/$v.mp4" \
+      && tl "stock $v $(du -h "$DATA/Documents/$v.mp4" | cut -f1)" || tl "stock $v unavailable"
+  done
+fi
+
+rec camera
 launch
 shot 01-camera 14
 alive camera
 shot 02-camera-settled 3
+unrec
 
 # A cold start takes ~6 s in CI's VM (JS bundle, fonts), so the first shot waits.
-launch "lensi:///?demo=cars"
+# Demo runs use the eyes-only brain: this VM can't run Apple Intelligence.
+rec cars
+launch "lensi:///?demo=cars&brain=vision"
 shot 03-capture-7s 7
 shot 04-capture-10s 3
 shot 05-capture-14s 4
 shot 06-capture-20s 6
 alive cars
+unrec
 
-launch "lensi:///?demo=board&lens=learn"
+rec board
+launch "lensi:///?demo=board&lens=learn&brain=vision"
 shot 07-board-9s 9
 shot 08-board-18s 9
 alive board
+unrec
 
-launch "lensi:///?demo=truck&lens=guide&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F"
+rec guide
+launch "lensi:///?demo=truck&lens=guide&brain=vision&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F"
 shot 09-guide-9s 9
 shot 10-guide-18s 9
 alive guide
+unrec
 
+# The video pipeline on real footage: keyframes, then Vision, YOLO and SAM on each.
+n=20
+for v in "${STOCK[@]}"; do
+  [ -n "$DATA" ] && [ -f "$DATA/Documents/$v.mp4" ] || continue
+  case "$v" in store-*) lens=shop ;; fruit-*) lens=learn ;; *) lens=identify ;; esac
+  rec "stock-$v"
+  launch "lensi:///?file=$v.mp4&lens=$lens&brain=vision"
+  shot "$n-stock-$v-10s" 10
+  shot "$((n + 1))-stock-$v-22s" 12
+  alive "stock-$v"
+  unrec
+  n=$((n + 2))
+done
+
+rec memories
 launch "lensi:///?memories=1"
 shot 11-memories 10
 alive memories
+unrec
 
-# Render the share image inside the app and pull it out of the container.
-launch "lensi:///?demo=cars&export=1"
+# Render the share image inside the app and pull it out of the container. This run
+# keeps the default brain, so it also exercises Apple Intelligence failing in the VM.
+launch "lensi:///?demo=cars&export=1&brain=auto"
 sleep 24
 shot 12-export-source 0
 alive export
-DATA=$(xcrun simctl get_app_container "$DEV" "$BUNDLE" data 2>/dev/null || true)
 if [ -n "$DATA" ]; then
   find "$DATA" -name 'lensi-*.jpg' -newer "$OUT/01-camera.png" -size +20k 2>/dev/null | head -3 | while read -r f; do cp "$f" "$OUT/13-export-$(basename "$f")"; echo "export $f"; done
-  find "$DATA/Documents/lensi" -name capture.json 2>/dev/null | head -6 | while read -r f; do cp "$f" "$OUT/capture-$(basename "$(dirname "$f")").json"; done
+  find "$DATA/Documents/lensi" -name capture.json 2>/dev/null | head -12 | while read -r f; do cp "$f" "$OUT/capture-$(basename "$(dirname "$f")").json"; done
 fi
 
 # A real deep link into the running app, last (it may leave a system prompt up).
