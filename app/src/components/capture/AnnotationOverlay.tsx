@@ -83,7 +83,8 @@ export function AnnotationOverlay({
   );
   const marks = useMemo(() => regions.filter((r) => r.kind !== 'subject').slice(0, 9), [regions]);
   const order = useArrivalOrder(placed.map((c) => c.id));
-  const showMarks = settled && thinking && placed.length === 0;
+  // Mark numbers next to a walkthrough's numbered steps would read as the same thing.
+  const showMarks = settled && thinking && placed.length === 0 && !walking;
 
   return (
     <View style={[StyleSheet.absoluteFill, styles.passthrough]}>
