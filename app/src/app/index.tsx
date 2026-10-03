@@ -35,7 +35,6 @@ import { getSettings, setSettings, useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
 import type { EngineId } from '../lib/types';
 import { useVoice } from '../lib/voice';
-import { Sparks, type SparksRef } from '../motion/Sparks';
 import { springs } from '../theme/motion';
 import { LENSES, lensInfo, type Lens } from '../theme/tokens';
 import { face } from '../theme/type';
@@ -63,7 +62,6 @@ export default function Camera() {
 
   const camera = useRef<CameraHandle>(null);
   const flash = useRef<FlashRef>(null);
-  const sparks = useRef<SparksRef>(null);
 
   const [lens, setLensState] = useState<Lens>(() => getSettings().lens);
   const setLens = useCallback((l: Lens) => {
@@ -276,7 +274,6 @@ export default function Camera() {
     .runOnJS(true)
     .onEnd((e) => {
       setTouched(true);
-      if (live) sparks.current?.burst(e.absoluteX, e.absoluteY, pen);
     });
 
   const chrome = useSharedValue(1);
@@ -363,7 +360,6 @@ export default function Camera() {
 
       {voice.listening ? <ListeningOverlay transcript={voice.transcript} pen={pen} top={insets.top + 120} /> : null}
 
-      <Sparks ref={sparks} />
       <Flash ref={flash} />
 
       {drop ? <DropMenu top={insets.top + 64} onPick={(c) => void onDrop(c)} onClose={() => setDrop(false)} /> : null}

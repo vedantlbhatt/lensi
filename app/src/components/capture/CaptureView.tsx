@@ -28,7 +28,6 @@ import { addPhoto, analyze, ask, askAbout, cancel, isHowTo, relens, removeCallou
 import { setSettings, useSettings } from '../../lib/settings';
 import { getCapture, removeCapture, useCapture } from '../../lib/store';
 import type { Capture, Pt, Step } from '../../lib/types';
-import { Sparks, type SparksRef } from '../../motion/Sparks';
 import { PressScale } from '../../motion/PressScale';
 import { ShinyText } from '../../motion/ShinyText';
 import { springs } from '../../theme/motion';
@@ -352,12 +351,9 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   }, [menuFor, menuRead, screen.width, insets.top]);
 
   // ---- tap the print: "what's this?" ------------------------------------------------
-  const sparks = useRef<SparksRef>(null);
   const [focus, setFocus] = useState<Pt[] | null>(null);
   const focusAsked = useRef<number>(0);
   const tapAt = (at: Pt) => {
-    const p = toView(at, frame);
-    sparks.current?.burst(p.x, p.y, lens.pen);
     haptic.tap();
     setFocus(null);
     setExpanded(false);
@@ -557,7 +553,6 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
         </Animated.View>
       ) : null}
 
-      <Sparks ref={sparks} color={lens.pen} />
 
       {menuFor && menuAt ? (
         <LabelMenu
@@ -573,7 +568,6 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
           onRemove={() => {
             const c = menuFor;
             setMenuFor(null);
-            sparks.current?.burst(c.slot.x + c.width / 2, c.slot.y + LABEL.height / 2, lens.pen);
             haptic.thud();
             const undo = removeCallout(capture.id, c.id);
             if (undo) toast(`Removed “${c.label}”`, { label: 'Undo', run: undo });
