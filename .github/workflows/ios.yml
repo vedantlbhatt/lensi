@@ -154,6 +154,20 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: results
+      - name: Shrink videos
+        # Simulator recordings run 10-100+ MB each at full resolution (the camera run once hit
+        # 107 MB, past GitHub's file limit, and the push was refused). 720 wide is plenty to review.
+        run: |
+          cd results
+          { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; } >/dev/null 2>&1 || echo "no ffmpeg; keeping originals"
+          find . -name '*.mp4' | while read -r f; do
+            if command -v ffmpeg >/dev/null; then
+              ffmpeg -nostdin -v error -y -i "$f" -an -vf "scale=720:-2,fps=30" -c:v libx264 -preset veryfast -crf 24 \
+                -pix_fmt yuv420p -movflags +faststart "${f%.mp4}.small.mp4" && mv "${f%.mp4}.small.mp4" "$f"
+            fi
+            if [ "$(stat -c %s "$f")" -gt 95000000 ]; then echo "dropped $f (over 95 MB)" | tee -a dropped.txt; rm -f "$f"; fi
+          done
+          du -sh .
       - name: Push to ci-results
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
