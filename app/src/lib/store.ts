@@ -89,6 +89,20 @@ export function removeCapture(id: string) {
   emit();
 }
 
+/** Every capture, gone from memory and from disk. */
+export function clearCaptures() {
+  const ids = [...state.order];
+  state = { ...state, byId: {}, order: [] };
+  if (canPersist) {
+    for (const id of ids) {
+      try {
+        captureDir(id)?.delete();
+      } catch {}
+    }
+  }
+  emit();
+}
+
 const getState = () => state;
 
 export function useCaptureList(): Capture[] {

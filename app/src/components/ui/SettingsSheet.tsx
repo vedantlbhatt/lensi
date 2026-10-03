@@ -1,5 +1,6 @@
+import { BlurView } from 'expo-blur';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn,
@@ -16,7 +17,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LensiAR, type IntelligenceStatus } from '../../../modules/lensi-ar/src';
 import { cloudEngine, serverURL } from '../../lib/engines/cloud';
+import { cancel } from '../../lib/pipeline';
 import { setSettings, useSettings, type Brain } from '../../lib/settings';
+import { clearCaptures, useCaptureList } from '../../lib/store';
 import { PressScale } from '../../motion/PressScale';
 import { faint, glassStrong, hairline, ink, mist, paper } from '../../theme/tokens';
 import { fonts } from '../../theme/type';
@@ -32,6 +35,7 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
   const s = useSettings();
   const insets = useSafeAreaInsets();
   const screen = useWindowDimensions();
+  const captures = useCaptureList();
   const [apple, setApple] = useState<IntelligenceStatus | null>(null);
   // Pull the sheet down by its handle to put it away.
   const pull = useSharedValue(0);
@@ -65,6 +69,9 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
           exiting={SlideOutDown.duration(220)}
           style={[styles.sheet, { maxHeight: screen.height - insets.top - 24 }]}
         >
+          {/* Frosted, so the camera behind reads as colour rather than as words. */}
+          {Platform.OS !== 'android' ? <BlurView intensity={36} tint="dark" style={StyleSheet.absoluteFill} /> : null}
+          <View style={[StyleSheet.absoluteFill, styles.tint]} />
           <GestureDetector gesture={drag}>
             <View style={styles.head}>
               <View style={styles.grab} />
@@ -122,6 +129,39 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
               selectionColor={pen}
             />
 
+            <Text style={styles.section}>MEMORIES</Text>
+            <View style={styles.row}>
+              <Text style={styles.rowText}>
+                {captures.length} {captures.length === 1 ? 'capture' : 'captures'} on this phone
+              </Text>
+              {captures.length ? (
+                <PressScale
+                  onPress={() => {
+                    const wipe = () => {
+                      for (const c of captures) cancel(c.id);
+                      clearCaptures();
+                    };
+                    if (Platform.OS === 'web') {
+                      if ((globalThis as { confirm?: (m: string) => boolean }).confirm?.('Delete every capture?')) wipe();
+                      return;
+                    }
+                    Alert.alert('Delete every capture?', 'Photos, labels and answers saved in Lensi are removed from this phone.', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Delete all', style: 'destructive', onPress: wipe },
+                    ]);
+                  }}
+                  scaleTo={0.92}
+                  haptic="medium"
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete all captures"
+                >
+                  <View style={styles.danger}>
+                    <Text style={styles.dangerText}>Delete all</Text>
+                  </View>
+                </PressScale>
+              ) : null}
+            </View>
+
             <Text style={styles.section}>MADE WITH</Text>
             <Text style={styles.credits}>
               Apple Foundation Models · Vision · ARKit. MobileSAM (Apache-2.0) for part outlines, YOLO11n (AGPL-3.0) for
@@ -168,10 +208,11 @@ function Row({ label, value, onChange, pen }: { label: string; value: boolean; o
 const styles = StyleSheet.create({
   scrim: { backgroundColor: 'rgba(0,0,0,0.45)' },
   sheetPos: { position: 'absolute', left: 8, right: 8, bottom: 8 },
+  tint: { backgroundColor: glassStrong },
   sheet: {
+    overflow: 'hidden',
     borderRadius: 32,
     borderCurve: 'continuous',
-    backgroundColor: glassStrong,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
     paddingHorizontal: 20,
@@ -194,6 +235,8 @@ const styles = StyleSheet.create({
   statusDetail: { flex: 1, color: faint, fontFamily: fonts.mono, fontSize: 10.5, letterSpacing: 0.4 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 46 },
   rowText: { color: paper, fontFamily: fonts.text, fontSize: 16 },
+  danger: { height: 32, paddingHorizontal: 13, borderRadius: 16, justifyContent: 'center', backgroundColor: 'rgba(255,107,94,0.14)' },
+  dangerText: { color: '#FF9C8F', fontFamily: fonts.textSemi, fontSize: 14 },
   credits: { color: faint, fontFamily: fonts.text, fontSize: 12.5, lineHeight: 17 },
   input: {
     height: 46,
