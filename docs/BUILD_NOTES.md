@@ -6,11 +6,14 @@ A running log of the camera-first rebuild on branch `camera-first`: what exists,
 
 | Area | How it was checked | Status |
 |---|---|---|
-| TS logic (geometry, regions, protocol, links, eyes-only engine) | `npm test` (node test runner, 25 tests) | passing |
+| TS logic (geometry, regions, protocol, links, QR codes, eyes-only engine) | `npm test` (node test runner, 30 tests) | passing |
 | App ↔ server protocol | server tests run the real server in mock mode through the app's own parser | passing |
 | UI + motion | Expo web preview driven by Playwright (iPhone viewport, real touch events) | camera, capture, walkthrough, voice, memories, settings, drop menu reviewed |
 | MobileSAM → Core ML | `tools/sam`: torch vs wrapper (bit-exact decoder), fp16 interpreter, then **real Core ML on macOS CI** (CPU and all compute units) | passing |
-| Swift compile + Simulator run | `.github/workflows/ios.yml` on the `xcode-27` runner | see `ci-results` branch |
+| Swift compile (Release, iOS 27 SDK) | `.github/workflows/ios.yml` on the `xcode-27` runner | passing |
+| App launch + scripted runs in the iOS 27 Simulator | same job; screenshots, device log, timeline and capture JSON on the `ci-results` branch | launches; Vision OCR, YOLO and SAM (CPU) annotate the demo scenes |
+| Eyes on public images (Vision + YOLO + SAM on macOS) | `tools/eyes` in the `sam` job | SAM part outlines on every image; QR payloads read |
+| Native crash review | a read-only pass over every Swift file (recording, speech, torch, photo, threading) | 10 issues found and fixed |
 | ARKit capture, recording, torch, live pins, speech, Apple Intelligence | need a physical iPhone | not yet run on device |
 
 ## Things that need a device
@@ -36,6 +39,16 @@ Scripted CI runs reach the app through the launch environment
 (`SIMCTL_CHILD_LENSI_URL=lensi:///?demo=cars xcrun simctl launch …`, read by the native
 `launchURL` constant). `simctl openurl` puts up an "Open in Lensi?" prompt that nothing in CI can
 tap.
+
+## What the Simulator runs taught
+
+- **CI's VM can only run Core ML on the CPU** ("On-device compilation within a VM only supports
+  CPU"). Our models use `.cpuOnly` in the Simulator (`Detector.computeUnits`) and `.all` on a
+  phone. Vision's own foreground-instance mask also fails there, so Simulator captures have no
+  subject outline; phones do.
+- **Cold start is about 6 s in the VM.** The scripted runs wait for it before their first shot.
+- **Scene labels make bad names.** Vision's classifier often leads with "outdoor" or "machine";
+  `thingLabel` skips those when naming the subject.
 
 ## Decisions
 
