@@ -26,17 +26,22 @@ shot() { sleep "$2"; xcrun simctl io "$DEV" screenshot --type=png "$OUT/$1.png" 
 running() { xcrun simctl spawn "$DEV" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE"; }
 # Every launch and liveness check, with times and PIDs, to line up with device.log.
 tl() { echo "$(date '+%H:%M:%S') $*" | tee -a "$OUT/timeline.txt"; }
-# launch [lensi-url]: a cold start, optionally carrying a scripted run.
+# launch [lensi-url]: a cold start, optionally carrying a scripted run. The app's
+# stderr is kept per launch: an uncaught JS error on the UI thread aborts a Release
+# build, and libc++abi prints the error's message there and nowhere else.
+RUN=0
 launch() {
   xcrun simctl terminate "$DEV" "$BUNDLE" >/dev/null 2>&1 || true
   sleep 1
+  RUN=$((RUN + 1))
+  local io=(--stdout="$OUT/stdout-$RUN.txt" --stderr="$OUT/stderr-$RUN.txt")
   local out
   if [ -n "${1:-}" ]; then
-    out=$(SIMCTL_CHILD_LENSI_URL="$1" xcrun simctl launch "$DEV" "$BUNDLE" 2>&1)
+    out=$(SIMCTL_CHILD_LENSI_URL="$1" xcrun simctl launch "${io[@]}" "$DEV" "$BUNDLE" 2>&1)
   else
-    out=$(xcrun simctl launch "$DEV" "$BUNDLE" 2>&1)
+    out=$(xcrun simctl launch "${io[@]}" "$DEV" "$BUNDLE" 2>&1)
   fi
-  tl "launch ${1:-camera} -> $out"
+  tl "launch #$RUN ${1:-camera} -> $out"
 }
 alive() { if running; then tl "alive after $1"; else tl "NOT RUNNING after $1"; echo "NOT RUNNING after $1" >> "$OUT/problems.txt"; fi; }
 
@@ -94,4 +99,7 @@ xcrun simctl spawn "$DEV" log show --start "$START" --style compact \
 # Crash reports for the app land on the host (any name; keep the ones about Lensi).
 find "$HOME/Library/Logs/DiagnosticReports" -newermt "$START" -type f \( -name '*.ips' -o -name '*.crash' \) 2>/dev/null \
   | while read -r f; do grep -q "Lensi" "$f" 2>/dev/null && cp "$f" "$OUT/" && echo "crash report $f"; done
+# Keep only the stderr files that say something, and pull out any uncaught errors.
+for f in "$OUT"/stdout-*.txt "$OUT"/stderr-*.txt; do [ -s "$f" ] || rm -f "$f"; done
+grep -h -iE "terminating|uncaught|exception|JSError|error" "$OUT"/stderr-*.txt 2>/dev/null | head -50 > "$OUT/uncaught.txt" || true
 ls -la "$OUT"

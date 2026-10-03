@@ -96,7 +96,8 @@ export type IntelligenceStatus = {
 export type IntelligenceEvent =
   | { requestId: string; type: 'event'; event: Record<string, unknown> }
   | { requestId: string; type: 'done' }
-  | { requestId: string; type: 'error'; message: string };
+  /** `unavailable`: the model itself couldn't run (not a refusal or a bad request). */
+  | { requestId: string; type: 'error'; message: string; unavailable?: boolean };
 
 export type SpeechEvent = { transcript: string; isFinal: boolean; level: number; error?: string };
 

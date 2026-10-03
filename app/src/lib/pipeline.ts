@@ -154,9 +154,10 @@ export async function analyze(id: string, opts: AnalyzeOpts) {
     // The model gave nothing to draw (a refusal, a full context): show what
     // the eyes found rather than a bare photo. Its message stays on the card.
     const after = getCapture(id);
-    const bare = !!after && !after.annotation.title && !after.annotation.callouts.length;
-    if (bare && !opts.walkthrough && (engine.id !== 'vision' || exchangeId)) {
-      await visionEngine.run({ ...req, question: undefined }, (e) => apply(id, e, null), controller.signal);
+    const steps = after ? activeStepCount(after) : 0;
+    const bare = !!after && !after.annotation.title && !after.annotation.callouts.length && !steps;
+    if (bare && (engine.id !== 'vision' || exchangeId)) {
+      await visionEngine.run({ ...req, question: undefined, walkthrough: false }, (e) => apply(id, e, null), controller.signal);
       if (controller.signal.aborted) return;
     }
     patchCapture(id, (cur) => ({
@@ -172,6 +173,15 @@ export async function analyze(id: string, opts: AnalyzeOpts) {
   } finally {
     if (controllers.get(id) === controller) controllers.delete(id);
   }
+}
+
+/** Steps the capture has to play, from the annotation or its newest walkthrough answer. */
+function activeStepCount(c: Capture): number {
+  for (let i = c.thread.length - 1; i >= 0; i--) {
+    const s = c.thread[i].steps;
+    if (s?.length) return s.length;
+  }
+  return c.annotation.steps.length;
 }
 
 function startExchange(id: string, question: string, walkthrough: boolean): string {

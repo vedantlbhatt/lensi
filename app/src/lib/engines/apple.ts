@@ -2,6 +2,13 @@ import { LensiAR } from '../../../modules/lensi-ar/src';
 import type { Engine, EngineEvent, Pt } from '../types';
 
 let seq = 0;
+/**
+ * When the model fails outright (assets missing, a VM, a model update in
+ * progress) it tends to keep failing; skip it for a while so the next capture
+ * goes straight to the cloud or the eyes instead of hitting the same error.
+ */
+let brokenUntil = 0;
+const COOLDOWN_MS = 5 * 60 * 1000;
 
 function toEvent(raw: Record<string, unknown>): EngineEvent | null {
   const kind = raw.kind;
@@ -39,6 +46,7 @@ export const appleEngine: Engine = {
   name: 'Apple Intelligence',
 
   async available() {
+    if (Date.now() < brokenUntil) return false;
     try {
       return (await LensiAR.intelligenceStatus()).available;
     } catch {
@@ -62,6 +70,7 @@ export const appleEngine: Engine = {
           const ev = toEvent(e.event);
           if (ev) emit(ev);
         } else if (e.type === 'error') {
+          if (e.unavailable) brokenUntil = Date.now() + COOLDOWN_MS;
           emit({ kind: 'error', text: e.message || 'Apple Intelligence stopped.' });
           finish();
         } else {

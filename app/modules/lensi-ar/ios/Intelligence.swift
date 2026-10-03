@@ -202,7 +202,13 @@ final class IntelligenceRunner: @unchecked Sendable {
         // Cancelled from JS; nothing to report.
       } catch {
         if !Task.isCancelled {
-          emit(["requestId": id, "type": "error", "message": IntelligenceRunner.message(for: error)])
+          NSLog("[lensi] Apple Intelligence failed: %@", String(describing: error))
+          emit([
+            "requestId": id,
+            "type": "error",
+            "message": IntelligenceRunner.message(for: error),
+            "unavailable": IntelligenceRunner.isUnavailable(error),
+          ])
         }
       }
       IntelligenceRunner.shared.remove(id)
@@ -333,6 +339,16 @@ final class IntelligenceRunner: @unchecked Sendable {
     return lines.joined(separator: "\n")
   }
 
+  /// The model couldn't run at all (as opposed to refusing or being asked too much).
+  static func isUnavailable(_ error: Error) -> Bool {
+    if let e = error as? LanguageModelSession.GenerationError {
+      if case .assetsUnavailable = e { return true }
+      return false
+    }
+    // Anything that isn't a generation error (model manager, assets, a VM) means it can't run.
+    return !(error is LensiError)
+  }
+
   static func message(for error: Error) -> String {
     if let e = error as? LanguageModelSession.GenerationError {
       switch e {
@@ -345,7 +361,9 @@ final class IntelligenceRunner: @unchecked Sendable {
       default: return "Apple Intelligence couldn't answer that one."
       }
     }
-    return error.localizedDescription
+    if let e = error as? LensiError { return e.localizedDescription }
+    // System errors read like "(ModelManagerServices.ModelManagerError error 1026)".
+    return "Apple Intelligence couldn't run just now, so here's what the phone saw."
   }
 }
 
