@@ -81,6 +81,8 @@ export const cloudEngine: Engine = {
     const ctl = new AbortController();
     const stop = () => ctl.abort();
     signal.addEventListener('abort', stop);
+    // Closed while the photo was still being encoded.
+    if (signal.aborted) ctl.abort();
     let stalled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const watch = () => {
