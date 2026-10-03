@@ -9,6 +9,12 @@ let seq = 0;
  */
 let brokenUntil = 0;
 const COOLDOWN_MS = 5 * 60 * 1000;
+/**
+ * The model streams a field at a time, so this long with nothing new means it
+ * has stalled (or is still loading). Give up and let the eyes fill in rather
+ * than leave the capture thinking forever.
+ */
+const STALL_MS = 30 * 1000;
 
 function toEvent(raw: Record<string, unknown>): EngineEvent | null {
   const kind = raw.kind;
@@ -58,14 +64,25 @@ export const appleEngine: Engine = {
     const requestId = `fm${Date.now().toString(36)}${(seq++).toString(36)}`;
     return new Promise<void>((resolve) => {
       let finished = false;
+      let stall: ReturnType<typeof setTimeout> | undefined;
       const finish = () => {
         if (finished) return;
         finished = true;
+        clearTimeout(stall);
         sub.remove();
         resolve();
       };
+      const watch = () => {
+        clearTimeout(stall);
+        stall = setTimeout(() => {
+          void Promise.resolve(LensiAR.intelligenceCancel(requestId)).catch(() => {});
+          emit({ kind: 'error', text: 'Apple Intelligence took too long to answer.' });
+          finish();
+        }, STALL_MS);
+      };
       const sub = LensiAR.addListener('onIntelligence', (e) => {
         if (e.requestId !== requestId) return;
+        watch();
         if (e.type === 'event') {
           const ev = toEvent(e.event);
           if (ev) emit(ev);
@@ -90,6 +107,7 @@ export const appleEngine: Engine = {
         history: req.history ?? [],
         marks: req.regions.map((r) => ({ mark: r.mark, kind: r.kind, text: r.text ?? null, box: r.box })),
       };
+      watch();
       LensiAR.intelligenceStart(requestId, JSON.stringify(payload)).catch((err: unknown) => {
         emit({ kind: 'error', text: err instanceof Error ? err.message : 'Apple Intelligence is unavailable.' });
         finish();

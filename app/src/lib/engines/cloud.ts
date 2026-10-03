@@ -28,8 +28,18 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 /** Longest side ≤ 1280 JPEG, base64. Big enough to read labels, small enough to send fast. */
 async function encode(req: EngineRequest): Promise<string> {
+  if (Platform.OS === 'web') {
+    // expo-file-system can't read asset or blob URLs in a browser; the browser can.
+    const blob = await (await globalThis.fetch(req.imageUri)).blob();
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
   const longest = Math.max(req.width, req.height);
-  if (Platform.OS !== 'web' && longest > 1280) {
+  if (longest > 1280) {
     const scale = 1280 / longest;
     const ref = await ImageManipulator.manipulate(req.imageUri)
       .resize({ width: Math.round(req.width * scale), height: Math.round(req.height * scale) })
@@ -41,6 +51,8 @@ async function encode(req: EngineRequest): Promise<string> {
 }
 
 let lastHealth: { at: number; ok: boolean } | null = null;
+/** No bytes from the server for this long: it has stalled; stop so the eyes can fill in. */
+const STALL_MS = 45 * 1000;
 
 export const cloudEngine: Engine = {
   id: 'cloud',
@@ -65,36 +77,63 @@ export const cloudEngine: Engine = {
     if (token) headers.authorization = `Bearer ${token}`;
 
     const image = await encode(req);
-    const res = await fetch(`${serverURL()}/annotate`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        image,
-        label: req.hint,
-        lens: req.lens,
-        question: req.question,
-        walkthrough: req.walkthrough ?? false,
-        marks: describeMarks(req.regions),
-        history: req.history ?? [],
-      }),
-      signal,
-    });
-    if (!res.ok || !res.body) {
-      emit({ kind: 'error', text: res.status === 401 ? 'Server token mismatch.' : `Server error ${res.status}.` });
-      return;
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    const splitter = new LineSplitter();
-    const push = (raw: string) => {
-      const e = parseLine(raw);
-      if (e) emit(e);
+    // Our own controller, so a stall can end the request without the caller aborting.
+    const ctl = new AbortController();
+    const stop = () => ctl.abort();
+    signal.addEventListener('abort', stop);
+    let stalled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        stalled = true;
+        ctl.abort();
+      }, STALL_MS);
     };
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      splitter.push(decoder.decode(value, { stream: true })).forEach(push);
+    try {
+      watch();
+      const res = await fetch(`${serverURL()}/annotate`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          image,
+          label: req.hint,
+          lens: req.lens,
+          question: req.question,
+          walkthrough: req.walkthrough ?? false,
+          marks: describeMarks(req.regions),
+          history: req.history ?? [],
+        }),
+        signal: ctl.signal,
+      });
+      if (!res.ok || !res.body) {
+        emit({ kind: 'error', text: res.status === 401 ? 'Server token mismatch.' : `Server error ${res.status}.` });
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      const splitter = new LineSplitter();
+      const push = (raw: string) => {
+        const e = parseLine(raw);
+        if (e) emit(e);
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        watch();
+        splitter.push(decoder.decode(value, { stream: true })).forEach(push);
+      }
+      splitter.flush().forEach(push);
+    } catch (e) {
+      // A stall ends quietly with a note, so the pipeline shows what the eyes found.
+      if (stalled && !signal.aborted) {
+        emit({ kind: 'error', text: 'The Lensi server stopped answering.' });
+        return;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', stop);
     }
-    splitter.flush().forEach(push);
   },
 };
