@@ -200,15 +200,16 @@ function Status({
   handsFree: boolean;
   heard: string;
 }) {
-  if (busy) {
-    return <ShinyText text={state.status === 'checking' ? 'Checking' : 'Thinking'} style={styles.status} />;
-  }
+  // What's being said comes first, even over a check in progress: it may be "stop".
   if (heard) {
     return (
       <Text style={styles.heardLine} numberOfLines={2}>
         {`“${heard}”`}
       </Text>
     );
+  }
+  if (busy) {
+    return <ShinyText text={state.status === 'checking' ? 'Checking' : 'Thinking'} style={styles.status} />;
   }
   if (state.note) {
     return (
