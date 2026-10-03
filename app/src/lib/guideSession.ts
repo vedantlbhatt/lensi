@@ -11,6 +11,8 @@ import type { EngineEvent, EngineRequest, Region } from './types';
 
 /** After a check says "done", this long before moving on (so it can be heard). */
 const ADVANCE_MS = 1600;
+/** Between checks the change watch starts by itself, on one step. */
+const AUTO_GAP_MS = 12000;
 
 /**
  * The live guide session: the frame a plan was made from, the brain, the tags,
@@ -142,15 +144,16 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
   );
 
   /** Ask whether the current step is done, from a fresh look. */
-  const check = useCallback(async () => {
+  /** Resolves with the verdict: done, not yet (false), can't tell (null); undefined if it didn't run. */
+  const check = useCallback(async (): Promise<boolean | null | undefined> => {
     const s = latest.current;
     const { step } = currentStep(s);
-    if (!step || s.status !== 'active') return;
+    if (!step || s.status !== 'active') return undefined;
     dispatch({ type: 'checking' });
     const f = await capture();
     if (!f) {
       dispatch({ type: 'checked', done: null, text: "Couldn't get a look just now." });
-      return;
+      return null;
     }
     let verdict: { done: boolean | null; text: string } | null = null;
     try {
@@ -158,7 +161,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         if (e.kind === 'check') verdict = { done: e.done, text: e.text };
         else if (e.kind === 'error' && !verdict) verdict = { done: null, text: e.text };
       });
-      if (!ok) return;
+      if (!ok) return undefined;
     } catch {}
     const v: { done: boolean | null; text: string } = verdict ?? { done: null, text: "Couldn't tell from here." };
     dispatch({ type: 'checked', done: v.done, text: v.text });
@@ -171,6 +174,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         if (latest.current.index === at && latest.current.status === 'active') dispatch({ type: 'next' });
       }, ADVANCE_MS);
     }
+    return v.done;
   }, [capture, runBrain, speak]);
 
   /** A question in the middle of a job, answered from a fresh look. */
@@ -340,9 +344,24 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     }
   }, [opts.enabled, camera, cancelWork]);
 
+  // A change the watch saw checks the step by itself, but not over and over:
+  // a shadow or a light coming on can look like a change too, and a run of
+  // "not yet"s would only nag. Once per AUTO_GAP_MS per step, and not at all
+  // after two that weren't done (Check, or "check", still works).
+  const auto = useRef({ key: '', at: 0, misses: 0 });
   const onChange = useCallback(
     (_e: GuideChangeEvent) => {
-      if (latest.current.status === 'active') void check();
+      const s = latest.current;
+      if (s.status !== 'active') return;
+      const key = `${s.task}#${s.index}`;
+      const a = auto.current;
+      if (a.key !== key) auto.current = { key, at: 0, misses: 0 };
+      const now = Date.now();
+      if (auto.current.misses >= 2 || now - auto.current.at < AUTO_GAP_MS) return;
+      auto.current.at = now;
+      void check().then((done) => {
+        if (done === false && auto.current.key === key) auto.current.misses += 1;
+      });
     },
     [check],
   );
