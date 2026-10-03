@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Text, type StyleProp, type TextStyle } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 
 const GLYPHS = '#%&*+=<>/\\|01_~^:;';
 
@@ -25,10 +26,15 @@ export function DecryptedText({
   /** Ticks each character spends scrambling before it settles. */
   scrambles?: number;
 }) {
-  const [shown, setShown] = useState(() => text.replace(/\S/g, ' '));
+  const reduced = useReducedMotion();
+  const [shown, setShown] = useState(() => (reduced ? text : text.replace(/\S/g, ' ')));
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    if (reduced) {
+      setShown(text);
+      return;
+    }
     let tick = 0;
     const total = text.length + scrambles;
     const start = setTimeout(() => {
@@ -53,7 +59,7 @@ export function DecryptedText({
       clearTimeout(start);
       if (timer.current) clearInterval(timer.current);
     };
-  }, [text, delay, speed, scrambles]);
+  }, [text, delay, speed, scrambles, reduced]);
 
   return (
     <Text style={style} accessibilityLabel={text} numberOfLines={numberOfLines} ellipsizeMode="clip">

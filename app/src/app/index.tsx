@@ -28,7 +28,7 @@ import { pickEngine } from '../lib/engines';
 import { useLivePins } from '../lib/live';
 import { assetPhoto, pasteFromClipboard, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
 import { ingest } from '../lib/pipeline';
-import { useSettings } from '../lib/settings';
+import { getSettings, setSettings, useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
 import type { EngineId } from '../lib/types';
 import { useVoice } from '../lib/voice';
@@ -61,7 +61,11 @@ export default function Camera() {
   const flash = useRef<FlashRef>(null);
   const sparks = useRef<SparksRef>(null);
 
-  const [lens, setLens] = useState<Lens>('identify');
+  const [lens, setLensState] = useState<Lens>(() => getSettings().lens);
+  const setLens = useCallback((l: Lens) => {
+    setLensState(l);
+    if (getSettings().lens !== l) setSettings({ lens: l });
+  }, []);
   const [live, setLive] = useState(false);
   const [torch, setTorch] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -335,8 +339,40 @@ export default function Camera() {
   );
 }
 
+/** Expo Router renders this instead of a white screen if anything throws. */
+export function ErrorBoundary({ error, retry }: { error: Error; retry: () => Promise<void> }) {
+  return (
+    <View style={[styles.root, styles.crash]}>
+      <Text style={styles.crashTitle}>That one slipped.</Text>
+      <Text style={styles.crashBody}>Lensi hit a snag drawing that screen. Your captures are safe on the phone.</Text>
+      <Text style={styles.crashCode} numberOfLines={3}>
+        {error.message}
+      </Text>
+      <Text onPress={() => void retry()} style={styles.crashButton} accessibilityRole="button">
+        Back to the camera
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
+  crash: { justifyContent: 'center', paddingHorizontal: 28, gap: 12, backgroundColor: '#0B0B0C' },
+  crashTitle: { color: '#F4F1EA', fontFamily: fonts.serifItalic, fontSize: 40, letterSpacing: -0.6 },
+  crashBody: { color: 'rgba(244,241,234,0.62)', fontFamily: fonts.text, fontSize: 16, lineHeight: 22 },
+  crashCode: { color: 'rgba(244,241,234,0.38)', fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 16 },
+  crashButton: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    overflow: 'hidden',
+    paddingHorizontal: 18,
+    paddingVertical: 13,
+    borderRadius: 24,
+    backgroundColor: '#E4FF4F',
+    color: '#0B0B0C',
+    fontFamily: fonts.display,
+    fontSize: 17,
+  },
   top30: { zIndex: 30 },
   shade: { position: 'absolute', left: 0, right: 0 },
   top: { position: 'absolute', left: 14, right: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
