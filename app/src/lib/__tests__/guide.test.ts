@@ -94,6 +94,15 @@ test('short phrases are commands; anything else is a question', () => {
     ['check it', 'check'],
     ['Is this right?', 'check'],
     ['start over', 'stop'],
+    ['Next, please.', 'next'],
+    ['Um, next step.', 'next'],
+    ["What's next?", 'next'],
+    ['What\u2019s the next step?', 'next'],
+    ['Repeat that.', 'repeat'],
+    ['Does this look right?', 'check'],
+    ["How's that?", 'check'],
+    ['Stop listening.', 'mute'],
+    ['Be quiet, please.', 'mute'],
   ] as const) {
     assert.deepEqual(parseCommand(said), { type }, said);
   }

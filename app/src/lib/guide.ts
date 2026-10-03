@@ -156,26 +156,42 @@ export function currentStep(s: GuideState): { step: GuideStep | null; part: Guid
 
 export type GuideCommand =
   | { type: 'next' | 'back' | 'repeat' | 'check' | 'stop' }
+  /** Stop listening hands free, but carry on with the job. */
+  | { type: 'mute' }
   | { type: 'ask'; text: string };
 
 const COMMANDS: [GuideCommand['type'], RegExp][] = [
-  ['next', /^(ok(ay)?|alright|right|yes|yep)?[\s,]*(next|next one|next step|go on|continue|done|i'?m done|that'?s done|finished|got it|did it)$/],
-  ['back', /^(go )?(back|previous|previous step|last step|step back)$/],
-  ['repeat', /^(repeat|again|say (that|it) again|what was that|come again|one more time)$/],
-  ['check', /^(check|check (it|this|that)|is (it|this|that) (right|ok(ay)?|done)|did i do (it|that) right|look)$/],
+  [
+    'next',
+    /^((ok(ay)?|alright|right|yes|yep|cool|great) )?(next|next one|next step|go on|continue|keep going|done|i'?m done|that'?s done|all done|finished|got it|did it|what'?s next|what is next|what'?s the next step)$/,
+  ],
+  ['back', /^(go )?(back|previous|previous step|last step|step back|back a step)$/],
+  ['repeat', /^(repeat|repeat (that|it|the step)|again|say (that|it) again|say again|what was that|come again|one more time|pardon|sorry what)$/],
+  [
+    'check',
+    /^(check|check (it|this|that)|is (it|this|that) (right|ok(ay)?|done|good)|did i do (it|that) right|does (it|this|that) look (right|ok(ay)?|good)|how does (it|this|that) look|how'?s (it|this|that)|look|look at (it|this|that))$/,
+  ],
+  ['mute', /^(stop listening|be quiet|quiet|mute|shut up|go to sleep|pause listening)$/],
   ['stop', /^(stop|cancel|start over|new job|never ?mind|quit|reset)$/],
 ];
 
 /**
  * What a spoken (or typed) phrase means. Only short phrases count as commands,
- * so "what's next to the valve" is a question, not "next".
+ * so "what's next to the valve" is a question, not "next". Punctuation the
+ * recogniser adds, and a "please" or an "um" around a command, don't matter.
  */
 export function parseCommand(raw: string): GuideCommand | null {
   const text = raw.trim();
   if (!text) return null;
-  const words = text.split(/\s+/).length;
-  const plain = text.toLowerCase().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ').trim();
-  if (words <= 5) {
+  const plain = text
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[.!?,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^((please|so|um|uh|and|now|hey) )+/, '')
+    .replace(/( (please|thanks|thank you))+$/, '');
+  if (plain && plain.split(' ').length <= 5) {
     for (const [type, re] of COMMANDS) {
       if (re.test(plain)) return { type } as GuideCommand;
     }

@@ -143,6 +143,10 @@ export default function Camera() {
       if (free && !freeRef.current) return;
       const cmd = heard(q, free);
       if (!cmd) return;
+      if (cmd.type === 'mute') {
+        setHandsFree(false);
+        return;
+      }
       guideHandle(cmd);
       if (!free && cmd.type !== 'stop' && getSettings().handsFree) setHandsFree(true);
     },

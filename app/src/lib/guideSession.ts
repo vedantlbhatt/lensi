@@ -241,6 +241,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
       else if (cmd.type === 'repeat') repeat();
       else if (cmd.type === 'check') void check();
       else if (cmd.type === 'stop') stop();
+      // 'mute' is the screen's: it owns the hands-free mic.
     },
     [ask, back, check, next, repeat, start, stop],
   );
