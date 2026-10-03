@@ -29,9 +29,14 @@ const timers = new Map<string, ReturnType<typeof setTimeout>[]>();
 let demoQuestion = 'How do I use this?';
 let speechTimer: ReturnType<typeof setInterval> | null = null;
 let heard = '';
-/** Hands-free films: what is said on later turns, after the scene's question. */
-let talk: string[] | null = null;
-let questionHeard = false;
+/** Hands-free films: what is said when the mic opens by itself. */
+let talk: string[] = [];
+// A mic opened by a hand (a tap or a hold) hears the scene's question; one
+// that hands free opened by itself hears the script, or nothing.
+let lastTouch = 0;
+if (typeof window !== 'undefined') {
+  for (const ev of ['pointerdown', 'pointerup', 'keyup']) window.addEventListener(ev, () => (lastTouch = Date.now()), true);
+}
 
 /** The fake recogniser "hears" the current scene's question, a word at a time. */
 export function setDemoQuestion(q: string) {
@@ -39,15 +44,14 @@ export function setDemoQuestion(q: string) {
 }
 
 /**
- * Script the turns after the question (a hands-free film): each time the mic
- * opens it waits a moment, then says the next line; once they run out it
- * hears nothing. A line is only used up once its first word is heard, so a
- * mic that closes early (the app started talking) hears it next time.
+ * Script what is said hands free (a film): each time the mic opens by itself
+ * it waits a moment, then says the next line; once they run out it hears
+ * nothing. A line is only used up once its first word is heard, so a mic that
+ * closes early (the app started talking) hears it next time.
  * `"4:check"` waits 4 s of quiet before saying it (2.4 s otherwise).
  */
 export function setDemoTalk(lines: string[]) {
   talk = lines.map((l) => l.trim()).filter(Boolean);
-  questionHeard = false;
 }
 
 const box = (b: [number, number, number, number]): NBox => ({ x: b[0], y: b[1], w: b[2], h: b[3] });
@@ -219,8 +223,8 @@ export const LensiAR = {
   async speechStart() {
     if (speechTimer) clearInterval(speechTimer);
     heard = '';
-    const scripted = talk !== null && questionHeard;
-    const raw = scripted ? (talk?.[0] ?? '') : demoQuestion;
+    const scripted = Date.now() - lastTouch > 400;
+    const raw = scripted ? (talk[0] ?? '') : demoQuestion;
     const timed = /^(\d+(?:\.\d+)?):(.*)$/.exec(raw);
     const line = (timed ? timed[2] : raw).trim();
     const words = line ? line.split(' ') : [];
@@ -230,10 +234,7 @@ export const LensiAR = {
     speechTimer = setInterval(() => {
       const talking = Date.now() >= quietUntil && i < words.length;
       if (talking) {
-        if (i === 0) {
-          if (scripted) talk?.shift();
-          else questionHeard = true;
-        }
+        if (i === 0 && scripted) talk.shift();
         heard = words.slice(0, ++i).join(' ');
       }
       const e: SpeechEvent = { transcript: heard, isFinal: false, level: talking ? 0.35 + Math.random() * 0.5 : 0.03 + Math.random() * 0.05 };
