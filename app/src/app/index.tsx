@@ -68,11 +68,8 @@ export default function Camera() {
   const camera = useRef<CameraHandle>(null);
   const flash = useRef<FlashRef>(null);
 
-  const [lens, setLensState] = useState<Lens>(() => getSettings().lens);
-  const setLens = useCallback((l: Lens) => {
-    setLensState(l);
-    if (getSettings().lens !== l) setSettings({ lens: l });
-  }, []);
+  // Every launch opens on the live guide: open the app, point, say the job.
+  const [lens, setLens] = useState<Lens>('guide');
   const [live, setLive] = useState(false);
   const [torch, setTorch] = useState(false);
   const [busy, setBusy] = useState(false);

@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from 'react';
 
-import type { Lens } from '../theme/tokens';
 import { canPersist, dataFile, readJSON, writeJSON } from './persist';
 
 export type Brain = 'auto' | 'apple' | 'cloud' | 'vision';
@@ -17,11 +16,9 @@ export type Settings = {
   liveBrackets: boolean;
   /** Override for the cloud server; empty means the dev machine / env. */
   serverURL: string;
-  /** The lens the camera opens on: whatever was used last. */
-  lens: Lens;
 };
 
-const DEFAULTS: Settings = { brain: 'auto', narrate: true, handsFree: true, haptics: true, liveBrackets: true, serverURL: '', lens: 'guide' };
+const DEFAULTS: Settings = { brain: 'auto', narrate: true, handsFree: true, haptics: true, liveBrackets: true, serverURL: '' };
 
 let state: Settings = DEFAULTS;
 let loaded = false;
