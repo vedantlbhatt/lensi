@@ -53,6 +53,12 @@ tap.
   (a circuit board was once titled "Night sky").
 - **The detector guesses at slivers.** A car roof cut off by the frame's edge came back as a
   "bottle"; small boxes touching the edge no longer get names.
+- **Letterbox YOLO's input.** Vision was stretching every image into the model's square input
+  (`scaleFill`), so a row of water bottles in a 16:9 frame came back as knives. With `scaleFit`
+  darknet's classic test photo gives the textbook bicycle, dog, truck, and Vision maps the boxes
+  back to the image correctly (checked in the eyes job's debug renders).
+- **SAM's best-scored mask is usually the whole object.** For a tap that is the wrong answer
+  (a headlamp tap outlined the car), so taps take the best part-sized candidate.
 - **Vision's subject mask doesn't run in the VM**, so CI captures had no outline. When it
   returns nothing, SAM is prompted with the detector's best box instead (also helps phones
   on photos without a clear foreground).
