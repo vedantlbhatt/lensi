@@ -28,6 +28,10 @@ final class Detector {
   }
 
   private static func modelURL() -> URL? {
+    if let dir = ProcessInfo.processInfo.environment["LENSI_MODELS_DIR"] {
+      let url = URL(fileURLWithPath: dir).appendingPathComponent("yolo11n.mlmodelc")
+      if FileManager.default.fileExists(atPath: url.path) { return url }
+    }
     // Static frameworks copy resource bundles into the main app bundle.
     for host in [Bundle.main, Bundle(for: Detector.self)] {
       if let bundleURL = host.url(forResource: "LensiARModels", withExtension: "bundle"),
