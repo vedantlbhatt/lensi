@@ -107,14 +107,17 @@ export const visionEngine: Engine = {
         text: 'Answers and walkthroughs need Apple Intelligence or the cloud brain. Turn one on in Settings.',
       });
     } else {
-      const name = subject?.text ?? req.hint ?? objects[0]?.text;
-      out.push({ kind: 'title', text: name ? cap(name) : texts[0]?.text ? clip(texts[0].text!, 28) : 'Something here' });
       // What was found, by name and count, most common first: "two oranges and a lemon".
       const tally = new Map<string, number>();
       for (const t of [subject?.text, ...objects.map((o) => o.text)]) {
         const k = t?.trim().toLowerCase();
         if (k) tally.set(k, (tally.get(k) ?? 0) + 1);
       }
+      const name = subject?.text ?? req.hint ?? objects[0]?.text;
+      // Four people in a room are "Four people", not "Person".
+      const many = name ? (tally.get(name.trim().toLowerCase()) ?? 0) : 0;
+      const title = name ? cap(many > 1 ? counted(name, many) : name) : texts[0]?.text ? clip(texts[0].text!, 28) : 'Something here';
+      out.push({ kind: 'title', text: title });
       const things = [...tally].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => counted(k, c));
       const bits: string[] = [];
       if (things.length) bits.push(`spotted ${and(things)}`);

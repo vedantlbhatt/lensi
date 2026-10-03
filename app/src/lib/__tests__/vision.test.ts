@@ -42,6 +42,8 @@ test('eyes only: counts what it found by name, most common first', async () => {
   const ev = await run({ regions: fruit });
   const summary = ev.find((e) => e.kind === 'summary');
   assert.equal(summary && 'text' in summary ? summary.text : '', 'Spotted three people, two oranges and an apple, all on this phone.');
+  // The subject's own class appears twice, so the title counts it.
+  assert.deepEqual(ev[0], { kind: 'title', text: 'Two oranges' });
   assert.deepEqual(
     ev.filter((e) => e.kind === 'callout').map((e) => (e.kind === 'callout' ? e.label : '')),
     ['Orange', 'Apple', 'Person', 'Person'],
