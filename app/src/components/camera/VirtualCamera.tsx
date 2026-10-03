@@ -1,7 +1,6 @@
 import { Image } from 'expo-image';
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   FadeIn,
@@ -14,7 +13,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { DEMO_SCENES, type DemoScene } from '../../../modules/lensi-ar/src';
+import { DEMO_SCENES, setDemoQuestion, type DemoScene } from '../../../modules/lensi-ar/src';
 import { boxToView, fitRect } from '../../lib/geometry';
 import { assetPhoto, type Picked } from '../../lib/media';
 import { Grain } from '../../motion/Grain';
@@ -35,6 +34,7 @@ export const VirtualCamera = forwardRef<
 
   useEffect(() => {
     onScene?.(scene);
+    setDemoQuestion(scene.script.question);
   }, [scene, onScene]);
 
   useImperativeHandle(
@@ -44,6 +44,7 @@ export const VirtualCamera = forwardRef<
       startRecording: async () => false,
       stopRecording: async () => null,
       setTorch: async () => false,
+      nextScene: (dir: 1 | -1) => setIndex((i) => (i + dir + DEMO_SCENES.length) % DEMO_SCENES.length),
     }),
     [scene],
   );
@@ -60,28 +61,26 @@ export const VirtualCamera = forwardRef<
     ],
   }));
 
-  const swipe = Gesture.Pan()
-    .activeOffsetX([-24, 24])
-    .runOnJS(true)
-    .onEnd((e) => {
-      if (Math.abs(e.translationX) < 60) return;
-      const dir = e.translationX < 0 ? 1 : -1;
-      setIndex((i) => (i + dir + DEMO_SCENES.length) % DEMO_SCENES.length);
-    });
-
   const fit = fitRect(scene.width, scene.height, width, height, 'cover');
-  const b = boxToView({ x: scene.outline.box[0], y: scene.outline.box[1], w: scene.outline.box[2], h: scene.outline.box[3] }, fit);
+  const raw = boxToView({ x: scene.outline.box[0], y: scene.outline.box[1], w: scene.outline.box[2], h: scene.outline.box[3] }, fit);
+  // Keep every corner on screen: a bracket half off the edge reads as a stray mark.
+  // Symmetric side margins that clear the tool rail on the right.
+  const m = 22;
+  const side = 66;
+  const x0 = Math.max(side, raw.x);
+  const y0 = Math.max(m + 90, raw.y);
+  const x1 = Math.min(width - side, raw.x + raw.w);
+  const y1 = Math.min(height - m - 230, raw.y + raw.h);
+  const b = { x: x0, y: y0, w: Math.max(40, x1 - x0), h: Math.max(40, y1 - y0) };
 
   return (
-    <GestureDetector gesture={swipe}>
-      <View style={StyleSheet.absoluteFill} collapsable={false}>
-        <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
-          <Image source={scene.asset} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
-        </Animated.View>
-        <Grain opacity={0.05} />
-        {brackets ? <Brackets key={`b-${scene.key}`} x={b.x} y={b.y} w={b.w} h={b.h} pen={pen} /> : null}
-      </View>
-    </GestureDetector>
+    <View style={StyleSheet.absoluteFill} collapsable={false}>
+      <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
+        <Image source={scene.asset} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
+      </Animated.View>
+      <Grain opacity={0.05} />
+      {brackets ? <Brackets key={`b-${scene.key}`} x={b.x} y={b.y} w={b.w} h={b.h} pen={pen} /> : null}
+    </View>
   );
 });
 

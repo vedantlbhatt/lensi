@@ -3,7 +3,7 @@ import type { Callout, Capture } from '../../lib/types';
 import { fonts } from '../../theme/type';
 
 export const TOP_BAR = 52;
-export const CARD_PEEK = 204;
+export const CARD_PEEK = 258;
 export const FRAME_RADIUS = 26;
 
 /** Mono label metrics: Fragment Mono advances exactly 0.618 em. */

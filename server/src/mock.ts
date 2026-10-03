@@ -26,5 +26,7 @@ export function mockLines(body: AnnotateBody): string[] {
     firstMark ? `M|${firstMark}|marked part` : "P|300|600|front",
     "F|Mock facts arrive one line at a time.",
     "F|Every line kind is exercised.",
+    "Q|How do I clean it?",
+    "Q|What is the marked part for?",
   ];
 }

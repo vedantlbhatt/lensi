@@ -17,6 +17,7 @@ function toEvent(raw: Record<string, unknown>): EngineEvent | null {
     case 'summary':
     case 'fact':
     case 'answer':
+    case 'suggest':
     case 'error':
       return text ? { kind, text } : null;
     case 'callout':

@@ -32,6 +32,7 @@ export type DemoScene = {
     facts: string[];
     steps: { text: string; at?: P }[];
     question: string;
+    suggestions: string[];
   };
 };
 
@@ -68,6 +69,7 @@ export const DEMO_SCENES: DemoScene[] = [
         { text: 'Lift the hood and set the prop rod before you let go.', at: [0.7, 0.3] },
       ],
       question: 'How do I open the hood?',
+      suggestions: ["How do I open the hood?", "What engine might it have now?"],
     },
   },
   {
@@ -101,6 +103,7 @@ export const DEMO_SCENES: DemoScene[] = [
         { text: 'Compare with the sticker and add air in short bursts.', at: [0.79, 0.54] },
       ],
       question: 'How do I check the tyre pressure?',
+      suggestions: ["How do I check the tyre pressure?", "Where is the spare wheel?"],
     },
   },
   {
@@ -138,6 +141,7 @@ export const DEMO_SCENES: DemoScene[] = [
         { text: 'Capacitors keep that analog side quiet before it reaches the jack.', at: [0.55, 0.24] },
       ],
       question: 'How does the audio get from the chip to my speakers?',
+      suggestions: ["How does the audio get to my speakers?", "What does the crystal do?"],
     },
   },
   {
@@ -170,6 +174,7 @@ export const DEMO_SCENES: DemoScene[] = [
         { text: 'Put the greens on top, away from the glass.', at: [0.72, 0.3] },
       ],
       question: 'How should I pack this so nothing tips over?',
+      suggestions: ["How should I pack this so nothing tips over?", "What goes in the fridge first?"],
     },
   },
   {
@@ -202,6 +207,7 @@ export const DEMO_SCENES: DemoScene[] = [
         { text: 'Separate the segments along the white membranes.', at: [0.4, 0.55] },
       ],
       question: 'What is the cleanest way to peel this?',
+      suggestions: ["What is the cleanest way to peel this?", "How much vitamin C is in one?"],
     },
   },
 ];

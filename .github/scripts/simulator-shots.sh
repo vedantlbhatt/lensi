@@ -52,6 +52,18 @@ sleep 6
 xcrun simctl openurl "$DEV" "lensi:///?memories=1"
 shot 11-memories 4
 
+# Render the share image inside the app and pull it out of the container.
+launch
+sleep 6
+xcrun simctl openurl "$DEV" "lensi:///?demo=cars&export=1"
+sleep 14
+shot 12-export-source 0
+DATA=$(xcrun simctl get_app_container "$DEV" "$BUNDLE" data 2>/dev/null || true)
+if [ -n "$DATA" ]; then
+  find "$DATA" -name 'lensi-*.jpg' -newer "$OUT/01-camera.png" -size +20k 2>/dev/null | head -3 | while read -r f; do cp "$f" "$OUT/13-export-$(basename "$f")"; echo "export $f"; done
+  find "$DATA/Documents/lensi" -name capture.json 2>/dev/null | head -3 | while read -r f; do cp "$f" "$OUT/capture-$(basename "$(dirname "$f")").json"; done
+fi
+
 xcrun simctl spawn "$DEV" log show --last 6m --style compact --predicate 'process == "Lensi"' > "$OUT/device.log" 2>/dev/null || true
 grep -iE "lensi|error|exception|fatal" "$OUT/device.log" | tail -400 > "$OUT/device-filtered.log" || true
 ls -la "$OUT"

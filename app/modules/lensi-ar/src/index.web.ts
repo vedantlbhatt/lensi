@@ -26,6 +26,14 @@ const listeners: { [K in keyof LensiAREvents]: Set<Listener<K>> } = {
   onSpeech: new Set(),
 };
 const timers = new Map<string, ReturnType<typeof setTimeout>[]>();
+let demoQuestion = 'How do I use this?';
+let speechTimer: ReturnType<typeof setInterval> | null = null;
+let heard = '';
+
+/** The fake recogniser "hears" the current scene's question, a word at a time. */
+export function setDemoQuestion(q: string) {
+  demoQuestion = q;
+}
 
 const box = (b: [number, number, number, number]): NBox => ({ x: b[0], y: b[1], w: b[2], h: b[3] });
 const poly = (s: DemoScene): NPt[] => s.outline.polygon.map(([x, y]) => ({ x, y }));
@@ -110,6 +118,7 @@ export const LensiAR = {
       at(520, { kind: 'summary', text: sc.summary });
       sc.callouts.forEach((c) => at(300, { kind: 'callout', label: c.label, at: { x: c.at[0], y: c.at[1] } }));
       sc.facts.forEach((f) => at(260, { kind: 'fact', text: f }));
+      sc.suggestions.forEach((q) => at(120, { kind: 'suggest', text: q }));
     }
     list.push(setTimeout(() => {
       emit({ requestId, type: 'done' });
@@ -123,13 +132,25 @@ export const LensiAR = {
   },
 
   async speechRequestPermission() {
-    return false;
+    return true;
   },
   async speechStart() {
-    const e: SpeechEvent = { transcript: '', isFinal: true, level: 0, error: 'Voice needs the iOS app.' };
+    const words = demoQuestion.split(' ');
+    let i = 0;
+    heard = '';
+    if (speechTimer) clearInterval(speechTimer);
+    speechTimer = setInterval(() => {
+      if (i < words.length) heard = words.slice(0, ++i).join(' ');
+      const e: SpeechEvent = { transcript: heard, isFinal: false, level: 0.35 + Math.random() * 0.5 };
+      listeners.onSpeech.forEach((fn) => fn(e));
+    }, 230);
+  },
+  async speechStop() {
+    if (speechTimer) clearInterval(speechTimer);
+    speechTimer = null;
+    const e: SpeechEvent = { transcript: heard, isFinal: true, level: 0 };
     listeners.onSpeech.forEach((fn) => fn(e));
   },
-  async speechStop() {},
 };
 
 export const isSupported = false;

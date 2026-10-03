@@ -60,6 +60,8 @@ export type Annotation = {
   callouts: Callout[];
   facts: string[];
   steps: Step[];
+  /** Follow-up questions the model thinks come next. Absent on old captures. */
+  suggestions?: string[];
 };
 
 export type MediaKind = 'image' | 'video';
@@ -103,6 +105,7 @@ export const emptyAnnotation = (): Annotation => ({
   callouts: [],
   facts: [],
   steps: [],
+  suggestions: [],
 });
 
 /** Everything an engine can say, in the order it is likely to say it. */
@@ -113,6 +116,7 @@ export type EngineEvent =
   | { kind: 'fact'; text: string }
   | { kind: 'step'; text: string; mark?: number; at?: Pt }
   | { kind: 'answer'; text: string }
+  | { kind: 'suggest'; text: string }
   | { kind: 'error'; text: string };
 
 export type EngineRequest = {

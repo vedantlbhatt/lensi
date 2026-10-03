@@ -9,6 +9,7 @@
 //   N|n|text      walkthrough step pointing at mark n
 //   W|text        walkthrough step with nothing to point at
 //   A|sentence    answer to a follow-up question
+//   Q|question    a follow-up the user is likely to ask next
 //   E|message     error to show
 
 import type { EngineEvent } from './types';
@@ -37,6 +38,8 @@ export function parseLine(raw: string): EngineEvent | null {
       return { kind: 'fact', text: rest };
     case 'A':
       return { kind: 'answer', text: rest };
+    case 'Q':
+      return { kind: 'suggest', text: rest };
     case 'E':
       return { kind: 'error', text: rest };
     case 'P': {

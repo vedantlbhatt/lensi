@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import type { Capture } from '../../lib/types';
 import { BlurText } from '../../motion/BlurText';
@@ -58,11 +58,16 @@ export function InfoCard({
         <Text style={styles.metaText}>{lens.name.toUpperCase()}</Text>
         <Text style={styles.metaFaint}>· {SOURCE_COPY[capture.source]}</Text>
         <Text style={styles.metaFaint}>· {when(capture.createdAt)}</Text>
+        {!expanded && a.facts.length ? (
+          <Text style={[styles.metaFaint, styles.metaRight]}>
+            {a.facts.length} {a.facts.length === 1 ? 'FACT' : 'FACTS'} ↑
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.titleSlot}>
         {a.title ? (
-          <BlurText key={a.title} text={a.title} style={styles.title} step={60} duration={700} />
+          <BlurText key={a.title} text={a.title} style={[styles.title, a.title.length > 20 && styles.titleLong]} step={60} duration={700} />
         ) : !thinking ? (
           <Text style={styles.title}>{hint ? hint.charAt(0).toUpperCase() + hint.slice(1) : 'Untitled'}</Text>
         ) : (
@@ -73,7 +78,7 @@ export function InfoCard({
       </View>
 
       {a.summary ? (
-        <Animated.Text entering={FadeInDown.duration(380).delay(120)} style={styles.summary} numberOfLines={expanded ? undefined : 3}>
+        <Animated.Text entering={FadeInDown.duration(380).delay(120)} style={styles.summary} numberOfLines={expanded ? undefined : 2}>
           {a.summary}
         </Animated.Text>
       ) : thinking ? (
@@ -95,7 +100,7 @@ export function InfoCard({
         </Animated.View>
       ) : null}
 
-      <Animated.View layout={LinearTransition.springify().damping(20)} style={styles.chips}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll} contentContainerStyle={styles.chips}>
         {canWalk ? (
           <PressScale onPress={onWalk} accessibilityRole="button" accessibilityLabel="Start the walkthrough" scaleTo={0.93} haptic="medium">
             <View style={[styles.chip, { backgroundColor: lens.pen, borderColor: lens.pen }]}>
@@ -113,7 +118,7 @@ export function InfoCard({
             </PressScale>
           </Animated.View>
         ))}
-      </Animated.View>
+      </ScrollView>
 
       {expanded ? (
         <ScrollView style={styles.more} contentContainerStyle={{ gap: 14, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
@@ -140,19 +145,17 @@ export function InfoCard({
             </Animated.View>
           ))}
         </ScrollView>
-      ) : a.facts.length ? (
-        <Text style={styles.moreHint}>
-          {a.facts.length} {a.facts.length === 1 ? 'FACT' : 'FACTS'} · PULL UP
-        </Text>
       ) : null}
     </View>
   );
 }
 
-/** Two follow-ups that fit the lens; the first is always a how-to. */
+/** The model's own follow-ups when it gave some; otherwise two that fit the lens. */
 function suggest(c: Capture): string[] {
   const t = c.annotation.title;
   if (!t || c.status === 'analyzing') return [];
+  const fromModel = (c.annotation.suggestions ?? []).filter(Boolean).slice(0, 2);
+  if (fromModel.length) return fromModel;
   const thing = t.length > 22 ? 'this' : `the ${t.replace(/^(a|an|the)\s+/i, '')}`;
   switch (c.lens) {
     case 'fix':
@@ -182,6 +185,9 @@ const styles = StyleSheet.create({
   metaFaint: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
   titleSlot: { minHeight: 34, justifyContent: 'center' },
   title: { color: paper, fontFamily: fonts.display, fontSize: 30, lineHeight: 33, letterSpacing: -1 },
+  titleLong: { fontSize: 24, lineHeight: 27, letterSpacing: -0.7 },
+  metaRight: { marginLeft: 'auto' },
+  chipScroll: { flexGrow: 0, marginHorizontal: -18 },
   waiting: { height: 34, justifyContent: 'center' },
   waitingText: { color: paper, fontFamily: fonts.serifItalic, fontSize: 28, letterSpacing: -0.3 },
   summary: { color: mist, fontFamily: fonts.text, fontSize: 15.5, lineHeight: 21 },
@@ -191,7 +197,7 @@ const styles = StyleSheet.create({
   error: { flex: 1, color: '#FF9C8F', fontFamily: fonts.textMedium, fontSize: 14 },
   retry: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 32, borderRadius: 16, backgroundColor: 'rgba(244,241,234,0.1)' },
   retryText: { color: paper, fontFamily: fonts.textSemi, fontSize: 14 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  chips: { flexDirection: 'row', gap: 8, marginTop: 2, paddingHorizontal: 18 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -211,5 +217,4 @@ const styles = StyleSheet.create({
   qa: { gap: 6, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: hairline },
   q: { color: paper, fontFamily: fonts.serifItalic, fontSize: 20, lineHeight: 24, marginTop: 8 },
   stepsNote: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.1 },
-  moreHint: { color: faint, fontFamily: fonts.mono, fontSize: 10.5, letterSpacing: 1.3 },
 });

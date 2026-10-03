@@ -134,6 +134,9 @@ struct LensiAnnotation {
 
   @Guide(description: "Short specific facts for the lens, each under 15 words", .maximumCount(3))
   var facts: [String]
+
+  @Guide(description: "Two short questions the user is likely to ask next about this thing, each under 9 words", .maximumCount(2))
+  var followUps: [String]
 }
 
 @available(iOS 26.0, *)
@@ -351,6 +354,7 @@ private struct AnnotationEmitter {
   var summarySent = false
   var callouts = 0
   var facts = 0
+  var followUps = 0
 
   mutating func update(_ c: LensiAnnotation.PartiallyGenerated, final: Bool) {
     if !titleSent, let t = c.title, c.summary != nil || final {
@@ -373,11 +377,19 @@ private struct AnnotationEmitter {
       }
     }
     if let list = c.facts {
-      let ready = final ? list.count : max(0, list.count - 1)
+      let ready = (final || c.followUps != nil) ? list.count : max(0, list.count - 1)
       while facts < ready {
         let f = list[facts]
         facts += 1
         if !f.isEmpty { emit(["kind": "fact", "text": f]) }
+      }
+    }
+    if let list = c.followUps {
+      let ready = final ? list.count : max(0, list.count - 1)
+      while followUps < ready {
+        let q = list[followUps]
+        followUps += 1
+        if !q.isEmpty { emit(["kind": "suggest", "text": q]) }
       }
     }
   }

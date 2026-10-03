@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { useEffect } from 'react';
 
+import { haptic } from '../../lib/haptics';
 import { DecryptedText } from '../../motion/DecryptedText';
 import { springs } from '../../theme/motion';
 import { paper } from '../../theme/tokens';
@@ -37,6 +38,8 @@ function Label({ c, pen, delay, dim, onPress }: { c: PlacedCallout; pen: string;
   const d = useSharedValue(1);
   useEffect(() => {
     t.value = withDelay(delay, withSpring(1, springs.arrive));
+    const h = setTimeout(haptic.tick, delay + 60);
+    return () => clearTimeout(h);
   }, [delay, t]);
   useEffect(() => {
     d.value = withTiming(dim ? 0.18 : 1, { duration: 320, easing: Easing.out(Easing.quad) });

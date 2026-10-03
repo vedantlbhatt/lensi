@@ -11,6 +11,7 @@ test('parses each line kind', () => {
   assert.deepEqual(parseLine('M|#4|portafilter'), { kind: 'callout', label: 'portafilter', mark: 4 });
   assert.deepEqual(parseLine('F|Descale every 3 months'), { kind: 'fact', text: 'Descale every 3 months' });
   assert.deepEqual(parseLine('A|Yes.'), { kind: 'answer', text: 'Yes.' });
+  assert.deepEqual(parseLine('Q|How do I descale it?'), { kind: 'suggest', text: 'How do I descale it?' });
   assert.deepEqual(parseLine('E|Busy'), { kind: 'error', text: 'Busy' });
 });
 

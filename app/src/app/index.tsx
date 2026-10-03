@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DEMO_SCENES, isVirtual, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
 import { BrainChip } from '../components/camera/BrainChip';
 import { CameraSurface, type CameraHandle } from '../components/camera/CameraSurface';
+import { CoachMark } from '../components/camera/CoachMark';
 import { DropMenu, type DropChoice } from '../components/camera/DropMenu';
 import { Flash, type FlashRef } from '../components/camera/Flash';
 import { FocusLabel } from '../components/camera/FocusLabel';
@@ -22,6 +23,7 @@ import { CaptureView, type Rect } from '../components/capture/CaptureView';
 import { MemoriesSheet } from '../components/memories/MemoriesSheet';
 import { SettingsSheet } from '../components/ui/SettingsSheet';
 import { toast, ToastHost } from '../components/ui/Toast';
+import { devhooks } from '../lib/devhooks';
 import { pickEngine } from '../lib/engines';
 import { useLivePins } from '../lib/live';
 import { assetPhoto, pasteFromClipboard, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
@@ -71,6 +73,7 @@ export default function Camera() {
   const [scene, setScene] = useState<DemoScene | null>(null);
   const [tracking, setTracking] = useState<TrackingEvent | null>(null);
   const [engine, setEngine] = useState<EngineId | null>(null);
+  const [touched, setTouched] = useState(false);
 
   const pen = lensInfo(lens).pen;
   const voice = useVoice();
@@ -99,6 +102,7 @@ export default function Camera() {
   const openPicked = useCallback(
     async (picked: Picked | null, origin: Open['origin'], prompt?: string) => {
       if (!picked) return;
+      setTouched(true);
       const id = await ingest(picked, { lens, prompt: prompt ?? null });
       setOpen({ id, origin });
     },
@@ -175,8 +179,9 @@ export default function Camera() {
   }, [voice, takePhoto]);
 
   // Scripted runs (CI screenshots, the web preview): lensi:///?demo=cars&lens=guide&ask=…
-  const params = useGlobalSearchParams<{ demo?: string; lens?: string; ask?: string; memories?: string }>();
+  const params = useGlobalSearchParams<{ demo?: string; lens?: string; ask?: string; memories?: string; export?: string }>();
   useEffect(() => {
+    if (params.export) devhooks.autoExport = true;
     if (params.memories) setMemories(true);
     const scene = DEMO_SCENES.find((s) => s.key === params.demo);
     if (!scene) return;
@@ -193,15 +198,16 @@ export default function Camera() {
     return () => {
       alive = false;
     };
-  }, [params.demo, params.lens, params.ask, params.memories]);
+  }, [params.demo, params.lens, params.ask, params.memories, params.export]);
 
-  // Swipe up anywhere for Memories; sideways to change lens (real camera only,
-  // the virtual one uses sideways swipes for scenes).
+  // Swipe up anywhere for Memories; sideways changes the lens on a real camera
+  // and the demo scene on the virtual one.
   const swipe = Gesture.Pan()
     .runOnJS(true)
     .minDistance(30)
     .onEnd((e) => {
       if (e.translationY < -80 && Math.abs(e.translationY) > Math.abs(e.translationX)) setMemories(true);
+      else if (isVirtual && Math.abs(e.translationX) > 60) camera.current?.nextScene?.(e.translationX < 0 ? 1 : -1);
       else if (!isVirtual && Math.abs(e.translationX) > 70) {
         const i = LENSES.findIndex((l) => l.key === lens);
         const next = LENSES[Math.max(0, Math.min(LENSES.length - 1, i + (e.translationX < 0 ? 1 : -1)))];
@@ -211,6 +217,7 @@ export default function Camera() {
   const tapToPin = Gesture.Tap()
     .runOnJS(true)
     .onEnd((e) => {
+      setTouched(true);
       if (live) sparks.current?.burst(e.absoluteX, e.absoluteY, pen);
     });
 
@@ -274,6 +281,8 @@ export default function Camera() {
           />
         </View>
 
+        {!touched && captures.length === 0 && !voice.listening ? <CoachMark pen={pen} top={height * 0.36} /> : null}
+
         {hint && !isVirtual ? (
           <Animated.View entering={FadeIn} exiting={FadeOut} style={[styles.hintWrap, { top: insets.top + 60 }]} pointerEvents="none">
             <Text style={styles.hint}>{hint}</Text>
@@ -301,13 +310,24 @@ export default function Camera() {
       {memories ? (
         <MemoriesSheet
           onOpen={(id, from) => {
-            setOpen({ id, origin: from });
+            setOpen({ id, origin: from.w > 4 && from.h > 4 ? from : 'camera' });
           }}
           onClose={() => setMemories(false)}
         />
       ) : null}
 
-      {open ? <CaptureView key={open.id} id={open.id} origin={open.origin} dismissTo={memoriesRect} onClosed={() => setOpen(null)} /> : null}
+      {open ? (
+        <View style={[StyleSheet.absoluteFill, styles.top30]}>
+          <CaptureView
+            key={open.id}
+            id={open.id}
+            origin={open.origin}
+            // Opened from a Memories print: go back into that print. From the camera: file it.
+            dismissTo={open.origin === 'camera' ? memoriesRect : open.origin}
+            onClosed={() => setOpen(null)}
+          />
+        </View>
+      ) : null}
 
       {settingsOpen ? <SettingsSheet pen={pen} onClose={() => setSettingsOpen(false)} /> : null}
       <ToastHost />
@@ -317,6 +337,7 @@ export default function Camera() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
+  top30: { zIndex: 30 },
   shade: { position: 'absolute', left: 0, right: 0 },
   top: { position: 'absolute', left: 14, right: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   hintWrap: { position: 'absolute', alignSelf: 'center', paddingHorizontal: 14, height: 32, borderRadius: 16, justifyContent: 'center', backgroundColor: 'rgba(11,11,12,0.7)' },

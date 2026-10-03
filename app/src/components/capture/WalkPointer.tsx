@@ -13,6 +13,7 @@ import Animated, {
 import Svg, { Path } from 'react-native-svg';
 
 import { arcControl, quadAt } from '../../lib/geometry';
+import { haptic } from '../../lib/haptics';
 import type { Pt } from '../../lib/types';
 import { Ripple } from '../../motion/Ripple';
 import { ink } from '../../theme/tokens';
@@ -58,7 +59,10 @@ export function WalkPointer({ target, index, pen, home }: { target: Pt | null; i
     tap.value = withDelay(duration - 40, withSequence(withTiming(1, { duration: 110 }), withSpring(0, { damping: 9, stiffness: 300 })));
     last.current = target;
     const k = `${index}-${target.x.toFixed(1)}-${target.y.toFixed(1)}`;
-    const h = setTimeout(() => setLandedKey(k), duration);
+    const h = setTimeout(() => {
+      setLandedKey(k);
+      haptic.tap();
+    }, duration);
     return () => clearTimeout(h);
   }, [target, index, from, to, ctrl, t, tap, shown]);
 

@@ -23,3 +23,6 @@ export const isSupported: boolean = LensiAR.isSupported;
 /** No ARKit (e.g. the Simulator): the app shows a virtual camera over the demo scenes. */
 export const isVirtual = !LensiAR.isSupported;
 export const LensiARView = requireNativeView<LensiARViewProps>('LensiAR');
+
+/** Web preview hook; the real recogniser hears the real question. */
+export function setDemoQuestion(_q: string) {}

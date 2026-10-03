@@ -236,6 +236,15 @@ function apply(id: string, e: EngineEvent, exchangeId: string | null) {
       return patchCapture(id, (x) => ({ ...x, annotation: { ...x.annotation, summary: e.text } }));
     case 'fact':
       return patchCapture(id, (x) => ({ ...x, annotation: { ...x.annotation, facts: [...x.annotation.facts, e.text] } }));
+    case 'suggest': {
+      const q = e.text.trim();
+      if (!q) return;
+      return patchCapture(id, (x) => {
+        const cur = x.annotation.suggestions ?? [];
+        if (cur.length >= 3 || cur.some((s) => s.toLowerCase() === q.toLowerCase())) return x;
+        return { ...x, annotation: { ...x.annotation, suggestions: [...cur, q] } };
+      });
+    }
     case 'answer':
       if (!exchangeId) return;
       return patchExchange(id, exchangeId, (x) => ({ ...x, answer: [...x.answer, e.text] }));

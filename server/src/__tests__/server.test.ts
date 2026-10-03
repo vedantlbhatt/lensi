@@ -32,7 +32,7 @@ test("health reports the mock provider", async () => {
 test("annotate streams every annotation line kind", async () => {
   const events = await stream({ image: "x", lens: "identify", marks: "1: subject (toaster), center\n2: text \"PUSH\", top right" });
   const kinds = events.map((e) => e!.kind);
-  assert.deepEqual(kinds, ["title", "summary", "callout", "callout", "fact", "fact"]);
+  assert.deepEqual(kinds, ["title", "summary", "callout", "callout", "fact", "fact", "suggest", "suggest"]);
   assert.deepEqual(events[3], { kind: "callout", label: "marked part", mark: 1 });
 });
 

@@ -17,7 +17,9 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { devhooks } from '../../lib/devhooks';
 import { toView } from '../../lib/geometry';
+import { haptic } from '../../lib/haptics';
 import { analyze, ask, cancel, isHowTo } from '../../lib/pipeline';
 import { setSettings, useSettings } from '../../lib/settings';
 import { removeCapture, useCapture } from '../../lib/store';
@@ -35,7 +37,7 @@ import { AskBar } from './AskBar';
 import { CalloutLabels } from './CalloutLabels';
 import { InfoCard } from './InfoCard';
 import { activeSteps, CARD_PEEK, FRAME_RADIUS, placeCallouts, stageFor } from './layout';
-import { shareCapture } from './share';
+import { renderAnnotated, shareCapture } from './share';
 import { StepPlayer } from './StepPlayer';
 import { WalkPointer } from './WalkPointer';
 
@@ -174,6 +176,19 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   useEffect(() => () => void Speech.stop().catch(() => {}), []);
 
   const pointerTarget = step?.at ? toView(step.at, frame) : null;
+
+  // CI: render the share image once the annotation has landed.
+  const exported = useRef(false);
+  useEffect(() => {
+    if (!devhooks.autoExport || exported.current || !settled || capture.status !== 'ready') return;
+    exported.current = true;
+    const t = setTimeout(() => {
+      renderAnnotated(capture, placed, stage)
+        .then((uri) => console.log(`[lensi] exported ${uri}`))
+        .catch((e) => console.warn('[lensi] export failed', e));
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [settled, capture, placed, stage]);
   const thinking = capture.status === 'analyzing';
   const anyPending = thinking || capture.thread.some((x) => x.pending);
 
@@ -284,13 +299,17 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
                 pending={stepsPending}
                 pen={lens.pen}
                 narrate={settings.narrate}
-                onIndex={setStepIndex}
+                onIndex={(i) => {
+                  haptic.thud();
+                  setStepIndex(i);
+                }}
                 onNarrate={() => {
                   if (settings.narrate) Speech.stop().catch(() => {});
                   setSettings({ narrate: !settings.narrate });
                 }}
                 onExit={() => {
                   Speech.stop().catch(() => {});
+                  if (stepIndex >= steps.length - 1) haptic.done();
                   setWalking(false);
                 }}
               />

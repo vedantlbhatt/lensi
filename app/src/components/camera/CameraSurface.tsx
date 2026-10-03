@@ -19,6 +19,8 @@ export type CameraHandle = {
   startRecording(): Promise<boolean>;
   stopRecording(): Promise<Picked | null>;
   setTorch(on: boolean): Promise<boolean>;
+  /** Virtual camera only: show the next/previous demo scene. */
+  nextScene?(dir: 1 | -1): void;
   /** The native view, for live pins. Null on the virtual camera. */
   native?: LensiARViewRef | null;
 };
@@ -49,6 +51,7 @@ export const CameraSurface = forwardRef<
           startRecording: () => virtual.current?.startRecording() ?? Promise.resolve(false),
           stopRecording: () => virtual.current?.stopRecording() ?? Promise.resolve(null),
           setTorch: () => Promise.resolve(false),
+          nextScene: (dir: 1 | -1) => virtual.current?.nextScene?.(dir),
           native: null,
         };
       }

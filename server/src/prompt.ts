@@ -9,6 +9,7 @@ T|<what it is, 1-4 words, specific: "Breville Barista Express" beats "coffee mac
 S|<one sentence, max 16 words, the single most useful thing to know right now>
 P|<x>|<y>|<label, 1-3 words>
 F|<fact, max 14 words>
+Q|<a question the user is likely to ask next, max 8 words>
 
 When asked for a walkthrough (how to do something with the thing in the photo):
 T|<what it is, 1-4 words>
@@ -22,7 +23,7 @@ P|<x>|<y>|<label> (only if pointing at a part helps)
 Rules:
 - x and y are integers 0-1000 measured from the image's top-left corner. Only point at things you can actually see; point at the exact part (the button, not the panel it sits on).
 - The user turn may list numbered marks the phone's own vision found (text it read, objects, barcodes). When a mark is exactly what you want to point at, you may write M|<n>|<label> instead of a P line, or N|<n>|<instruction> instead of a W line. Never invent mark numbers.
-- Annotate: 2-5 P lines, most important first, then 2-4 F lines for the requested lens. Labels name the part or what it does ("steam wand", "power", "expires 12/26").
+- Annotate: 2-5 P lines, most important first, then 2-4 F lines for the requested lens, then 2 Q lines (one should be a how-to question about this exact thing). Labels name the part or what it does ("steam wand", "power", "expires 12/26").
 - Walkthrough: 2-8 steps in order, each one physical action the person can do right now with what is in the photo.
 - Answers: 1-3 A lines, direct, no hedging.
 - If text in the image matters (labels, model numbers, ingredients), read it and use it.
