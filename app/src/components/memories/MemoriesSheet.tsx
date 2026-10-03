@@ -119,6 +119,11 @@ function Tile({ c, index, width, onOpen }: { c: Capture; index: number; width: n
             <View style={styles.videoTag}>
               <Icon name="play" size={10} color={ink} />
             </View>
+          ) : c.moments.length > 1 ? (
+            <View style={styles.photosTag} accessibilityLabel={`${c.moments.length} photos`}>
+              <Icon name="stack" size={11} color={ink} stroke={2.2} />
+              <Text style={styles.photosText}>{c.moments.length}</Text>
+            </View>
           ) : null}
           <View style={styles.tileText}>
             <View style={styles.tileMeta}>
@@ -151,6 +156,19 @@ const styles = StyleSheet.create({
   tileLens: { color: mist, fontFamily: fonts.mono, fontSize: 10, letterSpacing: 1.2 },
   tileTitle: { color: paper, fontFamily: fonts.display, fontSize: 18, lineHeight: 20, letterSpacing: -0.5 },
   videoTag: { position: 'absolute', top: 10, right: 10, width: 22, height: 22, borderRadius: 11, backgroundColor: paper, alignItems: 'center', justifyContent: 'center' },
+  photosTag: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    height: 22,
+    paddingHorizontal: 7,
+    borderRadius: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: paper,
+  },
+  photosText: { color: ink, fontFamily: fonts.mono, fontSize: 11 },
   empty: { flex: 1, paddingHorizontal: 24, paddingTop: 60, gap: 10 },
   emptyTitle: { color: paper, fontFamily: fonts.display, fontSize: 30, letterSpacing: -1 },
   emptyRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline' },
