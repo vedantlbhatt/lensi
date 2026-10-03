@@ -8,7 +8,7 @@ heyclicky for your camera. Lensi opens straight into a full-screen camera. Point
 |---|---|
 | **Capture anything** | Tap the shutter for a photo, hold it for up to 15 s of video, or drop in a photo, video, file or clipboard image from the rail. |
 | **Ask out loud** | Hold the mic, ask "how do I descale this?", let go. Lensi takes the photo and answers. "How do I…" questions become walkthroughs. |
-| **Annotate** | The photo springs back into a framed print. The subject's outline draws itself, numbered marks show what the phone's vision found, and labels unfold out of those marks as the model names them. |
+| **Annotate** | The photo springs back into a framed print. The subject's outline draws itself while the model thinks, then each part's name settles onto the part as a plain white tag. |
 | **Walk through** | A step player with a cursor that arcs between targets, taps the part, and reads each step aloud. |
 | **Point while answering** | Ask "where's the reset button?" and the cursor flies out of the card to each part the answer names while the outline glows. **Show me** replays it. |
 | **Tap to ask** | Tap anything on the print. SAM outlines the part under your finger (marching ants) and Lensi says what it is. |
@@ -25,7 +25,7 @@ heyclicky for your camera. Lensi opens straight into a full-screen camera. Point
 |---|---|---|
 | Live detection brackets | YOLO11n on the Neural Engine, about 15 fps | Live mode only |
 | The eyes | Vision: foreground instance outlines, OCR, barcodes, classification, saliency, plus YOLO on the still | About 0.5–1.5 s |
-| Part outlines | MobileSAM (Meta's Segment Anything, mobile variant) on Core ML. A grid of point prompts over the subject proposes parts (knobs, ports, handles) that become numbered marks; taps and labels are point-prompted | Falls back to Vision instances |
+| Part outlines | MobileSAM (Meta's Segment Anything, mobile variant) on Core ML. A grid of point prompts over the subject proposes parts (knobs, ports, handles) that become numbered marks for the model (never drawn for you); taps and labels are point-prompted | Falls back to Vision instances |
 | The brain | Apple Intelligence (Foundation Models). On iOS 27 the photo goes in with numbered marks drawn on it, and the model answers by mark number | Claude (via `server/`) or vision-only as fallbacks |
 | The ears | On-device speech recognition | |
 
