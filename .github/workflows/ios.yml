@@ -100,12 +100,13 @@ jobs:
       - name: ccache
         run: |
           brew list ccache >/dev/null 2>&1 || brew install ccache
+          # The Podfile routes clang through ccache when this is set. Xcode doesn't pass the
+          # shell's CCACHE_* variables to the compiler, so ccache keeps its default directory
+          # (~/Library/Caches/ccache), and that is what gets cached between runs.
           echo "USE_CCACHE=1" >> "$GITHUB_ENV"
-          echo "CCACHE_DIR=$HOME/.ccache-lensi" >> "$GITHUB_ENV"
-          echo "CCACHE_MAXSIZE=3G" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
         with:
-          path: ~/.ccache-lensi
+          path: ~/Library/Caches/ccache
           key: ccache-ios-${{ hashFiles('app/package-lock.json') }}-${{ github.sha }}
           restore-keys: |
             ccache-ios-${{ hashFiles('app/package-lock.json') }}-
@@ -124,12 +125,14 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p ../out
+          # One architecture, the runner's own: a generic Simulator destination otherwise builds
+          # every file for both arm64 and x86_64, and only the native one ever runs here.
           xcodebuild -workspace ios/Lensi.xcworkspace -scheme Lensi -configuration Release \
-            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO build \
             > ../out/xcodebuild.log 2>&1 || { grep -E "error:|fatal error|Undefined symbol|ld: " ../out/xcodebuild.log | head -150 > ../out/build-errors.txt; cat ../out/build-errors.txt; exit 1; }
           grep -E "warning: .*(LensiAR|lensi-ar)" ../out/xcodebuild.log | sort -u | head -100 > ../out/lensi-warnings.txt || true
-          ccache -s > ../out/ccache-stats.txt 2>&1 || true
+          { uname -m; ccache -s; } > ../out/ccache-stats.txt 2>&1 || true
       - name: Run in Simulator
         working-directory: app
         run: bash ../.github/scripts/simulator-shots.sh build/Build/Products/Release-iphonesimulator/Lensi.app ../out/shots
