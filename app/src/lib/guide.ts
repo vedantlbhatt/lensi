@@ -12,10 +12,11 @@ import type { Pt } from './types';
  */
 
 /**
- * A tagged part, pinned where it was in the frame the plan was made from.
+ * A tagged part, pinned where it was in the frame the plan was made from (or,
+ * for one found later by a question, `frame`: the look that found it).
  * `outline` is its shape in that frame (SAM), drawn around it while its step is up.
  */
-export type GuidePart = { id: string; label: string; at: Pt; mark?: number; outline?: Pt[] };
+export type GuidePart = { id: string; label: string; at: Pt; mark?: number; outline?: Pt[]; frame?: string };
 
 export type GuideStep = { text: string; partId?: string };
 
@@ -51,8 +52,12 @@ export type GuideAction =
   | { type: 'plan'; task: string }
   | { type: 'title'; text: string }
   | { type: 'step'; text: string; label?: string; at?: Pt; mark?: number; outline?: Pt[] }
-  /** A labelled part with no step of its own (what the eyes found when there is no model). */
-  | { type: 'part'; label: string; at: Pt; mark?: number; outline?: Pt[] }
+  /**
+   * A labelled part with no step of its own: what the eyes found when there is
+   * no model, or what an answer pointed at (`frame`: the look it was found in;
+   * `step`: the step it belongs to, if that step has no part yet).
+   */
+  | { type: 'part'; label: string; at: Pt; mark?: number; outline?: Pt[]; frame?: string; step?: number }
   /** A part's shape, once it's known. */
   | { type: 'outline'; id: string; outline: Pt[] }
   | { type: 'planned' }
@@ -69,15 +74,28 @@ export type GuideAction =
 const SAME_PART = 0.05;
 const MAX_PARTS = 6;
 
-function addPart(parts: GuidePart[], label: string, at: Pt, mark?: number, outline?: Pt[]): { parts: GuidePart[]; id: string | null } {
+function addPart(
+  parts: GuidePart[],
+  label: string,
+  at: Pt,
+  mark?: number,
+  outline?: Pt[],
+  frame?: string,
+): { parts: GuidePart[]; id: string | null } {
   const clean = shortLabel(label);
   if (!clean) return { parts, id: null };
-  const same = parts.find((p) => (mark !== undefined && p.mark === mark) || Math.hypot(p.at.x - at.x, p.at.y - at.y) < SAME_PART);
+  // Marks and points only compare within one look; across looks, the name does.
+  const same = parts.find((p) =>
+    (p.frame ?? null) === (frame ?? null)
+      ? (mark !== undefined && p.mark === mark) || Math.hypot(p.at.x - at.x, p.at.y - at.y) < SAME_PART
+      : p.label.toLowerCase() === clean.toLowerCase(),
+  );
   if (same) return { parts, id: same.id };
   if (parts.length >= MAX_PARTS) return { parts, id: null };
   const id = `p${parts.length + 1}`;
   const shape = outline && outline.length >= 3 ? { outline: simplify(outline) } : {};
-  return { parts: [...parts, { id, label: clean, at, ...(mark !== undefined ? { mark } : {}), ...shape }], id };
+  const extra = { ...(mark !== undefined ? { mark } : {}), ...shape, ...(frame ? { frame } : {}) };
+  return { parts: [...parts, { id, label: clean, at, ...extra }], id };
 }
 
 /** At most this many corners: an outline is redrawn every frame. */
@@ -109,8 +127,13 @@ export function guideReducer(s: GuideState, a: GuideAction): GuideState {
       if (!step.text) return s;
       return { ...s, parts: placed.parts, steps: [...s.steps, step] };
     }
-    case 'part':
-      return { ...s, parts: addPart(s.parts, a.label, a.at, a.mark, a.outline).parts };
+    case 'part': {
+      const placed = addPart(s.parts, a.label, a.at, a.mark, a.outline, a.frame);
+      const owner = a.step !== undefined ? s.steps[a.step] : undefined;
+      // Found for a step that had nothing to point at: now it does.
+      const steps = owner && placed.id && !owner.partId ? s.steps.map((st, i) => (i === a.step ? { ...st, partId: placed.id! } : st)) : s.steps;
+      return { ...s, parts: placed.parts, steps };
+    }
     case 'outline':
       if (a.outline.length < 3) return s;
       return { ...s, parts: s.parts.map((p) => (p.id === a.id && !p.outline ? { ...p, outline: simplify(a.outline) } : p)) };

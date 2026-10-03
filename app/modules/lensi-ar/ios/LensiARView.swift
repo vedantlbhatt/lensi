@@ -767,7 +767,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       points: frame.rawFeaturePoints?.points ?? []
     )
     guideFrameOrder.append(id)
-    while guideFrameOrder.count > 4 { guideFrames[guideFrameOrder.removeFirst()] = nil }
+    // The plan's look (the first) stays for the whole job: its parts' outlines
+    // can arrive late. Later looks (checks, questions) take turns.
+    while guideFrameOrder.count > 6 { guideFrames[guideFrameOrder.remove(at: 1)] = nil }
     let buffer = frame.capturedImage
     visionQueue.async { [weak self] in
       guard let self else { return }

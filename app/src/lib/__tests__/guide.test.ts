@@ -144,3 +144,20 @@ test('a part keeps the first shape it gets, thinned for drawing every frame', ()
   s = guideReducer(s, { type: 'outline', id: s.parts[1].id, outline: ring(12) });
   assert.equal(s.parts[1].outline?.length, 12);
 });
+
+test('a part an answer found belongs to a step that had none, and is kept with its own look', () => {
+  let s = guideReducer({ ...initialGuide, status: 'planning', task: 'x' }, { type: 'step', text: 'Find the shutoff valve.' });
+  s = guideReducer(s, { type: 'step', text: 'Turn the cap.', label: 'Cap', at: { x: 0.5, y: 0.5 }, mark: 3 });
+  s = guideReducer(s, { type: 'planned' });
+  assert.equal(currentStep(s).part, null);
+  // "Where's the valve?", answered from a new look: the same mark number there is a different thing.
+  s = guideReducer({ ...s, status: 'answering' }, { type: 'part', label: 'Shutoff valve', at: { x: 0.5, y: 0.5 }, mark: 3, frame: 'f2', step: 0 });
+  assert.equal(s.parts.length, 2);
+  assert.deepEqual(currentStep(s).part, { id: 'p2', label: 'Shutoff valve', at: { x: 0.5, y: 0.5 }, mark: 3, frame: 'f2' });
+  // Asked again from yet another look: same name, same tag.
+  s = guideReducer(s, { type: 'part', label: 'shutoff valve', at: { x: 0.2, y: 0.3 }, frame: 'f3', step: 0 });
+  assert.equal(s.parts.length, 2);
+  // A step that already has its part keeps it.
+  s = guideReducer(s, { type: 'part', label: 'Washer', at: { x: 0.7, y: 0.7 }, frame: 'f3', step: 1 });
+  assert.equal(s.steps[1].partId, 'p1');
+});

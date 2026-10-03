@@ -21,6 +21,8 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
   const latest = useRef<GuideState>(state);
   latest.current = state;
   const frame = useRef<GuideFrame | null>(null);
+  /** Every look this job took (the plan's, and any a question took), by frame id. */
+  const looks = useRef(new Map<string, GuideFrame>());
   const pinned = useRef(new Set<string>());
   /** Parts whose shape was asked for (SAM at the part's point) or sent to the camera. */
   const shaped = useRef(new Set<string>());
@@ -81,6 +83,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         return;
       }
       frame.current = f;
+      looks.current = new Map([[f.frameId, f]]);
       let regions: Region[] = [];
       let hint: string | null = null;
       try {
@@ -186,10 +189,22 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
       }
       const { step } = currentStep(s);
       const context = step ? ` (They are on this step: ${step.text})` : '';
+      // The eyes look too, so an answer can point: "where's the valve?" tags it
+      // where it is now, and a step that had nothing to point at gets it.
+      looks.current.set(f.frameId, f);
+      let regions: Region[] = [];
+      try {
+        regions = buildRegions((await LensiAR.analyze(f.uri)) as AnalysisLike).regions;
+      } catch {}
       const lines: string[] = [];
       try {
-        const ok = await runBrain(f, { regions: [], hint: s.title, question: `${question}${context}` }, (e) => {
+        const ok = await runBrain(f, { regions, hint: s.title, question: `${question}${context}` }, (e) => {
           if (e.kind === 'answer' || e.kind === 'error') lines.push(e.text);
+          else if (e.kind === 'callout') {
+            const region = e.mark ? regions.find((r) => r.mark === e.mark) : undefined;
+            const at = region ? anchorFor(region) : e.at;
+            if (at) dispatch({ type: 'part', label: e.label, at, mark: region?.mark, outline: region?.polygon, frame: f.frameId, step: s.index });
+          }
         });
         if (!ok) return;
       } catch {}
@@ -222,6 +237,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     shaped.current.clear();
     drawn.current.clear();
     frame.current = null;
+    looks.current = new Map();
     void camera.current?.guide.clear().catch(() => {});
     dispatch({ type: 'reset' });
   }, [camera, cancelWork]);
@@ -246,14 +262,14 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     [ask, back, check, next, repeat, start, stop],
   );
 
-  // Tags: pin each new part in the world, in the frame the plan was made from.
+  // Tags: pin each new part in the world, in the look it was found in.
   useEffect(() => {
     const f = frame.current;
     if (!f) return;
     for (const p of state.parts) {
       if (pinned.current.has(p.id)) continue;
       pinned.current.add(p.id);
-      void camera.current?.guide.pin(f.frameId, p).catch(() => {});
+      void camera.current?.guide.pin(p.frame ?? f.frameId, p).catch(() => {});
     }
   }, [state.parts, camera]);
 
@@ -265,8 +281,10 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     for (const p of state.parts) {
       if (p.outline || shaped.current.has(p.id)) continue;
       shaped.current.add(p.id);
-      void LensiAR.segment(f.uri, p.at.x, p.at.y)
+      const look = (p.frame && looks.current.get(p.frame)) || f;
+      void LensiAR.segment(look.uri, p.at.x, p.at.y)
         .then((seg) => {
+          // Still this job (part ids repeat from one job to the next).
           if (!seg || frame.current !== f || seg.box.w * seg.box.h > 0.5) return;
           dispatch({ type: 'outline', id: p.id, outline: seg.polygon });
         })
@@ -280,7 +298,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     for (const p of state.parts) {
       if (!p.outline || drawn.current.has(p.id) || !pinned.current.has(p.id)) continue;
       drawn.current.add(p.id);
-      void camera.current?.guide.outline(f.frameId, p.id, p.outline).catch(() => {});
+      void camera.current?.guide.outline(p.frame ?? f.frameId, p.id, p.outline).catch(() => {});
     }
   }, [state.parts, camera]);
 
