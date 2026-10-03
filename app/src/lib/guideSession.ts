@@ -94,6 +94,9 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         hint = built.subject?.text ?? null;
       } catch {}
       let noModel: string | null = null;
+      // Counted here, not read back from state: a fast server's whole plan can
+      // arrive in one tick, before React has rendered any of it.
+      const got = { steps: 0, parts: 0 };
       try {
         const ok = await runBrain(f, { regions, hint, question: text, walkthrough: true, guide: true }, (e) => {
           const region = 'mark' in e && e.mark ? regions.find((r) => r.mark === e.mark) : undefined;
@@ -102,8 +105,12 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
           if (e.kind === 'title') dispatch({ type: 'title', text: e.text });
           else if (e.kind === 'step') {
             const label = e.label ?? (region?.kind === 'object' || region?.kind === 'text' ? region.text : undefined);
+            got.steps++;
             dispatch({ type: 'step', text: e.text, label, at, mark: region?.mark, outline });
-          } else if (e.kind === 'callout' && at) dispatch({ type: 'part', label: e.label, at, mark: region?.mark, outline });
+          } else if (e.kind === 'callout' && at) {
+            got.parts++;
+            dispatch({ type: 'part', label: e.label, at, mark: region?.mark, outline });
+          }
           // Eyes only: the summary says why there are no steps.
           else if (e.kind === 'summary') noModel = e.text;
           else if (e.kind === 'error') dispatch({ type: 'note', note: { text: e.text, tone: 'warn' } });
@@ -113,15 +120,17 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         dispatch({ type: 'note', note: { text: "Couldn't plan that one. Try saying it another way.", tone: 'warn' } });
       }
       // The model failed outright (a VM, assets missing): the eyes still tag the parts.
-      if (!latest.current.steps.length && !latest.current.parts.length && !work.current) {
+      if (!got.steps && !got.parts && !work.current) {
         try {
           await visionEngine.run(
             { imageUri: f.uri, width: f.width, height: f.height, lens: 'guide', regions, hint, question: text, walkthrough: true, guide: true },
             (e) => {
               const region = 'mark' in e && e.mark ? regions.find((r) => r.mark === e.mark) : undefined;
               const at = region ? anchorFor(region) : 'at' in e ? e.at : undefined;
-              if (e.kind === 'callout' && at) dispatch({ type: 'part', label: e.label, at, mark: region?.mark, outline: region?.polygon });
-              else if (e.kind === 'title') dispatch({ type: 'title', text: e.text });
+              if (e.kind === 'callout' && at) {
+                got.parts++;
+                dispatch({ type: 'part', label: e.label, at, mark: region?.mark, outline: region?.polygon });
+              } else if (e.kind === 'title') dispatch({ type: 'title', text: e.text });
               else if (e.kind === 'summary') noModel = e.text;
             },
             new AbortController().signal,
@@ -129,8 +138,8 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         } catch {}
       }
       dispatch({ type: 'planned' });
-      if (noModel && !latest.current.steps.length) {
-        const tagged = latest.current.parts.length > 0;
+      if (noModel && !got.steps) {
+        const tagged = got.parts > 0;
         dispatch({
           type: 'note',
           note: {
