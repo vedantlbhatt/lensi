@@ -100,6 +100,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   func start() {
     guard !running, !paused, ARWorldTrackingConfiguration.isSupported else { return }
+    // Say so up front rather than showing a black camera.
+    let auth = AVCaptureDevice.authorizationStatus(for: .video)
+    if auth == .denied || auth == .restricted {
+      onTrackingChange(["state": "failed", "reason": "cameraDenied"])
+      return
+    }
     running = true
     let config = configuration ?? makeConfiguration()
     configuration = config
@@ -222,6 +228,24 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
     for i in unmatched { tracked[i].missed += 1 }
     tracked.removeAll { $0.missed > 4 }
+  }
+
+  func session(_ session: ARSession, didFailWithError error: Error) {
+    let code = (error as? ARError)?.code
+    let reason = code == .cameraUnauthorized ? "cameraDenied" : "failed"
+    NSLog("[lensi] AR session failed: %@", error.localizedDescription)
+    DispatchQueue.main.async {
+      self.stop()
+      self.onTrackingChange(["state": "failed", "reason": reason])
+    }
+  }
+
+  func sessionWasInterrupted(_ session: ARSession) {
+    onTrackingChange(["state": "limited", "reason": "interrupted"])
+  }
+
+  func sessionInterruptionEnded(_ session: ARSession) {
+    onTrackingChange(["state": "normal", "reason": ""])
   }
 
   func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {

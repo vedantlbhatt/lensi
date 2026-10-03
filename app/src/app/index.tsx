@@ -1,13 +1,14 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGlobalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { AppState, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DEMO_SCENES, isVirtual, LensiAR, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
 import { BrainChip } from '../components/camera/BrainChip';
+import { CameraBlocked } from '../components/camera/CameraBlocked';
 import { CameraSurface, type CameraHandle } from '../components/camera/CameraSurface';
 import { CoachMark } from '../components/camera/CoachMark';
 import { DropMenu, type DropChoice } from '../components/camera/DropMenu';
@@ -89,6 +90,22 @@ export default function Camera() {
   const [focus, setFocus] = useState<string | null>(null);
   const [scene, setScene] = useState<DemoScene | null>(null);
   const [tracking, setTracking] = useState<TrackingEvent | null>(null);
+  // The camera never started (no permission, sensor error): say so, keep Drop working.
+  const blocked = tracking?.state === 'failed' ? (tracking.reason === 'cameraDenied' ? 'cameraDenied' : 'failed') : null;
+  const blockedRef = useRef(blocked);
+  blockedRef.current = blocked;
+  const [camKey, setCamKey] = useState(0);
+  const retryCamera = useCallback(() => {
+    setTracking(null);
+    setCamKey((k) => k + 1);
+  }, []);
+  // Coming back from Settings with the camera allowed: start it again.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active' && blockedRef.current) retryCamera();
+    });
+    return () => sub.remove();
+  }, [retryCamera]);
   const [engine, setEngine] = useState<EngineId | null>(null);
   const [touched, setTouched] = useState(false);
 
@@ -129,6 +146,11 @@ export default function Camera() {
   const takePhoto = useCallback(
     async (prompt?: string) => {
       if (busy) return;
+      if (blockedRef.current) {
+        toast('The camera is off. Drop in a photo instead.');
+        setDrop(true);
+        return;
+      }
       setBusy(true);
       flash.current?.fire();
       try {
@@ -268,6 +290,7 @@ export default function Camera() {
       <GestureDetector gesture={Gesture.Simultaneous(swipe, tapToPin)}>
         <View style={StyleSheet.absoluteFill} collapsable={false}>
           <CameraSurface
+            key={camKey}
             ref={camera}
             pen={pen}
             brackets={settings.liveBrackets}
@@ -285,6 +308,8 @@ export default function Camera() {
       {/* Legibility: soft shade behind top and bottom chrome. */}
       <LinearGradient colors={['rgba(11,11,12,0.45)', 'rgba(11,11,12,0)']} style={[styles.shade, { top: 0, height: insets.top + 120 }]} pointerEvents="none" />
       <LinearGradient colors={['rgba(11,11,12,0)', 'rgba(11,11,12,0.55)']} style={[styles.shade, { bottom: 0, height: 280 }]} pointerEvents="none" />
+
+      {blocked ? <CameraBlocked reason={blocked} pen={pen} onDrop={() => setDrop(true)} onRetry={retryCamera} /> : null}
 
       <Animated.View style={[StyleSheet.absoluteFill, chromeStyle]} pointerEvents={open || memories ? 'none' : 'box-none'}>
         <View style={[styles.top, { top: insets.top + 8 }]} pointerEvents="box-none">
@@ -308,7 +333,7 @@ export default function Camera() {
           />
         </View>
 
-        {!touched && captures.length === 0 && !voice.listening ? <CoachMark pen={pen} top={height * 0.36} /> : null}
+        {!touched && captures.length === 0 && !voice.listening && !blocked ? <CoachMark pen={pen} top={height * 0.36} /> : null}
 
         {hint && !isVirtual ? (
           <Animated.View entering={FadeIn} exiting={FadeOut} style={[styles.hintWrap, { top: insets.top + 60 }]} pointerEvents="none">

@@ -15,8 +15,18 @@ export type SelectEvent = {
 };
 
 export type TrackingEvent = {
-  state: 'normal' | 'limited' | 'unavailable';
-  reason: '' | 'excessiveMotion' | 'insufficientFeatures' | 'initializing' | 'relocalizing' | 'unknown';
+  /** `failed`: the camera never started (permission denied, sensor error). */
+  state: 'normal' | 'limited' | 'unavailable' | 'failed';
+  reason:
+    | ''
+    | 'excessiveMotion'
+    | 'insufficientFeatures'
+    | 'initializing'
+    | 'relocalizing'
+    | 'interrupted'
+    | 'unknown'
+    | 'cameraDenied'
+    | 'failed';
 };
 
 export type PhotoResult = { uri: string; width: number; height: number };
