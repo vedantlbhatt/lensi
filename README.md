@@ -35,7 +35,7 @@ Brains, picked in Settings (default **Auto**):
 
 - **On-device** (Apple Intelligence): private, offline, free. iOS 26 reasons over the mark list as text; iOS 27 also sees the image.
 - **Claude**: `server/` streams Claude's answer line by line.
-- **Eyes only**: no model at all. It shows only what Vision found (outlines, text, codes).
+- **Eyes only**: no model at all. It names and counts what the detector recognises ("Four people and a chair"), reads text and codes, and answers a tap with what is under it (the text it reads, or the thing it's part of). It never guesses beyond that.
 
 ## Run it
 
