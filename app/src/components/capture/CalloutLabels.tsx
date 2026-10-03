@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 
 import { haptic } from '../../lib/haptics';
 import { DecryptedText } from '../../motion/DecryptedText';
+import { useArrivalOrder, useMountValue } from '../../motion/stagger';
 import { springs } from '../../theme/motion';
 import { paper } from '../../theme/tokens';
 import { LABEL, labelText, type PlacedCallout } from './layout';
@@ -29,6 +30,7 @@ export function CalloutLabels({
   onPress?: (c: PlacedCallout) => void;
   onLongPress?: (c: PlacedCallout) => void;
 }) {
+  const order = useArrivalOrder(placed.map((c) => c.id));
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {placed.map((c, i) => (
@@ -36,7 +38,7 @@ export function CalloutLabels({
           key={c.id}
           c={c}
           pen={pen}
-          delay={i * 110 + 380}
+          delay={order(i) * 110 + 380}
           dim={dim || (!!focusId && focusId !== c.id)}
           lifted={focusId === c.id}
           onPress={onPress}
@@ -64,6 +66,7 @@ function Label({
   onPress?: (c: PlacedCallout) => void;
   onLongPress?: (c: PlacedCallout) => void;
 }) {
+  const entry = useMountValue(delay);
   const t = useSharedValue(0);
   const d = useSharedValue(1);
   const lift = useSharedValue(0);
@@ -71,10 +74,10 @@ function Label({
     lift.value = withSpring(lifted ? 1 : 0, springs.pop);
   }, [lifted, lift]);
   useEffect(() => {
-    t.value = withDelay(delay, withSpring(1, springs.arrive));
-    const h = setTimeout(haptic.tick, delay + 60);
+    t.value = withDelay(entry, withSpring(1, springs.arrive));
+    const h = setTimeout(haptic.tick, entry + 60);
     return () => clearTimeout(h);
-  }, [delay, t]);
+  }, [entry, t]);
   useEffect(() => {
     d.value = withTiming(dim ? 0.18 : 1, { duration: 320, easing: Easing.out(Easing.quad) });
   }, [dim, d]);
@@ -107,7 +110,7 @@ function Label({
         style={styles.row}
       >
         <View style={[styles.dot, { backgroundColor: pen }]} />
-        <DecryptedText text={labelText(c.label)} delay={delay + 90} style={styles.text} speed={24} scrambles={3} numberOfLines={1} />
+        <DecryptedText text={labelText(c.label)} delay={entry + 90} style={styles.text} speed={24} scrambles={3} numberOfLines={1} />
       </Pressable>
     </Animated.View>
   );

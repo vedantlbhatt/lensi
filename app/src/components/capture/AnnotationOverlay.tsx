@@ -32,6 +32,7 @@ import {
 
 import { leaderPath, outlinePath, toView, type Fit } from '../../lib/geometry';
 import type { Pt, Region, Step } from '../../lib/types';
+import { useArrivalOrder, useMountValue } from '../../motion/stagger';
 import { springs } from '../../theme/motion';
 import { alpha, ink } from '../../theme/tokens';
 import { FRAME_RADIUS, type PlacedCallout } from './layout';
@@ -81,6 +82,7 @@ export function AnnotationOverlay({
     [subject, frame],
   );
   const marks = useMemo(() => regions.filter((r) => r.kind !== 'subject').slice(0, 9), [regions]);
+  const order = useArrivalOrder(placed.map((c) => c.id));
   const showMarks = settled && thinking && placed.length === 0;
 
   return (
@@ -90,7 +92,7 @@ export function AnnotationOverlay({
         {settled && subjectD ? <Spotlight d={subjectD} frame={frame} strong={walking} /> : null}
         {placed.map((c, i) =>
           c.polygon && c.polygon.length > 2 ? (
-            <PartOutline key={`p-${c.id}`} d={outlinePath(c.polygon, frame, 0.5)} pen={pen} delay={120 + i * 90} dim={walking} />
+            <PartOutline key={`p-${c.id}`} d={outlinePath(c.polygon, frame, 0.5)} pen={pen} delay={120 + order(i) * 90} dim={walking} />
           ) : null,
         )}
         {settled && subjectD ? <SubjectOutline d={subjectD} pen={pen} thinking={thinking} dim={walking} /> : null}
@@ -101,10 +103,10 @@ export function AnnotationOverlay({
         {focus && focus.length > 2 ? <Marching key={focus.length + focus[0].x} d={outlinePath(focus, frame, 0.5)} pen={pen} /> : null}
       </Group>
       {placed.map((c, i) => (
-        <Leader key={`l-${c.id}`} from={c.slot.anchor} to={c.slot.attach} delay={i * 110} dim={walking} />
+        <Leader key={`l-${c.id}`} from={c.slot.anchor} to={c.slot.attach} delay={order(i) * 110} dim={walking} />
       ))}
       {placed.map((c, i) => (
-        <Dot key={`d-${c.id}`} at={c.slot.anchor} pen={pen} delay={i * 110} dim={walking} />
+        <Dot key={`d-${c.id}`} at={c.slot.anchor} pen={pen} delay={order(i) * 110} dim={walking} />
       ))}
     </Canvas>
     </View>
@@ -119,10 +121,11 @@ const DRAW = Easing.bezier(0.16, 1, 0.3, 1);
 const LEADER = Easing.out(Easing.cubic);
 
 function useEnter(delay: number, duration = 900, easing: EasingFunction | EasingFunctionFactory = DRAW) {
+  const entry = useMountValue(delay);
   const t = useSharedValue(0);
   useEffect(() => {
-    t.value = withDelay(delay, withTiming(1, { duration, easing }));
-  }, [delay, duration, easing, t]);
+    t.value = withDelay(entry, withTiming(1, { duration, easing }));
+  }, [entry, duration, easing, t]);
   return t;
 }
 
@@ -197,10 +200,11 @@ function PartOutline({ d, pen, delay, dim }: { d: string; pen: string; delay: nu
 
 /** A numbered set-of-marks tag: what the eyes found, before the model names it. */
 function Mark({ at, n, pen, font, delay }: { at: Pt; n: number; pen: string; font: SkFont; delay: number }) {
+  const entry = useMountValue(delay);
   const s = useSharedValue(0);
   useEffect(() => {
-    s.value = withDelay(delay, withSpring(1, springs.pop));
-  }, [delay, s]);
+    s.value = withDelay(entry, withSpring(1, springs.pop));
+  }, [entry, s]);
   const transform = useDerivedValue(() => [{ scale: s.value }]);
   const label = String(n);
   // Fragment Mono advances exactly 0.618 em (measureText isn't on web).
@@ -227,12 +231,13 @@ function Leader({ from, to, delay, dim }: { from: Pt; to: Pt; delay: number; dim
 }
 
 function Dot({ at, pen, delay, dim }: { at: Pt; pen: string; delay: number; dim: boolean }) {
+  const entry = useMountValue(delay);
   const s = useSharedValue(0);
   const ring = useSharedValue(0);
   useEffect(() => {
-    s.value = withDelay(delay, withSpring(1, springs.pop));
-    ring.value = withDelay(delay, withSequence(withTiming(0, { duration: 1 }), withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) })));
-  }, [delay, s, ring]);
+    s.value = withDelay(entry, withSpring(1, springs.pop));
+    ring.value = withDelay(entry, withSequence(withTiming(0, { duration: 1 }), withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) })));
+  }, [entry, s, ring]);
   const transform = useDerivedValue(() => [{ scale: s.value }]);
   const ringR = useDerivedValue(() => 5 + ring.value * 15);
   const ringOpacity = useDerivedValue(() => (1 - ring.value) * 0.9);
