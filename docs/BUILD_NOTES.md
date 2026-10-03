@@ -49,8 +49,15 @@ tap.
 - **Cold start is about 6 s in the VM.** The scripted runs wait for it before their first shot.
 - **Scene labels make bad names.** Vision's classifier often leads with "outdoor" or "machine";
   `thingLabel` skips those when naming the subject. The list is in Vision's own form
-  (`night_sky`) while the phone sends `night sky`, so labels are normalised before the check
-  (a circuit board was once titled "Night sky").
+  (`night_sky`) while the phone sends `night sky`, so labels are normalised before the check.
+- **In the Simulator the scene classifier is broken outright.** It returns the same labels for
+  every image ("outdoor 49, night sky 49, sky 49, celestial body 18, moon 18", read from the
+  `seen` field each capture now keeps), so a circuit board was titled "Celestial body". macOS
+  gives the same photo "circuit board". The Simulator build skips the classifier.
+- **The subject is the most prominent detection, not the most confident.** Confidence alone
+  picked a small car at the photo's edge (0.94) over the one filling it (0.75). Prominence is
+  confidence × √area × centrality, and surfaces (table, bed, couch, bench) count for a fifth so
+  bottles beat the table they stand on.
 - **The detector guesses at slivers.** A car roof cut off by the frame's edge came back as a
   "bottle"; small boxes touching the edge no longer get names.
 - **Letterbox YOLO's input.** Vision was stretching every image into the model's square input
