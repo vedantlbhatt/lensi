@@ -159,6 +159,8 @@ export async function analyze(id: string, opts: AnalyzeOpts) {
     if (bare && (engine.id !== 'vision' || exchangeId)) {
       await visionEngine.run({ ...req, question: undefined, walkthrough: false }, (e) => apply(id, e, null), controller.signal);
       if (controller.signal.aborted) return;
+      // What's on the print now came from the eyes; say so.
+      patchCapture(id, (cur) => ({ ...cur, engine: 'vision' }));
     }
     patchCapture(id, (cur) => ({
       ...cur,
