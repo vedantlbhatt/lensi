@@ -182,8 +182,7 @@ export function InfoCard({
       {expanded ? (
         <ScrollView style={styles.more} contentContainerStyle={{ gap: 14, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
           {a.facts.map((f, i) => (
-            <Animated.View key={`f${i}`} entering={FadeInDown.delay(i * 60).duration(320)} style={styles.fact}>
-              <Text style={[styles.factN, { color: lens.pen }]}>{String(i + 1).padStart(2, '0')}</Text>
+            <Animated.View key={`f${i}`} entering={FadeInDown.delay(i * 60).duration(320)}>
               <Text style={styles.factText}>{f}</Text>
             </Animated.View>
           ))}
@@ -196,9 +195,7 @@ export function InfoCard({
                 </Animated.Text>
               ))}
               {x.steps?.length ? (
-                <Text style={styles.stepsNote}>
-                  <Text style={{ color: lens.pen }}>{x.steps.length}</Text> STEPS
-                </Text>
+                <Text style={styles.stepsNote}>{x.steps.length === 1 ? '1 step' : `${x.steps.length} steps`}</Text>
               ) : null}
               {x.pending && x.answer.length === 0 && !x.steps?.length ? <ShinyText text="Thinking…" style={styles.metaText} /> : null}
             </Animated.View>
@@ -281,10 +278,8 @@ const styles = StyleSheet.create({
   },
   chipText: { color: paper, ...face.semibold, fontSize: 14 },
   more: { maxHeight: 260, marginTop: 4 },
-  fact: { flexDirection: 'row', gap: 12 },
-  factN: { ...face.medium, fontSize: 13, lineHeight: 21, width: 18 },
-  factText: { flex: 1, color: paper, ...face.regular, fontSize: 15, lineHeight: 21 },
+  factText: { color: paper, ...face.regular, fontSize: 15, lineHeight: 21 },
   qa: { gap: 6, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: hairline },
   q: { color: paper, ...face.semibold, fontSize: 16, lineHeight: 22, marginTop: 8 },
-  stepsNote: { color: faint, ...face.medium, fontSize: 12 },
+  stepsNote: { color: faint, ...face.medium, fontSize: 13 },
 });
