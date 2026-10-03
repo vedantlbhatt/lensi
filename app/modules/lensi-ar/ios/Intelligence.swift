@@ -295,10 +295,18 @@ final class IntelligenceRunner: @unchecked Sendable {
     }
   }
 
+  /// iOS 27 sees the photo with its marks drawn on; iOS 26 only reads the list.
+  static var seesImage: Bool {
+    if #available(iOS 27.0, *) { return true }
+    return false
+  }
+
   static func promptText(for p: IntelPayload) -> String {
     var lines: [String] = ["Numbered marks on the photo:"]
-    if p.marks.isEmpty { lines.append("(none)") }
-    for m in p.marks {
+    // An unnamed part means nothing to a model that can't see the photo.
+    let marks = seesImage ? p.marks : p.marks.filter { $0.kind != "part" || ($0.text?.isEmpty == false) }
+    if marks.isEmpty { lines.append("(none)") }
+    for m in marks {
       let what: String
       switch m.kind {
       case "text": what = "text \"\(m.text ?? "")\""
