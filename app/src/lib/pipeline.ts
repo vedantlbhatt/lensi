@@ -246,21 +246,33 @@ export async function askAbout(id: string, at: Pt): Promise<Pt[] | null> {
   return polygon ?? null;
 }
 
-/** Video: annotate a different keyframe. Clears the old drawing; keeps the thread. */
+/**
+ * Video: annotate a different keyframe. The current drawing is kept with its
+ * moment, so coming back to one already seen is instant; the thread stays.
+ */
 export function switchMoment(id: string, uri: string) {
   const c = getCapture(id);
   if (!c || c.media.stillUri === uri) return;
   cancel(id);
+  const done = c.status === 'ready' && !!c.annotation.title;
+  const moments = c.moments.map((m) =>
+    m.uri === c.media.stillUri && done
+      ? { ...m, kept: { subject: c.subject, regions: c.regions, annotation: c.annotation, engine: c.engine } }
+      : m,
+  );
+  const kept = moments.find((m) => m.uri === uri)?.kept;
   patchCapture(id, (x) => ({
     ...x,
+    moments,
     media: { ...x.media, stillUri: uri },
-    subject: null,
-    regions: [],
-    annotation: emptyAnnotation(),
-    status: 'analyzing',
+    subject: kept?.subject ?? null,
+    regions: kept?.regions ?? [],
+    annotation: kept?.annotation ?? emptyAnnotation(),
+    engine: kept ? kept.engine : x.engine,
+    status: kept ? 'ready' : 'analyzing',
     error: null,
   }));
-  void analyze(id, { walkthrough: false });
+  if (!kept) void analyze(id, { walkthrough: false });
 }
 
 /**
@@ -272,7 +284,15 @@ export function relens(id: string, lens: Lens) {
   if (!c || c.lens === lens) return;
   const hint = c.annotation.title ?? c.subject?.text ?? null;
   cancel(id);
-  patchCapture(id, (x) => ({ ...x, lens, annotation: emptyAnnotation(), status: 'analyzing', error: null }));
+  patchCapture(id, (x) => ({
+    ...x,
+    lens,
+    annotation: emptyAnnotation(),
+    // Drawings kept for other video moments were made through the old lens.
+    moments: x.moments.map(({ kept: _old, ...m }) => m),
+    status: 'analyzing',
+    error: null,
+  }));
   void analyze(id, { walkthrough: lens === 'guide', reuseEyes: true, withPrompt: false, hint });
 }
 

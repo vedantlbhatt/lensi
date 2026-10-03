@@ -89,7 +89,12 @@ export type Media = {
   stillUri: string;
 };
 
-export type Moment = { t: number; uri: string };
+/** A video keyframe. `kept` holds its drawing once it has been annotated, so going back is instant. */
+export type Moment = {
+  t: number;
+  uri: string;
+  kept?: { subject: Region | null; regions: Region[]; annotation: Annotation; engine: EngineId | null };
+};
 
 export type Capture = {
   id: string;
