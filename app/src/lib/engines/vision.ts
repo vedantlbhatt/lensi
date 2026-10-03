@@ -1,3 +1,4 @@
+import { codeLabel, readCode } from '../codes';
 import type { Engine, EngineEvent, Region } from '../types';
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -45,8 +46,22 @@ export const visionEngine: Engine = {
             : 'Outlined on this phone. Names and answers need Apple Intelligence.',
       });
       const callouts: Region[] = [...codes, ...texts.slice(0, 4), ...objects.slice(0, 2)];
-      for (const r of callouts) out.push({ kind: 'callout', label: clip(r.text ?? r.kind, 26), mark: r.mark });
-      for (const c of codes) out.push({ kind: 'fact', text: `Code reads ${clip(c.text ?? '', 60)}` });
+      for (const r of callouts) {
+        const label = r.kind === 'barcode' && r.text ? codeLabel(r.text) : (r.text ?? r.kind);
+        out.push({ kind: 'callout', label: clip(label, 26), mark: r.mark });
+      }
+      for (const c of codes) {
+        const m = readCode(c.text ?? '');
+        out.push({
+          kind: 'fact',
+          text:
+            m.kind === 'url'
+              ? `Code links to ${m.host}. Hold its label to open it.`
+              : m.kind === 'wifi'
+                ? `Wi-Fi network “${m.ssid}”${m.password ? '. Hold its label to copy the password.' : ', no password.'}`
+                : `Code reads ${clip(m.text, 60)}`,
+        });
+      }
       if (texts.length) out.push({ kind: 'fact', text: `Text: ${texts.slice(0, 3).map((t) => `“${clip(t.text ?? '', 30)}”`).join(', ')}` });
       const things = [...new Set(objects.map((o) => o.text!).filter((t) => t && t !== name))];
       if (things.length) out.push({ kind: 'fact', text: `Also here: ${things.slice(0, 4).join(', ')}` });

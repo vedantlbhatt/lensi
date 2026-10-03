@@ -25,7 +25,8 @@ test('eyes only: names the subject, says what it read, labels by mark', async ()
   assert.equal(summary && 'text' in summary ? summary.text : '', 'Read 1 line of text, found 1 code and spotted 1 other thing, all on this phone.');
   const marks = ev.filter((e) => e.kind === 'callout').map((e) => (e.kind === 'callout' ? e.mark : 0));
   assert.deepEqual(marks, [3, 2, 4]);
-  assert.ok(ev.some((e) => e.kind === 'fact' && e.text.startsWith('Code reads https://example.com/setup')));
+  assert.ok(ev.some((e) => e.kind === 'fact' && e.text.startsWith('Code links to example.com')));
+  assert.ok(ev.some((e) => e.kind === 'callout' && e.label === 'Link · example.com'));
   assert.ok(ev.some((e) => e.kind === 'fact' && e.text === 'Also here: cable'));
 });
 

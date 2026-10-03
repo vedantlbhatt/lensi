@@ -18,6 +18,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { readCode } from '../../lib/codes';
 import { devhooks } from '../../lib/devhooks';
 import { fromView, toView } from '../../lib/geometry';
 import { haptic } from '../../lib/haptics';
@@ -265,27 +266,43 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   // Text or a code the eyes read under that label can be copied, or a link opened.
   const menuRead = useMemo(() => {
     const r = menuFor?.regionId ? capture.regions.find((x) => x.id === menuFor.regionId) : undefined;
-    return r && (r.kind === 'text' || r.kind === 'barcode') && r.text ? r.text : null;
+    if (!r?.text || (r.kind !== 'text' && r.kind !== 'barcode')) return null;
+    return r.kind === 'barcode' ? readCode(r.text) : ({ kind: 'text', text: r.text } as const);
   }, [menuFor, capture.regions]);
   const menuExtra = useMemo(() => {
     if (!menuRead) return null;
-    const text = menuRead.trim();
-    if (/^https?:\/\/\S+$/i.test(text)) {
+    const copy = (value: string, said: string) => ({
+      kind: 'copy' as const,
+      run: () => {
+        setMenuFor(null);
+        void Clipboard.setStringAsync(value).then(() => toast(said));
+      },
+    });
+    if (menuRead.kind === 'url') {
       return {
         kind: 'open' as const,
         run: () => {
           setMenuFor(null);
-          Linking.openURL(text).catch(() => toast("Couldn't open that link"));
+          Linking.openURL(menuRead.url).catch(() => toast("Couldn't open that link"));
         },
       };
     }
-    return {
-      kind: 'copy' as const,
-      run: () => {
-        setMenuFor(null);
-        void Clipboard.setStringAsync(text).then(() => toast(`Copied “${text.length > 28 ? `${text.slice(0, 27)}…` : text}”`));
-      },
-    };
+    if (menuRead.kind === 'wifi') {
+      return menuRead.password ? copy(menuRead.password, `Copied the password for “${menuRead.ssid}”`) : null;
+    }
+    const text = menuRead.text.trim();
+    // Text that is itself a link opens; anything else copies.
+    const asLink = readCode(text);
+    if (asLink.kind === 'url') {
+      return {
+        kind: 'open' as const,
+        run: () => {
+          setMenuFor(null);
+          Linking.openURL(asLink.url).catch(() => toast("Couldn't open that link"));
+        },
+      };
+    }
+    return copy(text, `Copied “${text.length > 28 ? `${text.slice(0, 27)}…` : text}”`);
   }, [menuRead]);
   const menuAt = useMemo(() => {
     if (!menuFor) return null;
