@@ -140,10 +140,20 @@ export async function analyze(id: string, opts: AnalyzeOpts) {
   try {
     await engine.run(req, (e) => apply(id, e, exchangeId), controller.signal);
     if (controller.signal.aborted) return;
+    if (exchangeId) {
+      // The answer is done (and can be spoken) before anything else; then
+      // the photo gets its title and labels too, so the print isn't bare.
+      patchExchange(id, exchangeId, (x) => ({ ...x, pending: false }));
+      if (engine.id !== 'vision' && !getCapture(id)?.annotation.title) {
+        await engine.run({ ...req, question: undefined, walkthrough: false }, (e) => apply(id, e, null), controller.signal);
+        if (controller.signal.aborted) return;
+      }
+    }
     // The model gave nothing to draw (a refusal, a full context): show what
     // the eyes found rather than a bare photo. Its message stays on the card.
     const after = getCapture(id);
-    if (engine.id !== 'vision' && !exchangeId && !opts.walkthrough && after && !after.annotation.title && !after.annotation.callouts.length) {
+    const bare = !!after && !after.annotation.title && !after.annotation.callouts.length;
+    if (bare && !opts.walkthrough && (engine.id !== 'vision' || exchangeId)) {
       await visionEngine.run({ ...req, question: undefined }, (e) => apply(id, e, null), controller.signal);
       if (controller.signal.aborted) return;
     }

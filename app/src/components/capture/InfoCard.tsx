@@ -17,7 +17,7 @@ const SOURCE_COPY: Record<Capture['source'], string> = {
   library: 'FROM PHOTOS',
   files: 'FROM FILES',
   clipboard: 'PASTED',
-  voice: 'ASKED ALOUD',
+  voice: 'SPOKEN',
 };
 
 function when(ts: number): string {
@@ -89,10 +89,11 @@ export function InfoCard({
               <Icon name="down" size={10} color={faint} stroke={2.6} />
             </View>
           </PressScale>
-          <Text style={styles.metaFaint}>· {SOURCE_COPY[capture.source]}</Text>
-          <Text style={styles.metaFaint}>· {when(capture.createdAt)}</Text>
+          <Text style={[styles.metaFaint, styles.shrink]} numberOfLines={1}>
+            · {SOURCE_COPY[capture.source]} · {when(capture.createdAt)}
+          </Text>
           {!expanded && a.facts.length ? (
-            <Text style={[styles.metaFaint, styles.metaRight]}>
+            <Text style={[styles.metaFaint, styles.metaRight]} numberOfLines={1}>
               {a.facts.length} {a.facts.length === 1 ? 'FACT' : 'FACTS'} ↑
             </Text>
           ) : null}
@@ -251,7 +252,8 @@ const styles = StyleSheet.create({
   titleSlot: { minHeight: 34, justifyContent: 'center' },
   title: { color: paper, fontFamily: fonts.display, fontSize: 30, lineHeight: 33, letterSpacing: -1 },
   titleLong: { fontSize: 24, lineHeight: 27, letterSpacing: -0.7 },
-  metaRight: { marginLeft: 'auto' },
+  metaRight: { marginLeft: 'auto', paddingLeft: 8 },
+  shrink: { flexShrink: 1 },
   chipScroll: { flexGrow: 0, marginHorizontal: -18 },
   waiting: { height: 34, justifyContent: 'center' },
   waitingText: { color: paper, fontFamily: fonts.serifItalic, fontSize: 28, letterSpacing: -0.3 },
