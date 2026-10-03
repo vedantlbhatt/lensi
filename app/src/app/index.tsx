@@ -169,7 +169,7 @@ export default function Camera() {
     void voice.start();
   }, [voice]);
   const onMicEnd = useCallback(async () => {
-    if (!voice.listening) return;
+    if (!voice.isListening()) return;
     const q = await voice.stop();
     if (!q) {
       toast("Didn't catch that. Hold the mic while you talk.");
