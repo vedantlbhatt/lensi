@@ -38,12 +38,8 @@ export function lensInfo(lens: Lens): LensInfo {
   return LENSES.find((l) => l.key === lens) ?? LENSES[0];
 }
 
-/** Alpha helper for #RRGGBB strings. */
-export function alpha(hex: string, a: number): string {
-  const h = hex.replace('#', '');
-  const n = parseInt(h.length === 3 ? h.replace(/(.)/g, '$1$1') : h, 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
+/** Alpha helper for #RRGGBB strings (rounded, so it is safe in worklets too). */
+export { rgba as alpha } from '../lib/color';
 
 export const radius = { xs: 8, sm: 12, md: 18, lg: 26, xl: 34, pill: 999 } as const;
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;

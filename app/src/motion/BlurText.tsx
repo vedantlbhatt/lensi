@@ -10,6 +10,8 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 
+import { rgba } from '../lib/color';
+
 /**
  * Words resolve out of a blur, one after another (after React Bits' BlurText).
  * Native text can't take a blur filter, so each word starts as nothing but its
@@ -80,8 +82,10 @@ function useWordStyle(t: SharedValue<number>, color: string, rise: number) {
     // Glyph alpha comes in late; the halo carries the first half.
     const glyph = interpolate(v, [0.25, 0.85], [0, 1], 'clamp');
     return {
-      color: withAlpha(color, glyph),
-      textShadowColor: withAlpha(color, interpolate(v, [0, 0.4, 1], [0, 0.9, 0], 'clamp')),
+      // rgba() rounds the alpha: as a word settles it falls below 1e-6, and an exponent
+      // ("9.4e-7") isn't a colour Reanimated can parse; it throws, which aborts a Release build.
+      color: rgba(color, glyph),
+      textShadowColor: rgba(color, interpolate(v, [0, 0.4, 1], [0, 0.9, 0], 'clamp')),
       textShadowRadius: interpolate(v, [0, 1], [14, 0]),
       textShadowOffset: { width: 0, height: 0 },
       opacity: interpolate(v, [0, 0.15], [0, 1], 'clamp'),
@@ -90,14 +94,7 @@ function useWordStyle(t: SharedValue<number>, color: string, rise: number) {
   });
 }
 
-function withAlpha(hex: string, a: number): string {
-  'worklet';
-  const h = hex.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${a})`;
-}
+
 
 /** Static fallback with the same layout, for places that must not animate. */
 export function PlainText({ text, style }: { text: string; style?: StyleProp<TextStyle> }) {
