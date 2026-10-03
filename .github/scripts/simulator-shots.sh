@@ -105,13 +105,14 @@ scenario 05-guide 16 "lensi:///?demo=truck&lens=guide&brain=vision&ask=How%20do%
 n=6
 for v in "${STOCK[@]}"; do
   [ -n "$DATA" ] && [ -f "$DATA/Documents/$v.mp4" ] || continue
+  # The classroom run is asked a question at capture instead; the eyes can count.
   case "$v" in
-    classroom) lens=learn; m=2 ;;
-    bottle-*) lens=identify; m=0 ;;
-    worker-*) lens=safe; m=2 ;;
-    *) lens=shop; m=2 ;;
+    classroom) lens=learn; extra="ask=How%20many%20people%20are%20there%3F" ;;
+    bottle-*) lens=identify; extra="moment=0" ;;
+    worker-*) lens=safe; extra="moment=2" ;;
+    *) lens=shop; extra="moment=2" ;;
   esac
-  scenario "$(printf %02d $n)-stock-$v" 26 "lensi:///?file=$v.mp4&lens=$lens&brain=vision&moment=$m"
+  scenario "$(printf %02d $n)-stock-$v" 26 "lensi:///?file=$v.mp4&lens=$lens&brain=vision&$extra"
   n=$((n + 1))
 done
 
