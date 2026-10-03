@@ -80,6 +80,16 @@ test("live guide streams steps that name their parts", async () => {
   assert.deepEqual(steps[2], { kind: "step", text: "Unscrew the drain cap anticlockwise.", at: { x: 0.61, y: 0.72 }, label: "drain cap" });
 });
 
+test("the mock's tyre job tags the door handle, then the front tyre", async () => {
+  const events = await stream({ image: "x", walkthrough: true, guide: true, question: "How do I check the tyre pressure?" });
+  const steps = events.filter((e) => e!.kind === "step") as { label?: string }[];
+  assert.equal(steps.length, 4);
+  assert.deepEqual(
+    steps.map((s) => s.label),
+    ["door handle", "front tyre", "front tyre", "front tyre"],
+  );
+});
+
 test("a check answers with one verdict", async () => {
   const events = await stream({ image: "x", check: "Unscrew the drain cap." });
   assert.deepEqual(events, [{ kind: "check", done: false, text: "Turn it a little further, then check again." }]);

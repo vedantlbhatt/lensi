@@ -136,6 +136,11 @@ jobs:
             > ../out/xcodebuild.log 2>&1 || { grep -E "error:|fatal error|Undefined symbol|ld: " ../out/xcodebuild.log | head -150 > ../out/build-errors.txt; cat ../out/build-errors.txt; exit 1; }
           grep -E "warning: .*(LensiAR|lensi-ar)" ../out/xcodebuild.log | sort -u | head -100 > ../out/lensi-warnings.txt || true
           { uname -m; ccache -s; } > ../out/ccache-stats.txt 2>&1 || true
+      - name: Mock server
+        # One run films the live guide against the Lensi server in mock mode (scripted
+        # steps, no model or key), which the Simulator reaches on localhost.
+        working-directory: server
+        run: npm ci --no-audit --no-fund || echo "no server deps; the mock-server run will be skipped"
       - name: Run in Simulator
         working-directory: app
         run: bash ../.github/scripts/simulator-shots.sh build/Build/Products/Release-iphonesimulator/Lensi.app ../out/shots

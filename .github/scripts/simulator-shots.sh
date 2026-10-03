@@ -123,6 +123,21 @@ done
 # Default brain: Apple Intelligence fails in this VM, so the eyes tag the parts.
 scenario 10-live-guide 40 "lensi:///?scene=truck&guide=How%20do%20I%20check%20the%20tyre%20pressure%3F"
 
+# The same job with steps: the Lensi server in mock mode answers it with a scripted
+# plan (no model, no key), so the real app's panel, tags and outline can be filmed.
+# The server runs on this Mac; the Simulator reaches it as localhost.
+if [ -x ../server/node_modules/.bin/tsx ]; then
+  (cd ../server && LENSI_MOCK=1 exec ./node_modules/.bin/tsx src/server.ts) > "$OUT/server.log" 2>&1 &
+  SERVER=$!
+  for _ in $(seq 1 40); do curl -fsS http://localhost:8787/health >/dev/null 2>&1 && break; sleep 0.5; done
+  tl "mock server: $(curl -fsS http://localhost:8787/health 2>&1 | head -c 160)"
+  scenario 10b-live-guide-server 56 "lensi:///?scene=truck&brain=cloud&guide=How%20do%20I%20check%20the%20tyre%20pressure%3F"
+  kill "$SERVER" 2>/dev/null || true
+  pkill -f "tsx src/server.ts" 2>/dev/null || true
+else
+  tl "mock server: no deps, skipped"
+fi
+
 scenario 11-memories 16 "lensi:///?memories=1"
 
 # Render the share image inside the app and pull it out of the container. This run
