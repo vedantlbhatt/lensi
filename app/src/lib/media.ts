@@ -53,6 +53,21 @@ export async function pickFromLibrary(): Promise<Picked | null> {
   return { kind, uri: a.uri, width, height, durationMs: a.duration ?? undefined, source: 'library' };
 }
 
+/** One more photo for a capture: from the library, or the system camera. */
+export async function pickPhoto(from: 'library' | 'camera'): Promise<Picked | null> {
+  if (from === 'camera') {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) return null;
+  }
+  const opts = { mediaTypes: ['images'] as ImagePicker.MediaType[], quality: 1, allowsEditing: false };
+  const res = from === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
+  if (res.canceled || !res.assets?.[0]) return null;
+  const a = res.assets[0];
+  let { width, height } = a;
+  if (!width || !height) ({ width, height } = await imageSize(a.uri));
+  return { kind: 'image', uri: a.uri, width, height, source: from === 'camera' ? 'camera' : 'library' };
+}
+
 export async function pickFromFiles(): Promise<Picked | null> {
   const res = await DocumentPicker.getDocumentAsync({ type: ['image/*', 'video/*'], copyToCacheDirectory: true });
   if (res.canceled || !res.assets?.[0]) return null;

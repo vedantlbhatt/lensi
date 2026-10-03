@@ -91,8 +91,12 @@ export type Media = {
 
 /** A video keyframe. `kept` holds its drawing once it has been annotated, so going back is instant. */
 export type Moment = {
+  /** Milliseconds into a video; for added photos, their order. */
   t: number;
   uri: string;
+  /** Added photos carry their own size (a video's frames share the video's). */
+  width?: number;
+  height?: number;
   kept?: { subject: Region | null; regions: Region[]; annotation: Annotation; engine: EngineId | null };
 };
 

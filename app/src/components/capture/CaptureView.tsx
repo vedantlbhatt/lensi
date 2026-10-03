@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import * as Speech from 'expo-speech';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActionSheetIOS, Linking, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -23,7 +23,8 @@ import { devhooks } from '../../lib/devhooks';
 import { fromView, toView } from '../../lib/geometry';
 import { haptic } from '../../lib/haptics';
 import { say } from '../../lib/narrate';
-import { analyze, ask, askAbout, cancel, isHowTo, relens, removeCallout, renameCallout, switchMoment } from '../../lib/pipeline';
+import { pickPhoto } from '../../lib/media';
+import { addPhoto, analyze, ask, askAbout, cancel, isHowTo, relens, removeCallout, renameCallout, switchMoment } from '../../lib/pipeline';
 import { setSettings, useSettings } from '../../lib/settings';
 import { getCapture, removeCapture, useCapture } from '../../lib/store';
 import type { Capture, Pt, Step } from '../../lib/types';
@@ -382,6 +383,33 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
     if (isHowTo(q)) toast('Building a walkthrough…');
   };
 
+  // Another photo of the same thing: the system camera or the library.
+  const addAnother = () => {
+    const go = async (from: 'camera' | 'library') => {
+      try {
+        const p = await pickPhoto(from);
+        if (!p) return;
+        haptic.thud();
+        setFocus(null);
+        await addPhoto(capture.id, p);
+      } catch (e) {
+        console.warn('[lensi] add photo failed', e);
+        toast("Couldn't add that photo");
+      }
+    };
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ['Take Photo', 'Choose from Photos', 'Cancel'], cancelButtonIndex: 2, userInterfaceStyle: 'dark' },
+        (i) => {
+          if (i === 0) void go('camera');
+          if (i === 1) void go('library');
+        },
+      );
+    } else {
+      void go('library');
+    }
+  };
+
   const engineLabel = capture.engine === 'apple' ? 'ON-DEVICE' : capture.engine === 'cloud' ? 'CLAUDE' : capture.engine === 'vision' ? 'EYES ONLY' : '';
 
   return (
@@ -439,9 +467,16 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
         ) : null}
       </Animated.View>
 
-      {capture.media.kind === 'video' && capture.moments.length > 1 && settled && !walking ? (
+      {capture.moments.length > 1 && settled && !walking ? (
         <Animated.View style={[styles.moments, { left: frame.x + 10, top: frame.y + frame.h - 66 }, chrome]}>
-          <MomentStrip moments={capture.moments} active={capture.media.stillUri} pen={lens.pen} onPick={(uri) => switchMoment(capture.id, uri)} />
+          <MomentStrip
+            moments={capture.moments}
+            active={capture.media.stillUri}
+            pen={lens.pen}
+            photos={capture.media.kind === 'image'}
+            onPick={(uri) => switchMoment(capture.id, uri)}
+            onAdd={capture.media.kind === 'image' && capture.moments.length < 6 ? addAnother : undefined}
+          />
         </Animated.View>
       ) : null}
 
@@ -502,6 +537,13 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
               <Icon name="trash" size={19} />
             </Glass>
           </PressScale>
+          {capture.media.kind === 'image' && capture.moments.length < 6 ? (
+            <PressScale onPress={addAnother} accessibilityRole="button" accessibilityLabel="Add another photo" scaleTo={0.85} hitSlop={8}>
+              <Glass style={styles.round}>
+                <Icon name="photoPlus" size={19} />
+              </Glass>
+            </PressScale>
+          ) : null}
           <PressScale onPress={() => void shareCapture(capture, placed, stage)} accessibilityRole="button" accessibilityLabel="Share" scaleTo={0.85} hitSlop={8}>
             <Glass style={styles.round}>
               <Icon name="share" size={19} />

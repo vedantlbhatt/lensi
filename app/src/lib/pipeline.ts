@@ -55,6 +55,8 @@ export async function ingest(
     if (keptMid) still = { ...still, uri: keptMid.uri };
   } else {
     still = await normalizeStill(uri, picked.width, picked.height);
+    // A downscaled still is written to the cache, which iOS may purge; keep it with the capture.
+    if (still.uri !== uri) still = { ...still, uri: await keep(still.uri, dir, 'still.jpg') };
   }
 
   const capture: Capture = {
@@ -260,11 +262,13 @@ export function switchMoment(id: string, uri: string) {
       ? { ...m, kept: { subject: c.subject, regions: c.regions, annotation: c.annotation, engine: c.engine } }
       : m,
   );
-  const kept = moments.find((m) => m.uri === uri)?.kept;
+  const target = moments.find((m) => m.uri === uri);
+  const kept = target?.kept;
   patchCapture(id, (x) => ({
     ...x,
     moments,
-    media: { ...x.media, stillUri: uri },
+    // Added photos have their own shape; video frames share the video's.
+    media: { ...x.media, stillUri: uri, ...(target?.width && target.height ? { width: target.width, height: target.height } : {}) },
     subject: kept?.subject ?? null,
     regions: kept?.regions ?? [],
     annotation: kept?.annotation ?? emptyAnnotation(),
@@ -323,6 +327,27 @@ export function removeCallout(id: string, calloutId: string): (() => void) | nul
       callouts.splice(Math.min(i, callouts.length), 0, removed);
       return { ...x, annotation: { ...x.annotation, callouts } };
     });
+}
+
+/**
+ * Another photo of the same thing (the back of the box, the ports round the
+ * side). The capture becomes a set of photos, each annotated on its own and
+ * kept; the thread and the lens stay shared.
+ */
+export async function addPhoto(id: string, picked: Picked) {
+  const c = getCapture(id);
+  if (!c || c.media.kind !== 'image' || picked.kind !== 'image') return;
+  const dir = captureDir(id);
+  const n = Math.max(1, c.moments.length);
+  const uri = await keep(picked.uri, dir, `photo-${n}.jpg`);
+  let still = await normalizeStill(uri, picked.width, picked.height);
+  if (still.uri !== uri) still = { ...still, uri: await keep(still.uri, dir, `photo-${n}-still.jpg`) };
+  patchCapture(id, (x) => {
+    const first = { t: 0, uri: x.media.stillUri, width: x.media.width, height: x.media.height };
+    const moments = x.moments.length ? x.moments : [first];
+    return { ...x, moments: [...moments, { t: moments.length, uri: still.uri, width: still.width, height: still.height }] };
+  });
+  switchMoment(id, still.uri);
 }
 
 export function cancel(id: string) {

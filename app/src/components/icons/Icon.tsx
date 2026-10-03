@@ -35,7 +35,9 @@ export type IconName =
   | 'chip'
   | 'download'
   | 'pencil'
-  | 'pointer';
+  | 'pointer'
+  | 'plus'
+  | 'photoPlus';
 
 export function Icon({
   name,
@@ -193,6 +195,16 @@ function glyph(name: IconName, p: P, color: string, fill?: string) {
       );
     case 'check':
       return <Path {...p} d="M5.2 12.6l4.3 4.3 9.3-9.6" />;
+    case 'photoPlus':
+      return (
+        <>
+          <Path {...p} d="M12.5 19.5H6.3a2.8 2.8 0 01-2.8-2.8V7.3a2.8 2.8 0 012.8-2.8h11.4a2.8 2.8 0 012.8 2.8v4.2" />
+          <Path {...p} d="M3.8 15.6l4.3-4.1a1.6 1.6 0 012.2 0l2.6 2.6" />
+          <Path {...p} d="M18 14.5v6M15 17.5h6" />
+        </>
+      );
+    case 'plus':
+      return <Path {...p} d="M12 5.5v13M5.5 12h13" />;
     case 'pointer':
       return <Path {...p} fill={fill ?? 'none'} d="M5.4 3.6l13.2 7.9c.7.4.6 1.5-.2 1.7l-5.3 1.3-2.4 5.1c-.3.7-1.4.7-1.7-.1L4.1 4.9c-.2-.9.6-1.6 1.3-1.3z" />;
     case 'pencil':
