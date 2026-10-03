@@ -80,3 +80,20 @@ test('describeMarks is one line per region with a place', () => {
   assert.match(d[0], /^1: subject \(microwave\), center$/);
   assert.match(d[2], /^3: text "POWER", /);
 });
+
+test('the subject is named after a thing, not the scene', () => {
+  const { subject } = buildRegions({
+    subject: null,
+    instances: [],
+    text: [],
+    barcodes: [],
+    objects: [],
+    labels: [
+      { label: 'outdoor', confidence: 0.9 },
+      { label: 'structure', confidence: 0.8 },
+      { label: 'circuit_board', confidence: 0.6 },
+    ],
+    salient: [{ x: 0.1, y: 0.1, w: 0.8, h: 0.8 }],
+  });
+  assert.equal(subject?.text, 'circuit board');
+});

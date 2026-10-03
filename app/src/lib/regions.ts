@@ -24,6 +24,20 @@ export function iou(a: Box, b: Box): number {
   return u > 0 ? i / u : 0;
 }
 
+// Vision's classifier often leads with scene words ("outdoor", "structure")
+// that make poor names for the thing in front of the camera.
+const SCENE_WORDS = new Set([
+  'outdoor', 'indoor', 'structure', 'people', 'adult', 'land', 'sky', 'blue_sky', 'cloudy',
+  'sunset_sunrise', 'night_sky', 'light', 'texture', 'pattern', 'material', 'art', 'abstract',
+  'wood_processed', 'raw_glass', 'raw_metal', 'foliage', 'document', 'text',
+]);
+
+/** The classifier's best label that names a thing rather than a scene, readable. */
+export function thingLabel(labels: { label: string; confidence: number }[]): string | undefined {
+  const l = labels.find((x) => x.confidence >= 0.1 && !SCENE_WORDS.has(x.label.toLowerCase()));
+  return l?.label.replace(/_/g, ' ');
+}
+
 const MAX_TEXT = 8;
 const MAX_OBJECTS = 5;
 const MAX_REGIONS = 16;
@@ -53,13 +67,13 @@ export function buildRegions(a: AnalysisLike): { subject: Region | null; regions
       kind: 'subject',
       box: subjectSrc.box,
       polygon: subjectSrc.polygon,
-      text: named?.label ?? a.labels[0]?.label,
+      text: named?.label ?? thingLabel(a.labels),
       confidence: named?.confidence,
     });
   } else if (topObject) {
     add({ kind: 'subject', box: topObject.box, text: topObject.label, confidence: topObject.confidence });
   } else if (a.salient[0]) {
-    add({ kind: 'subject', box: a.salient[0], text: a.labels[0]?.label });
+    add({ kind: 'subject', box: a.salient[0], text: thingLabel(a.labels) });
   }
   const subject = regions[0] ?? null;
 

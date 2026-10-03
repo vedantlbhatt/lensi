@@ -3,7 +3,7 @@ import { pickEngine, visionEngine } from './engines';
 import { boundsOf, dist, polygonArea } from './geometry';
 import { normalizeStill, videoMoments, type Picked } from './media';
 import { captureDir, keep } from './persist';
-import { anchorFor, buildRegions, regionAt, regionArea, type AnalysisLike } from './regions';
+import { anchorFor, buildRegions, regionAt, regionArea, thingLabel, type AnalysisLike } from './regions';
 import { getSettings } from './settings';
 import { addCapture, getCapture, patchCapture } from './store';
 import {
@@ -89,7 +89,7 @@ async function runEyes(c: Capture): Promise<{ subject: Region | null; regions: R
   try {
     const a = (await LensiAR.analyze(c.media.stillUri)) as AnalysisLike & { labels: { label: string }[] };
     const { subject, regions } = buildRegions(a);
-    return { subject, regions, hint: subject?.text ?? a.labels[0]?.label ?? null };
+    return { subject, regions, hint: subject?.text ?? thingLabel(a.labels) ?? null };
   } catch (e) {
     console.warn('[lensi] analysis failed', e);
     return { subject: null, regions: [], hint: null };

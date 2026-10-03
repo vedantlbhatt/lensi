@@ -22,7 +22,7 @@ export const visionEngine: Engine = {
     const codes = req.regions.filter((r) => r.kind === 'barcode');
     const objects = req.regions.filter((r) => r.kind === 'object' && r.text);
 
-    if (req.question || req.walkthrough) {
+    if (req.question && !req.walkthrough) {
       out.push({
         kind: 'answer',
         text: 'Answers and walkthroughs need Apple Intelligence or the cloud brain. Turn one on in Settings.',
@@ -38,7 +38,11 @@ export const visionEngine: Engine = {
       const said = bits.length > 1 ? `${bits.slice(0, -1).join(', ')} and ${bits[bits.length - 1]}` : bits[0];
       out.push({
         kind: 'summary',
-        text: said ? `${cap(said)}, all on this phone.` : 'Outlined on this phone. Names and answers need Apple Intelligence.',
+        text: req.walkthrough
+          ? 'Walkthroughs need Apple Intelligence or the cloud brain. Here is what the phone found.'
+          : said
+            ? `${cap(said)}, all on this phone.`
+            : 'Outlined on this phone. Names and answers need Apple Intelligence.',
       });
       const callouts: Region[] = [...codes, ...texts.slice(0, 4), ...objects.slice(0, 2)];
       for (const r of callouts) out.push({ kind: 'callout', label: clip(r.text ?? r.kind, 26), mark: r.mark });
