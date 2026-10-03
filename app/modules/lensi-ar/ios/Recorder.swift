@@ -15,6 +15,8 @@ final class Recorder {
   private var startTime: CMTime?
   private var lastTime: CMTime = .zero
   private var finished = false
+  /// The writer refused to start; never call it again (a second startWriting raises).
+  private var failed = false
   private let lock = NSLock()
 
   init(url: URL, sensorWidth: Int, sensorHeight: Int, withAudio: Bool) throws {
@@ -62,14 +64,23 @@ final class Recorder {
   func append(pixelBuffer: CVPixelBuffer, time: TimeInterval) {
     lock.lock()
     defer { lock.unlock() }
-    guard !finished else { return }
+    guard !finished, !failed else { return }
     let t = CMTime(seconds: time, preferredTimescale: 600_000)
     if startTime == nil {
-      guard writer.startWriting() else { return }
+      // startWriting() is only legal once, while the status is still .unknown.
+      guard writer.status == .unknown, writer.startWriting() else {
+        failed = true
+        NSLog("[lensi] recorder could not start: %@", writer.error?.localizedDescription ?? "unknown")
+        return
+      }
       writer.startSession(atSourceTime: t)
       startTime = t
     }
-    guard writer.status == .writing, video.isReadyForMoreMediaData else { return }
+    guard writer.status == .writing else {
+      failed = true
+      return
+    }
+    guard video.isReadyForMoreMediaData else { return }
     if adaptor.append(pixelBuffer, withPresentationTime: t) { lastTime = t }
   }
 
@@ -87,9 +98,12 @@ final class Recorder {
     let start = startTime
     let last = lastTime
     lock.unlock()
-    guard let start, writer.status == .writing else {
-      writer.cancelWriting()
-      done(.failure(LensiError.unavailable("Nothing was recorded.")))
+    // Needs a started session with at least two frames in it; otherwise there's
+    // nothing worth keeping (and endSession before startSession would raise).
+    guard let start, writer.status == .writing, last > start else {
+      if writer.status == .writing { writer.cancelWriting() }
+      try? FileManager.default.removeItem(at: url)
+      done(.failure(writer.error ?? LensiError.unavailable("Nothing was recorded.")))
       return
     }
     video.markAsFinished()

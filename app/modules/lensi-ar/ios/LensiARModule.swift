@@ -32,9 +32,15 @@ public class LensiARModule: Module {
     }
 
     AsyncFunction("segment") { (uri: String, x: Double, y: Double, promise: Promise) in
+      // Int(NaN) traps; a bad tap from JS must not take the app down.
+      guard x.isFinite, y.isFinite else {
+        promise.reject("E_SEGMENT", "Bad point.")
+        return
+      }
+      let point = CGPoint(x: min(max(x, 0), 1), y: min(max(y, 0), 1))
       self.analyzer.queue.async {
         do {
-          promise.resolve(try self.analyzer.segment(uri: uri, at: CGPoint(x: x, y: y)))
+          promise.resolve(try self.analyzer.segment(uri: uri, at: point))
         } catch {
           promise.reject("E_SEGMENT", error.localizedDescription)
         }
@@ -53,7 +59,9 @@ public class LensiARModule: Module {
       }
     }
 
-    Function("intelligenceCancel") { (requestId: String) in
+    // Async on purpose: it queues behind intelligenceStart (same serial queue),
+    // so a quick cancel can't arrive first and miss the task it was meant for.
+    AsyncFunction("intelligenceCancel") { (requestId: String) in
       IntelligenceBridge.cancel(requestId: requestId)
     }
 

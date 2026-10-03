@@ -6,7 +6,7 @@ A running log of the camera-first rebuild on branch `camera-first`: what exists,
 
 | Area | How it was checked | Status |
 |---|---|---|
-| TS logic (geometry, regions, protocol) | `npm test` (node test runner) | passing |
+| TS logic (geometry, regions, protocol, links, eyes-only engine) | `npm test` (node test runner, 25 tests) | passing |
 | App ↔ server protocol | server tests run the real server in mock mode through the app's own parser | passing |
 | UI + motion | Expo web preview driven by Playwright (iPhone viewport, real touch events) | camera, capture, walkthrough, voice, memories, settings, drop menu reviewed |
 | MobileSAM → Core ML | `tools/sam`: torch vs wrapper (bit-exact decoder), fp16 interpreter, then **real Core ML on macOS CI** (CPU and all compute units) | passing |
@@ -20,6 +20,22 @@ A running log of the camera-first rebuild on branch `camera-first`: what exists,
 - **Torch:** `ARConfiguration.configurableCaptureDeviceForPrimaryCamera`.
 - **Apple Intelligence:** `IntelligenceBridge.status()` reports why it is unavailable (not eligible, not enabled, still downloading). On iOS 27 the photo is attached with numbered marks drawn on it.
 - **Speech:** `SFSpeechRecognizer`, on device when the locale supports it.
+
+## iOS 27: the UIScene life cycle is mandatory
+
+The first simulator run built fine and then never showed the app: the device log said
+*"Application failed to launch: UIScene life cycle is required for apps built with this SDK."*
+Expo SDK 57 ships `ExpoAppSceneDelegate` and `ExpoReactNativeFactoryProvider` for this, but its
+prebuild template still creates the window in the app delegate. `app/plugins/withSceneLifecycle.js`
+adds the scene manifest, a `SceneDelegate: ExpoAppSceneDelegate`, and moves window creation out
+of `AppDelegate`. Every edit it makes is checked, so if Expo changes the template, prebuild fails
+loudly instead of shipping an app that dies at launch. Once Expo's template adopts scenes, delete
+the plugin.
+
+Scripted CI runs reach the app through the launch environment
+(`SIMCTL_CHILD_LENSI_URL=lensi:///?demo=cars xcrun simctl launch …`, read by the native
+`launchURL` constant). `simctl openurl` puts up an "Open in Lensi?" prompt that nothing in CI can
+tap.
 
 ## Decisions
 

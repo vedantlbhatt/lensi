@@ -113,7 +113,7 @@ export type LensiARModuleShape = {
   intelligenceStatus(): Promise<IntelligenceStatus>;
   /** `request` is JSON: { imageUri, lens, marks, question?, history?, walkthrough? }. */
   intelligenceStart(requestId: string, request: string): Promise<void>;
-  intelligenceCancel(requestId: string): void;
+  intelligenceCancel(requestId: string): Promise<void> | void;
   speechRequestPermission(): Promise<boolean>;
   speechStart(): Promise<void>;
   speechStop(): Promise<void>;

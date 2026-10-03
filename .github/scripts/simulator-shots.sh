@@ -24,17 +24,21 @@ xcrun simctl install "$DEV" "$APP"
 
 shot() { sleep "$2"; xcrun simctl io "$DEV" screenshot --type=png "$OUT/$1.png" >/dev/null 2>&1 && echo "shot $1"; }
 running() { xcrun simctl spawn "$DEV" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE"; }
+# Every launch and liveness check, with times and PIDs, to line up with device.log.
+tl() { echo "$(date '+%H:%M:%S') $*" | tee -a "$OUT/timeline.txt"; }
 # launch [lensi-url]: a cold start, optionally carrying a scripted run.
 launch() {
   xcrun simctl terminate "$DEV" "$BUNDLE" >/dev/null 2>&1 || true
   sleep 1
+  local out
   if [ -n "${1:-}" ]; then
-    SIMCTL_CHILD_LENSI_URL="$1" xcrun simctl launch "$DEV" "$BUNDLE" >/dev/null
+    out=$(SIMCTL_CHILD_LENSI_URL="$1" xcrun simctl launch "$DEV" "$BUNDLE" 2>&1)
   else
-    xcrun simctl launch "$DEV" "$BUNDLE" >/dev/null
+    out=$(xcrun simctl launch "$DEV" "$BUNDLE" 2>&1)
   fi
+  tl "launch ${1:-camera} -> $out"
 }
-alive() { if running; then echo "alive after $1"; else echo "NOT RUNNING after $1" | tee -a "$OUT/problems.txt"; fi; }
+alive() { if running; then tl "alive after $1"; else tl "NOT RUNNING after $1"; echo "NOT RUNNING after $1" >> "$OUT/problems.txt"; fi; }
 
 # Grant what the app may ask for so no system alert covers the screenshots.
 xcrun simctl privacy "$DEV" grant all "$BUNDLE" >/dev/null 2>&1 || true
@@ -82,6 +86,11 @@ shot 14-openurl-6s 6
 
 xcrun simctl spawn "$DEV" log show --start "$START" --style compact --predicate 'process == "Lensi"' > "$OUT/device.log" 2>/dev/null || true
 grep -iE "\[lensi\]|error|exception|fatal|failed to launch|terminat" "$OUT/device.log" | tail -400 > "$OUT/device-filtered.log" || true
-# Crash reports for the app land on the host.
-find "$HOME/Library/Logs/DiagnosticReports" -name 'Lensi*' -newermt "$START" 2>/dev/null | head -5 | while read -r f; do cp "$f" "$OUT/"; echo "crash report $f"; done
+# What the system said about the app: exits, signals, watchdog and memory kills.
+xcrun simctl spawn "$DEV" log show --start "$START" --style compact \
+  --predicate 'process != "Lensi" AND eventMessage CONTAINS[c] "com.vedantbhatt.lensi"' 2>/dev/null \
+  | grep -iE "exit|terminat|crash|signal|kill|jetsam|watchdog|reason" | tail -200 > "$OUT/system-about-app.log" || true
+# Crash reports for the app land on the host (any name; keep the ones about Lensi).
+find "$HOME/Library/Logs/DiagnosticReports" -newermt "$START" -type f \( -name '*.ips' -o -name '*.crash' \) 2>/dev/null \
+  | while read -r f; do grep -q "Lensi" "$f" 2>/dev/null && cp "$f" "$OUT/" && echo "crash report $f"; done
 ls -la "$OUT"

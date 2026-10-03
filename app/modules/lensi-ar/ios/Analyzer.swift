@@ -21,7 +21,9 @@ enum LensiError: LocalizedError {
 /// with a top-left origin, which is what the JS side expects.
 final class Analyzer {
   let queue = DispatchQueue(label: "lensi.analyze", qos: .userInitiated)
-  private let detector = Detector()
+  /// Loaded on first use, on `queue`: the module is created on the JS thread
+  /// at launch, and compiling Core ML there would hold up the splash screen.
+  private lazy var detector = Detector()
   private var cachedImage: (uri: String, image: CGImage)?
   private var cachedMask: (uri: String, observation: VNInstanceMaskObservation?)?
 

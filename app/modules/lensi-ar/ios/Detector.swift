@@ -13,13 +13,24 @@ struct Detection {
 /// Runs everything that has to be instant on the phone: YOLO object detection
 /// on the Neural Engine and subject segmentation for the tap highlight.
 final class Detector {
+  /// The Neural Engine and GPU on a phone; CPU only in the Simulator, where a
+  /// virtualised GPU can't compile Core ML networks ("On-device compilation
+  /// within a VM only supports CPU").
+  static var computeUnits: MLComputeUnits {
+    #if targetEnvironment(simulator)
+    return .cpuOnly
+    #else
+    return .all
+    #endif
+  }
+
   private var yolo: VNCoreMLRequest?
   let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
   init() {
     guard let url = Detector.modelURL() else { return }
     let config = MLModelConfiguration()
-    config.computeUnits = .all
+    config.computeUnits = Detector.computeUnits
     guard let model = try? MLModel(contentsOf: url, configuration: config),
           let vnModel = try? VNCoreMLModel(for: model) else { return }
     let request = VNCoreMLRequest(model: vnModel)

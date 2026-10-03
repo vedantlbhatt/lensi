@@ -188,7 +188,11 @@ final class IntelligenceRunner: @unchecked Sendable {
   private let lock = NSLock()
 
   func start(id: String, payload: IntelPayload, emit: @escaping ([String: Any]) -> Void) {
-    let task = Task.detached(priority: .userInitiated) {
+    // Registered under the lock before the task can run, so a task that ends
+    // at once can't remove itself before it was added (leaving a dead entry).
+    lock.lock()
+    defer { lock.unlock() }
+    tasks[id] = Task.detached(priority: .userInitiated) {
       do {
         try await IntelligenceRunner.run(payload) { event in
           emit(["requestId": id, "type": "event", "event": event])
@@ -203,9 +207,6 @@ final class IntelligenceRunner: @unchecked Sendable {
       }
       IntelligenceRunner.shared.remove(id)
     }
-    lock.lock()
-    tasks[id] = task
-    lock.unlock()
   }
 
   func cancel(id: String) {

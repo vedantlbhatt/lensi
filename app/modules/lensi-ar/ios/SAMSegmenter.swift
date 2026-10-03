@@ -92,7 +92,7 @@ final class SAMSegmenter: @unchecked Sendable {
     guard let encoderURL = SAMSegmenter.modelURL("LensiSAMEncoder"),
           let decoderURL = SAMSegmenter.modelURL("LensiSAMDecoder") else { return nil }
     let config = MLModelConfiguration()
-    config.computeUnits = .all
+    config.computeUnits = Detector.computeUnits
     guard let encoder = try? MLModel(contentsOf: encoderURL, configuration: config),
           let decoder = try? MLModel(contentsOf: decoderURL, configuration: config) else { return nil }
     self.encoder = encoder

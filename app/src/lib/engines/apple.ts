@@ -69,7 +69,7 @@ export const appleEngine: Engine = {
         }
       });
       signal.addEventListener('abort', () => {
-        LensiAR.intelligenceCancel(requestId);
+        void Promise.resolve(LensiAR.intelligenceCancel(requestId)).catch(() => {});
         finish();
       });
       const payload = {

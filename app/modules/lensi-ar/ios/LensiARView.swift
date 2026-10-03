@@ -33,7 +33,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private let focusLayer = CAShapeLayer()
   private let focusTag = PinLabel(text: "", color: .white, isCallout: true)
   private let pinLayer = UIView()
-  private let detector = Detector()
+  /// Loaded on first use, on `visionQueue` (where it is only ever touched):
+  /// loading Core ML here would stall the main thread as the camera appears.
+  private lazy var detector = Detector()
   private let visionQueue = DispatchQueue(label: "lensi.vision", qos: .userInitiated)
 
   private var visionBusy = false
@@ -521,9 +523,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// Full-resolution still (when the format allows it), written upright as JPEG.
   func takePhoto(_ done: @escaping (Result<[String: Any], Error>) -> Void) {
     let session = sceneView.session
+    // The JS shutter waits on this promise, so it must settle exactly once,
+    // even if ARKit never calls back (a session paused mid-capture).
+    var settled = false
     let finish: (ARFrame?) -> Void = { [weak self] frame in
-      guard let self else { return }
-      guard let frame = frame ?? session.currentFrame else {
+      guard !settled else { return }
+      settled = true
+      guard let self, let frame = frame ?? session.currentFrame else {
         done(.failure(LensiError.unavailable("The camera isn't ready yet.")))
         return
       }
@@ -540,6 +546,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     session.captureHighResolutionFrame { frame, _ in
       DispatchQueue.main.async { finish(frame) }
     }
+    // Fall back to the current frame if the high-resolution one never arrives.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(nil) }
   }
 
   private func writePhoto(_ buffer: CVPixelBuffer) -> Result<[String: Any], Error> {
@@ -637,22 +645,24 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   /// Returns whether the torch is now on.
+  /// Returns whether the torch is now on.
   func setTorch(_ on: Bool) -> Bool {
-    guard let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera, device.hasTorch else {
+    guard let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera, device.hasTorch,
+          (try? device.lockForConfiguration()) != nil else {
       return false
     }
-    do {
-      try device.lockForConfiguration()
-      if on, device.isTorchModeSupported(.on) {
-        try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
-      } else {
-        device.torchMode = .off
-      }
-      device.unlockForConfiguration()
-      return on
-    } catch {
+    // Always unlock: a camera left locked stays locked for the whole session.
+    defer { device.unlockForConfiguration() }
+    guard on else {
+      device.torchMode = .off
       return false
     }
+    // A hot phone makes the torch unavailable; setTorchModeOn throws then.
+    guard device.isTorchAvailable, device.isTorchModeSupported(.on),
+          (try? device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)) != nil else {
+      return false
+    }
+    return true
   }
 
   // MARK: - Commands from JS
