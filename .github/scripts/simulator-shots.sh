@@ -108,7 +108,7 @@ for v in "${STOCK[@]}"; do
   case "$v" in
     classroom) lens=learn; m=2 ;;
     bottle-*) lens=identify; m=0 ;;
-    worker-*) lens=safe; m=0 ;;
+    worker-*) lens=safe; m=2 ;;
     *) lens=shop; m=2 ;;
   esac
   scenario "$(printf %02d $n)-stock-$v" 26 "lensi:///?file=$v.mp4&lens=$lens&brain=vision&moment=$m"
