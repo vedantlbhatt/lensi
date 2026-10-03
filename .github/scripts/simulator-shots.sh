@@ -66,6 +66,9 @@ unrec() { [ -n "$REC" ] && kill -INT "$REC" 2>/dev/null; wait "$REC" 2>/dev/null
 
 # One scenario = one cold launch, filmed. A screenshot taken while recording costs
 # 10-20 s in this VM, so each scenario takes a single one, at the end.
+# Each film runs <seconds> past launch, plus however long the screenshot takes (anywhere from
+# 1 s to 20 s in this VM), so <seconds> alone has to cover the whole analysis: with CPU-only
+# Core ML here, Vision + YOLO + SAM take 15-25 s before the labels land.
 scenario() { # scenario <name> <seconds> [lensi-url]
   rec "$1"
   launch "${3:-}"
@@ -93,12 +96,12 @@ if [ -n "$DATA" ]; then
   done
 fi
 
-scenario 02-cars 16 "lensi:///?demo=cars&brain=vision"
+scenario 02-cars 28 "lensi:///?demo=cars&brain=vision"
 # Tap-to-ask, scripted: once the labels are in, the app taps the headlamp itself.
 # SAM outlines the part under the point (marching ants) and the eyes say what they can.
-scenario 03-tap 18 "lensi:///?demo=cars&brain=vision&tap=0.3,0.33"
-scenario 04-board 16 "lensi:///?demo=board&lens=learn&brain=vision"
-scenario 05-guide 16 "lensi:///?demo=truck&lens=guide&brain=vision&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F"
+scenario 03-tap 32 "lensi:///?demo=cars&brain=vision&tap=0.3,0.33"
+scenario 04-board 24 "lensi:///?demo=board&lens=learn&brain=vision"
+scenario 05-guide 24 "lensi:///?demo=truck&lens=guide&brain=vision&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F"
 
 # The video pipeline on real footage: three keyframes, the middle one read first by
 # Vision, YOLO and SAM; then the run switches to another keyframe and reads that too.
@@ -112,7 +115,7 @@ for v in "${STOCK[@]}"; do
     worker-*) lens=safe; extra="moment=2" ;;
     *) lens=shop; extra="moment=2" ;;
   esac
-  scenario "$(printf %02d $n)-stock-$v" 26 "lensi:///?file=$v.mp4&lens=$lens&brain=vision&$extra"
+  scenario "$(printf %02d $n)-stock-$v" 36 "lensi:///?file=$v.mp4&lens=$lens&brain=vision&$extra"
   n=$((n + 1))
 done
 
