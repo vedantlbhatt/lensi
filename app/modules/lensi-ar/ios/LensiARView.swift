@@ -5,6 +5,7 @@ import ExpoModulesCore
 import ImageIO
 import SceneKit
 import UIKit
+import Vision
 
 /// Live camera with world tracking. Every ~66 ms the newest frame goes through
 /// YOLO on the Neural Engine; boxes are smoothed at display rate. In live-pin
@@ -16,6 +17,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   let onFocusChange = EventDispatcher()
   let onTrackingChange = EventDispatcher()
   let onPinTap = EventDispatcher()
+  let onGuideChange = EventDispatcher()
 
   var showDetections = true
   /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
@@ -52,6 +54,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var pins: [String: Pin] = [:]
   private var pinOrder: [String] = []
   private var contexts: [String: Selection] = [:]
+
+  // Live guide: frames the plan was made from (pose frozen), the part being
+  // watched for a change, and the state of that watch.
+  static let guideParent = "guide"
+  private var guideFrames: [String: GuideFrameContext] = [:]
+  private var guideFrameOrder: [String] = []
+  private var guideWatchId: String?
+  private var watch = ChangeWatch()
+  private var watchBusy = false
+  private var lastWatchTime: TimeInterval = 0
+  private var lastWatchTransform: simd_float4x4?
 
   private var paused = false
   private var configuration: ARWorldTrackingConfiguration?
@@ -194,6 +207,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
     recorder?.append(pixelBuffer: frame.capturedImage, time: frame.timestamp)
+    if guideWatchId != nil { watchGuide(frame) }
     guard showDetections, !visionBusy, frame.timestamp - lastVisionTime > 0.066 else { return }
     visionBusy = true
     lastVisionTime = frame.timestamp
@@ -365,7 +379,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for id in pinOrder.reversed() {
       guard let pin = pins[id], !pin.label.isHidden else { continue }
       if pin.label.frame.insetBy(dx: -10, dy: -10).contains(p) {
-        onPinTap(["id": pin.parentId ?? pin.id])
+        // Guide tags report their own part; other callouts report their pin.
+        let id = pin.parentId == Self.guideParent ? String(pin.id.dropFirst(Self.guideParent.count + 1)) : (pin.parentId ?? pin.id)
+        onPinTap(["id": id])
         return
       }
     }
@@ -515,7 +531,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
       let buffer = frame.capturedImage
       self.visionQueue.async {
-        let result = self.writePhoto(buffer)
+        let result = self.writePhoto(buffer, maxSide: 3024)
         DispatchQueue.main.async { done(result) }
       }
     }
@@ -530,12 +546,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(nil) }
   }
 
-  private func writePhoto(_ buffer: CVPixelBuffer) -> Result<[String: Any], Error> {
+  /// High-res frames can be 48 MP on Pro phones; 12 MP (3024) is plenty to read labels.
+  private func writePhoto(_ buffer: CVPixelBuffer, maxSide: CGFloat) -> Result<[String: Any], Error> {
     var image = CIImage(cvPixelBuffer: buffer).oriented(.right)
-    // High-res frames can be 48 MP on Pro phones; 12 MP is plenty to read labels.
     let longest = max(image.extent.width, image.extent.height)
-    if longest > 3024 {
-      let scale = 3024 / longest
+    if longest > maxSide {
+      let scale = maxSide / longest
       image = image.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
     }
     let extent = image.extent
@@ -682,6 +698,125 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     contexts.removeAll()
   }
 
+  // MARK: - Live guide
+
+  /// Grabs the current frame as an upright JPEG and freezes its camera pose,
+  /// so parts found in it can be pinned in 3D once the brain answers, even if
+  /// the phone has moved by then.
+  func guideCapture(_ done: @escaping (Result<[String: Any], Error>) -> Void) {
+    guard let frame = sceneView.session.currentFrame else {
+      done(.failure(LensiError.unavailable("The camera isn't ready yet.")))
+      return
+    }
+    let id = UUID().uuidString
+    guideFrames[id] = GuideFrameContext(
+      selection: Selection(frame: frame, crop: CGRect(x: 0, y: 0, width: 1, height: 1)),
+      points: frame.rawFeaturePoints?.points ?? []
+    )
+    guideFrameOrder.append(id)
+    while guideFrameOrder.count > 4 { guideFrames[guideFrameOrder.removeFirst()] = nil }
+    let buffer = frame.capturedImage
+    visionQueue.async { [weak self] in
+      guard let self else { return }
+      let result = self.writePhoto(buffer, maxSide: 1600)
+      DispatchQueue.main.async {
+        switch result {
+        case .success(var info):
+          info["frameId"] = id
+          done(.success(info))
+        case .failure(let error):
+          done(.failure(error))
+        }
+      }
+    }
+  }
+
+  /// A tag in the world for a part found at x, y (0…1, upright) in a guide frame.
+  func guidePin(frameId: String, id: String, x: Double, y: Double, label: String) {
+    guard let ctx = guideFrames[frameId] else { return }
+    let pinId = "\(Self.guideParent):\(id)"
+    if let existing = pins[pinId] {
+      existing.label.text = label
+      return
+    }
+    let world = ctx.anchor(at: CGPoint(x: x, y: y), session: sceneView.session)
+    addPin(Pin(id: pinId, parentId: Self.guideParent, world: world, text: label, color: accent))
+  }
+
+  /// The current step's part stands out in the lens colour; the rest step back.
+  func guideFocus(_ id: String?) {
+    let target = id.map { "\(Self.guideParent):\($0)" }
+    for pin in pins.values where pin.parentId == Self.guideParent {
+      pin.label.color = accent
+      pin.label.emphasis = target == nil ? .normal : (pin.id == target ? .focused : .dimmed)
+    }
+  }
+
+  func guideWatch(_ id: String?) {
+    guideWatchId = id.map { "\(Self.guideParent):\($0)" }
+    watch.reset()
+    lastWatchTransform = nil
+  }
+
+  func guideClear() {
+    for pin in pins.values where pin.parentId == Self.guideParent {
+      pin.removeFromSuperview()
+      pins[pin.id] = nil
+    }
+    pinOrder.removeAll { pins[$0] == nil }
+    guideFrames.removeAll()
+    guideFrameOrder.removeAll()
+    guideWatchId = nil
+    watch.reset()
+  }
+
+  /// Twice a second, while the phone is steady and the watched part is in
+  /// view, compare a crop around it with how it looked before.
+  private func watchGuide(_ frame: ARFrame) {
+    guard let id = guideWatchId, let pin = pins[id], !watchBusy, frame.timestamp - lastWatchTime > 0.5 else { return }
+    let transform = frame.camera.transform
+    let previous = lastWatchTransform
+    lastWatchTransform = transform
+    lastWatchTime = frame.timestamp
+    // A moving phone changes every crop; only a steady one can see a change.
+    if let previous {
+      let moved = simd_distance(simd_make_float3(transform.columns.3), simd_make_float3(previous.columns.3))
+      let facing = simd_dot(simd_normalize(simd_make_float3(transform.columns.2)), simd_normalize(simd_make_float3(previous.columns.2)))
+      if moved > 0.02 || facing < 0.9986 {
+        watch.unsettle()
+        return
+      }
+    }
+    let local = simd_mul(transform.inverse, simd_float4(pin.world, 1))
+    guard local.z < -0.05 else {
+      watch.unsettle()
+      return
+    }
+    let res = frame.camera.imageResolution
+    let upright = CGSize(width: res.height, height: res.width)
+    let p = frame.camera.projectPoint(pin.world, orientation: .portrait, viewportSize: upright)
+    let point = CGPoint(x: p.x / upright.width, y: p.y / upright.height)
+    guard point.x > 0.08, point.x < 0.92, point.y > 0.08, point.y < 0.92 else {
+      watch.unsettle()
+      return
+    }
+    watchBusy = true
+    let distance = -local.z
+    let buffer = frame.capturedImage
+    let now = frame.timestamp
+    visionQueue.async { [weak self] in
+      let fp = ChangeWatch.featurePrint(buffer, around: point, distance: distance, upright: upright)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.watchBusy = false
+        guard let fp, self.guideWatchId == id else { return }
+        if let d = self.watch.add(fp, now: now) {
+          self.onGuideChange(["id": String(id.dropFirst(Self.guideParent.count + 1)), "distance": d])
+        }
+      }
+    }
+  }
+
   static let palette: [UIColor] = [
     UIColor(hex: "#FF5A4E"), UIColor(hex: "#2E9BFF"), UIColor(hex: "#14B88A"),
     UIColor(hex: "#8B6CFF"), UIColor(hex: "#FF7FB6"), UIColor(hex: "#0FB5C9"),
@@ -697,6 +832,35 @@ private struct Tracked {
   var target: CGRect
   var shown: CGRect
   var missed = 0
+}
+
+/// A guide frame: its frozen pose plus the feature points ARKit had tracked,
+/// which give a depth when a raycast finds no surface (a pipe in mid-air).
+private struct GuideFrameContext {
+  let selection: Selection
+  let points: [simd_float3]
+
+  func anchor(at upright: CGPoint, session: ARSession) -> simd_float3 {
+    let (origin, dir) = selection.ray(upright)
+    let query = ARRaycastQuery(origin: origin, direction: dir, allowing: .estimatedPlane, alignment: .any)
+    if let hit = session.raycast(query).first {
+      let p = simd_make_float3(hit.worldTransform.columns.3)
+      if simd_distance(p, origin) < 4 { return p }
+    }
+    // Tracked points within ~3.5 degrees of the ray: their median depth.
+    var depths: [Float] = []
+    for q in points {
+      let v = q - origin
+      let t = simd_dot(v, dir)
+      guard t > 0.05, t < 4 else { continue }
+      if simd_length(v - dir * t) / t < 0.06 { depths.append(t) }
+    }
+    if !depths.isEmpty {
+      depths.sort()
+      return origin + dir * depths[depths.count / 2]
+    }
+    return origin + dir * 0.55
+  }
 }
 
 /// Camera pose frozen at the moment of selection, so callouts that arrive from

@@ -19,8 +19,12 @@ extension UIColor {
 /// The tag that sits on an anchored point. Title only: the detail lives in the
 /// app's sheet so the camera view stays readable.
 final class PinLabel: UIView {
+  /// Live guide: the current step's part stands out; the others step back.
+  enum Emphasis { case normal, focused, dimmed }
+
   private let label = UILabel()
   var color: UIColor { didSet { apply() } }
+  var emphasis: Emphasis = .normal { didSet { if emphasis != oldValue { apply() } } }
   let isCallout: Bool
 
   init(text: String, color: UIColor, isCallout: Bool) {
@@ -41,10 +45,12 @@ final class PinLabel: UIView {
 
   required init?(coder: NSCoder) { fatalError() }
 
-  /// Titles sit on the lens pen; callouts are white tags. Both in black.
+  /// Titles sit on the lens pen; callouts are white tags (the focused one on
+  /// the pen). Text is always black.
   private func apply() {
-    backgroundColor = isCallout ? .white : color
+    backgroundColor = !isCallout || emphasis == .focused ? color : .white
     label.textColor = .black
+    alpha = emphasis == .dimmed ? 0.55 : 1
   }
 
   var text: String {

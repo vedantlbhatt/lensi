@@ -45,6 +45,28 @@ export type LensiARViewRef = {
   addCallout(parentId: string, id: string, x: number, y: number, text: string): Promise<void>;
   removePin(id: string): Promise<void>;
   clearPins(): Promise<void>;
+  /**
+   * Live guide: grab the current frame (upright JPEG for the eyes and the
+   * brain) and freeze its camera pose, so parts found in it can be pinned in
+   * 3D later even if the phone has moved since.
+   */
+  guideCapture(): Promise<GuideFrame>;
+  /** Pin a tag in the world at x, y (0…1 in that frame's upright image). */
+  guidePin(frameId: string, id: string, x: number, y: number, label: string): Promise<void>;
+  /** The part the current step is about: its tag stands out, the others step back. Null for none. */
+  guideFocus(id: string | null): Promise<void>;
+  /** Watch the part for a change that settles (a cap off, a valve turned); fires onGuideChange. Null stops. */
+  guideWatch(id: string | null): Promise<void>;
+  guideClear(): Promise<void>;
+};
+
+export type GuideFrame = { frameId: string; uri: string; width: number; height: number };
+
+export type GuideChangeEvent = {
+  /** The watched part. */
+  id: string;
+  /** Feature-print distance from how the part looked when watching began. */
+  distance: number;
 };
 
 export type LensiARViewProps = ViewProps & {
@@ -61,6 +83,7 @@ export type LensiARViewProps = ViewProps & {
   onFocusChange?: (e: { nativeEvent: { label: string | null } }) => void;
   onTrackingChange?: (e: { nativeEvent: TrackingEvent }) => void;
   onPinTap?: (e: { nativeEvent: { id: string } }) => void;
+  onGuideChange?: (e: { nativeEvent: GuideChangeEvent }) => void;
 };
 
 export type Analysis = {

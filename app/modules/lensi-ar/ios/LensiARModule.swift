@@ -92,7 +92,7 @@ public class LensiARModule: Module {
     // MARK: The camera
 
     View(LensiARView.self) {
-      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap")
+      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap", "onGuideChange")
 
       Prop("showDetections") { (view: LensiARView, value: Bool) in
         view.showDetections = value
@@ -160,6 +160,31 @@ public class LensiARModule: Module {
 
       AsyncFunction("clearPins") { (view: LensiARView) in
         view.clearPins()
+      }.runOnQueue(.main)
+
+      AsyncFunction("guideCapture") { (view: LensiARView, promise: Promise) in
+        view.guideCapture { result in
+          switch result {
+          case .success(let frame): promise.resolve(frame)
+          case .failure(let error): promise.reject("E_GUIDE", error.localizedDescription)
+          }
+        }
+      }.runOnQueue(.main)
+
+      AsyncFunction("guidePin") { (view: LensiARView, frameId: String, id: String, x: Double, y: Double, label: String) in
+        view.guidePin(frameId: frameId, id: id, x: x, y: y, label: label)
+      }.runOnQueue(.main)
+
+      AsyncFunction("guideFocus") { (view: LensiARView, id: String?) in
+        view.guideFocus(id)
+      }.runOnQueue(.main)
+
+      AsyncFunction("guideWatch") { (view: LensiARView, id: String?) in
+        view.guideWatch(id)
+      }.runOnQueue(.main)
+
+      AsyncFunction("guideClear") { (view: LensiARView) in
+        view.guideClear()
       }.runOnQueue(.main)
     }
   }
