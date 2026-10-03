@@ -48,30 +48,31 @@ shot 01-camera 14
 alive camera
 shot 02-camera-settled 3
 
+# A cold start takes ~6 s in CI's VM (JS bundle, fonts), so the first shot waits.
 launch "lensi:///?demo=cars"
-shot 03-capture-1s 1
-shot 04-capture-3s 2
-shot 05-capture-6s 3
-shot 06-capture-12s 6
+shot 03-capture-7s 7
+shot 04-capture-10s 3
+shot 05-capture-14s 4
+shot 06-capture-20s 6
 alive cars
 
 launch "lensi:///?demo=board&lens=learn"
-shot 07-board-5s 5
-shot 08-board-12s 7
+shot 07-board-9s 9
+shot 08-board-18s 9
 alive board
 
 launch "lensi:///?demo=truck&lens=guide&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F"
-shot 09-guide-5s 5
-shot 10-guide-12s 7
+shot 09-guide-9s 9
+shot 10-guide-18s 9
 alive guide
 
 launch "lensi:///?memories=1"
-shot 11-memories 6
+shot 11-memories 10
 alive memories
 
 # Render the share image inside the app and pull it out of the container.
 launch "lensi:///?demo=cars&export=1"
-sleep 16
+sleep 24
 shot 12-export-source 0
 alive export
 DATA=$(xcrun simctl get_app_container "$DEV" "$BUNDLE" data 2>/dev/null || true)
