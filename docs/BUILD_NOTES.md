@@ -6,7 +6,7 @@ A running log of the camera-first rebuild on branch `camera-first`: what exists,
 
 | Area | How it was checked | Status |
 |---|---|---|
-| TS logic (geometry, regions, protocol, links, QR codes, colours, eyes-only engine) | `npm test` (node test runner, 38 tests) | passing |
+| TS logic (geometry, regions, protocol, links, QR codes, colours, eyes-only engine) | `npm test` (node test runner, 44 tests) | passing |
 | App ↔ server protocol | server tests run the real server in mock mode through the app's own parser | passing |
 | UI + motion | Expo web preview driven by Playwright (iPhone viewport, real touch events) | camera, capture, walkthrough, voice, memories, settings, drop menu reviewed |
 | MobileSAM → Core ML | `tools/sam`: torch vs wrapper (bit-exact decoder), fp16 interpreter, then **real Core ML on macOS CI** (CPU and all compute units) | passing |
