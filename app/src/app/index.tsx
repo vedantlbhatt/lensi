@@ -28,6 +28,7 @@ import { devhooks } from '../lib/devhooks';
 import { pickEngine } from '../lib/engines';
 import { useLivePins } from '../lib/live';
 import { assetPhoto, pasteFromClipboard, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
+import { queryOf, type ScriptParams } from '../lib/links';
 import { ingest } from '../lib/pipeline';
 import { getSettings, setSettings, useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
@@ -47,18 +48,6 @@ const TRACKING_HINTS: Record<string, string> = {
 
 type Open = { id: string; origin: 'camera' | Rect };
 
-type ScriptParams = { demo?: string; lens?: string; ask?: string; memories?: string; export?: string };
-
-/** The query of a lensi:// URL, without leaning on URL.searchParams (not in every RN runtime). */
-function queryOf(url: string | null | undefined): ScriptParams {
-  const out: Record<string, string> = {};
-  const q = url?.split('?')[1]?.split('#')[0];
-  for (const pair of q ? q.split('&') : []) {
-    const [k, v = ''] = pair.split('=');
-    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' '));
-  }
-  return out;
-}
 
 /**
  * The app opens here: the camera, edge to edge. Tap the shutter for a photo,
