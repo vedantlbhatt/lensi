@@ -100,8 +100,13 @@ final class Analyzer {
     let codes = VNDetectBarcodesRequest()
     try? handler.perform([codes])
 
+    // Scene labels. Not in the Simulator: there the classifier returns the same handful of
+    // labels ("outdoor", "night sky", "celestial body") for every image, and a circuit board
+    // got titled after them.
     let classify = VNClassifyImageRequest()
+    #if !targetEnvironment(simulator)
     try? handler.perform([classify])
+    #endif
 
     let saliency = VNGenerateAttentionBasedSaliencyImageRequest()
     try? handler.perform([saliency])
@@ -132,7 +137,9 @@ final class Analyzer {
     var partOut: [[String: Any]] = []
     var subjectOut: [String: Any]? = subject.map { Outline.json($0) }
     if let sam = SAMSegmenter.shared {
-      let top = objects.max(by: { $0.confidence < $1.confidence })
+      // The detection that is most the subject: big, central and confident. Confidence alone
+      // picked a small car at the photo's edge over the one filling the middle.
+      let top = objects.max(by: { Analyzer.prominence($0) < Analyzer.prominence($1) })
       var region = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
       if let box = subject?.box {
         region = box
@@ -207,6 +214,11 @@ final class Analyzer {
   }
 
   // MARK: Coordinates
+
+  static func prominence(_ d: Detection) -> CGFloat {
+    let off = hypot(d.rect.midX - 0.5, d.rect.midY - 0.5)
+    return CGFloat(d.confidence) * (d.rect.width * d.rect.height).squareRoot() * max(0.2, 1 - off * 1.3)
+  }
 
   static func iou(_ a: CGRect, _ b: CGRect) -> CGFloat {
     let i = a.intersection(b)

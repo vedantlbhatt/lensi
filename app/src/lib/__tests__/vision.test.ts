@@ -92,3 +92,11 @@ test('eyes only: a tap is answered from what was found there', async () => {
   const ev = await run({ regions: [...scene, plate], question: 'The user tapped the part at mark 9. What is it, and what is it for? Label it.' });
   assert.deepEqual(ev.map((e) => e.kind), ['answer', 'callout']);
 });
+
+test('eyes only: with no name, many lines of text are counted rather than one quoted', async () => {
+  const board: Region[] = ['TELE', 'C68', 'C70', 'C24.576'].map((t, i) => ({ id: `t${i}`, mark: i + 1, kind: 'text' as const, box, text: t }));
+  const ev = await run({ regions: [{ id: 's', mark: 9, kind: 'subject', box }, ...board] });
+  assert.deepEqual(ev[0], { kind: 'title', text: 'Four lines of text' });
+  const one = await run({ regions: [{ id: 'x', mark: 1, kind: 'text', box, text: 'EXIT' }] });
+  assert.deepEqual(one[0], { kind: 'title', text: 'EXIT' });
+});

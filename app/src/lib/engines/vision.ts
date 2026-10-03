@@ -116,7 +116,14 @@ export const visionEngine: Engine = {
       const name = subject?.text ?? req.hint ?? objects[0]?.text;
       // Four people in a room are "Four people", not "Person".
       const many = name ? (tally.get(name.trim().toLowerCase()) ?? 0) : 0;
-      const title = name ? cap(many > 1 ? counted(name, many) : name) : texts[0]?.text ? clip(texts[0].text!, 28) : 'Something here';
+      // No name for it: a line or two of text can stand as the title; more reads as a count.
+      const title = name
+        ? cap(many > 1 ? counted(name, many) : name)
+        : texts.length > 2
+          ? `${cap(num(texts.length))} lines of text`
+          : texts[0]?.text
+            ? clip(texts[0].text, 28)
+            : 'Something here';
       out.push({ kind: 'title', text: title });
       const things = [...tally].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => counted(k, c));
       const bits: string[] = [];

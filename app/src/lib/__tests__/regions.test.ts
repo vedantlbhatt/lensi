@@ -159,3 +159,19 @@ test('small detections cut off by the edge get no name (a car roof is not a bott
   assert.equal(subject?.text, 'person');
   assert.deepEqual(regions.map((r) => r.text).filter(Boolean), ['person']);
 });
+
+test('without a subject mask, the subject is the most prominent detection, not the most confident', () => {
+  const { subject } = buildRegions({
+    subject: null,
+    instances: [],
+    text: [],
+    barcodes: [],
+    objects: [
+      { label: 'car', confidence: 0.94, box: { x: 0.02, y: 0.35, w: 0.19, h: 0.34 } },
+      { label: 'truck', confidence: 0.75, box: { x: 0.19, y: 0.19, w: 0.81, h: 0.75 } },
+    ],
+    labels: [],
+    salient: [],
+  });
+  assert.equal(subject?.text, 'truck');
+});

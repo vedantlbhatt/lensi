@@ -69,7 +69,10 @@ export function buildRegions(a: AnalysisLike): { subject: Region | null; regions
 
   const subjectSrc = a.subject ?? a.instances[0] ?? null;
   const detected = a.objects.filter((o) => !sliver(o.box));
-  const topObject = [...detected].sort((p, q) => q.confidence - p.confidence)[0];
+  // Most the subject: big, central and confident (confidence alone picks a small car at the edge).
+  const prominence = (o: { confidence: number; box: Box }) =>
+    o.confidence * Math.sqrt(o.box.w * o.box.h) * Math.max(0.2, 1 - Math.hypot(o.box.x + o.box.w / 2 - 0.5, o.box.y + o.box.h / 2 - 0.5) * 1.3);
+  const topObject = [...detected].sort((p, q) => prominence(q) - prominence(p))[0];
   if (subjectSrc) {
     // Name the subject after whichever detector box overlaps it most.
     const named = detected
