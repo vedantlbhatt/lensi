@@ -212,10 +212,14 @@ export function InfoCard({
 /** The model's own follow-ups when it gave some; otherwise two that fit the lens. */
 function suggest(c: Capture): string[] {
   const t = c.annotation.title;
-  if (!t || c.status === 'analyzing') return [];
+  // Eyes only can't answer questions, so don't offer any.
+  if (!t || c.status === 'analyzing' || c.engine === 'vision') return [];
   const fromModel = (c.annotation.suggestions ?? []).filter(Boolean).slice(0, 2);
   if (fromModel.length) return fromModel;
-  const thing = t.length > 22 ? 'this' : `the ${t.replace(/^(a|an|the)\s+/i, '')}`;
+  const bare = t.replace(/^(a|an|the)\s+/i, '');
+  // "the car", but "the Breville Barista Express".
+  const noun = /^[A-Z][a-z]+$/.test(bare) ? bare.toLowerCase() : bare;
+  const thing = t.length > 22 ? 'this' : `the ${noun}`;
   switch (c.lens) {
     case 'fix':
       return [`Why won't ${thing} work?`, 'What should I check first?'];

@@ -30,17 +30,22 @@ export const visionEngine: Engine = {
     } else {
       const name = subject?.text ?? req.hint ?? objects[0]?.text;
       out.push({ kind: 'title', text: name ? cap(name) : texts[0]?.text ? clip(texts[0].text!, 28) : 'Something here' });
+      const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
       const bits: string[] = [];
-      if (texts.length) bits.push(`${texts.length} line${texts.length > 1 ? 's' : ''} of text`);
-      if (codes.length) bits.push(`${codes.length} code${codes.length > 1 ? 's' : ''}`);
-      if (objects.length) bits.push(`${objects.length} other thing${objects.length > 1 ? 's' : ''}`);
+      if (texts.length) bits.push(`read ${n(texts.length, 'line of text', 'lines of text')}`);
+      if (codes.length) bits.push(`found ${n(codes.length, 'code', 'codes')}`);
+      if (objects.length) bits.push(`spotted ${n(objects.length, 'other thing', 'other things')}`);
+      const said = bits.length > 1 ? `${bits.slice(0, -1).join(', ')} and ${bits[bits.length - 1]}` : bits[0];
       out.push({
         kind: 'summary',
-        text: bits.length ? `Seen on this phone: ${bits.join(', ')}.` : 'Outlined on this phone, no model needed.',
+        text: said ? `${cap(said)}, all on this phone.` : 'Outlined on this phone. Names and answers need Apple Intelligence.',
       });
       const callouts: Region[] = [...codes, ...texts.slice(0, 4), ...objects.slice(0, 2)];
       for (const r of callouts) out.push({ kind: 'callout', label: clip(r.text ?? r.kind, 26), mark: r.mark });
       for (const c of codes) out.push({ kind: 'fact', text: `Code reads ${clip(c.text ?? '', 60)}` });
+      if (texts.length) out.push({ kind: 'fact', text: `Text: ${texts.slice(0, 3).map((t) => `“${clip(t.text ?? '', 30)}”`).join(', ')}` });
+      const things = [...new Set(objects.map((o) => o.text!).filter((t) => t && t !== name))];
+      if (things.length) out.push({ kind: 'fact', text: `Also here: ${things.slice(0, 4).join(', ')}` });
     }
     for (const e of out) {
       emit(e);
