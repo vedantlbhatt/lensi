@@ -3,6 +3,7 @@ import { pickEngine, visionEngine } from './engines';
 import { boundsOf, dist, polygonArea } from './geometry';
 import { normalizeStill, videoMoments, type Picked } from './media';
 import { captureDir, keep } from './persist';
+import { isHowTo } from './questions';
 import { anchorFor, buildRegions, regionAt, regionArea, thingLabel, type AnalysisLike } from './regions';
 import { getSettings } from './settings';
 import { addCapture, getCapture, patchCapture } from './store';
@@ -18,15 +19,9 @@ import {
   type Step,
 } from './types';
 
+export { isHowTo };
+
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-
-const HOW_TO =
-  /\b(how (do|can|to|would|should|does)|walk me|step[s ]|steps$|guide me|show me how|set ?up|install|assemble|replace|reset|clean|descale|fix|repair|turn (it )?(on|off)|open|close|connect|change|adjust|use (this|it))\b/i;
-
-/** Questions that want a walkthrough rather than an answer. */
-export function isHowTo(q: string): boolean {
-  return HOW_TO.test(q);
-}
 
 const controllers = new Map<string, AbortController>();
 const MAX_CALLOUTS = 6;

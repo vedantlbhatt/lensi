@@ -215,7 +215,10 @@ function suggest(c: Capture): string[] {
   const t = c.annotation.title;
   // Eyes only can't answer questions, so don't offer any.
   if (!t || c.status === 'analyzing' || c.engine === 'vision') return [];
-  const fromModel = (c.annotation.suggestions ?? []).filter(Boolean).slice(0, 2);
+  // Never offer a question that has already been asked.
+  const asked = new Set([c.prompt ?? '', ...c.thread.map((e) => e.question)].map((q) => q.trim().toLowerCase()));
+  const fresh = (qs: string[]) => qs.filter((q) => q && !asked.has(q.trim().toLowerCase()));
+  const fromModel = fresh(c.annotation.suggestions ?? []).slice(0, 2);
   if (fromModel.length) return fromModel;
   const bare = t.replace(/^(a|an|the)\s+/i, '');
   // "the car", but "the Breville Barista Express".
@@ -223,17 +226,17 @@ function suggest(c: Capture): string[] {
   const thing = t.length > 22 ? 'this' : `the ${noun}`;
   switch (c.lens) {
     case 'fix':
-      return [`Why won't ${thing} work?`, 'What should I check first?'];
+      return fresh([`Why won't ${thing} work?`, 'What should I check first?']);
     case 'shop':
-      return ['Is it worth the price?', 'What should I check?'];
+      return fresh(['Is it worth the price?', 'What should I check?']);
     case 'safe':
-      return ['Is this safe for kids?', 'Any allergens?'];
+      return fresh(['Is this safe for kids?', 'Any allergens?']);
     case 'learn':
-      return [`How does ${thing} work?`, 'Tell me something surprising'];
+      return fresh([`How does ${thing} work?`, 'Tell me something surprising']);
     case 'guide':
-      return ['Show me the first step', `How do I clean ${thing}?`];
+      return fresh(['Show me the first step', `How do I clean ${thing}?`]);
     default:
-      return [`How do I use ${thing}?`, 'What is it for?'];
+      return fresh([`How do I use ${thing}?`, 'What is it for?']);
   }
 }
 
