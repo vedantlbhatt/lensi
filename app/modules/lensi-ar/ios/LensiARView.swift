@@ -519,7 +519,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   private func writePhoto(_ buffer: CVPixelBuffer) -> Result<[String: Any], Error> {
-    let image = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    var image = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    // High-res frames can be 48 MP on Pro phones; 12 MP is plenty to read labels.
+    let longest = max(image.extent.width, image.extent.height)
+    if longest > 3024 {
+      let scale = 3024 / longest
+      image = image.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
+    }
     let extent = image.extent
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("lensi-\(UUID().uuidString).jpg")
     guard let data = photoContext.jpegRepresentation(
@@ -534,7 +540,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     } catch {
       return .failure(error)
     }
-    return .success(["uri": url.absoluteString, "width": Int(extent.width), "height": Int(extent.height)])
+    return .success(["uri": url.absoluteString, "width": Int(extent.width.rounded()), "height": Int(extent.height.rounded())])
   }
 
   func startRecording(_ done: @escaping (Error?) -> Void) {
