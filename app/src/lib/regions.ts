@@ -29,7 +29,7 @@ export function iou(a: Box, b: Box): number {
 const SCENE_WORDS = new Set([
   'outdoor', 'indoor', 'structure', 'people', 'adult', 'land', 'sky', 'blue_sky', 'cloudy',
   'sunset_sunrise', 'night_sky', 'light', 'texture', 'pattern', 'material', 'art', 'abstract',
-  'wood_processed', 'raw_glass', 'raw_metal', 'foliage', 'document', 'text',
+  'wood_processed', 'raw_glass', 'raw_metal', 'foliage', 'document', 'text', 'machine', 'illustrations',
 ]);
 
 /** The classifier's best label that names a thing rather than a scene, readable. */
