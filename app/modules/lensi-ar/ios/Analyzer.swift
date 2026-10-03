@@ -130,11 +130,13 @@ final class Analyzer {
     // knobs and handles of a thing and not only at whole objects and text. Also leaves the
     // image's SAM embedding cached for the taps and refinements that follow.
     var partOut: [[String: Any]] = []
+    var subjectOut: [String: Any]? = subject.map { Outline.json($0) }
     if let sam = SAMSegmenter.shared {
+      let top = objects.max(by: { $0.confidence < $1.confidence })
       var region = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
       if let box = subject?.box {
         region = box
-      } else if let top = objects.max(by: { $0.confidence < $1.confidence }) {
+      } else if let top {
         region = top.rect
       } else if let b = saliency.results?.first?.salientObjects?.first?.boundingBox {
         region = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
@@ -142,6 +144,15 @@ final class Analyzer {
       region = region.insetBy(dx: -0.04, dy: -0.04).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
       do {
         try sam.prepare(image: image, id: uri)
+        // No foreground mask from Vision (the Simulator can't make one, and some photos have no
+        // clear foreground): outline the detector's best box with a SAM box prompt instead.
+        if subject == nil, let top,
+           let mask = try? sam.segment(id: uri, points: [], labels: [], box: top.rect),
+           mask.polygon.count > 2, mask.score >= 0.7, Analyzer.iou(mask.bounds, top.rect) >= 0.5 {
+          let polygon: [[String: Double]] = mask.polygon.map { p in ["x": Double(p.x), "y": Double(p.y)] }
+          subjectOut = ["box": Analyzer.box(upright: mask.bounds), "polygon": polygon]
+          region = mask.bounds.insetBy(dx: -0.04, dy: -0.04).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
         let parts = try sam.proposeParts(id: uri, region: region)
         partOut = parts.map { (m: SAMMask) -> [String: Any] in
           let polygon: [[String: Double]] = m.polygon.map { p in ["x": Double(p.x), "y": Double(p.y)] }
@@ -155,7 +166,7 @@ final class Analyzer {
     return [
       "width": image.width,
       "height": image.height,
-      "subject": subject.map { Outline.json($0) as Any } ?? NSNull(),
+      "subject": subjectOut.map { $0 as Any } ?? NSNull(),
       "instances": instances.map(Outline.json),
       "text": textOut,
       "barcodes": codeOut,
@@ -196,6 +207,13 @@ final class Analyzer {
   }
 
   // MARK: Coordinates
+
+  static func iou(_ a: CGRect, _ b: CGRect) -> CGFloat {
+    let i = a.intersection(b)
+    guard !i.isNull, !i.isEmpty else { return 0 }
+    let inter = i.width * i.height
+    return inter / max(1e-9, a.width * a.height + b.width * b.height - inter)
+  }
 
   /// Vision rects are normalized with a bottom-left origin.
   static func box(vision r: CGRect) -> [String: Any] {
