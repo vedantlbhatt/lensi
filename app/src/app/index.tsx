@@ -102,13 +102,17 @@ export default function Camera() {
   const voice = useVoice();
   const livePins = useLivePins(camera, lens);
 
+  // Re-checked whenever the camera is back in front: a model that just failed
+  // is resting, a server may have come up.
+  const cameraFront = !open;
   useEffect(() => {
+    if (!cameraFront) return;
     let alive = true;
     pickEngine(settings.brain).then((e) => alive && setEngine(e.id));
     return () => {
       alive = false;
     };
-  }, [settings.brain, settings.serverURL]);
+  }, [settings.brain, settings.serverURL, cameraFront]);
 
   useEffect(() => {
     if (voice.error) toast(voice.error);
