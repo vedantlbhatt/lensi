@@ -213,13 +213,13 @@ export function InfoCard({
 /** The model's own follow-ups when it gave some; otherwise two that fit the lens. */
 function suggest(c: Capture): string[] {
   const t = c.annotation.title;
-  // Eyes only can't answer questions, so don't offer any.
-  if (!t || c.status === 'analyzing' || c.engine === 'vision') return [];
+  if (!t || c.status === 'analyzing') return [];
   // Never offer a question that has already been asked.
   const asked = new Set([c.prompt ?? '', ...c.thread.map((e) => e.question)].map((q) => q.trim().toLowerCase()));
   const fresh = (qs: string[]) => qs.filter((q) => q && !asked.has(q.trim().toLowerCase()));
   const fromModel = fresh(c.annotation.suggestions ?? []).slice(0, 2);
-  if (fromModel.length) return fromModel;
+  // Eyes only offers just the questions the eyes can answer themselves.
+  if (fromModel.length || c.engine === 'vision') return fromModel;
   const bare = t.replace(/^(a|an|the)\s+/i, '');
   // "the car", but "the Breville Barista Express".
   const noun = /^[A-Z][a-z]+$/.test(bare) ? bare.toLowerCase() : bare;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { counted, factAnswer, tapAnswer, visionEngine } from '../engines/vision';
+import { counted, eyesSuggestions, factAnswer, tapAnswer, visionEngine } from '../engines/vision';
 import type { EngineEvent, EngineRequest, Region } from '../types';
 
 const box = { x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
@@ -115,4 +115,21 @@ test('eyes only: answers what it can from what it found, and only that', () => {
   assert.equal(factAnswer('What does the sign say?', room), 'It reads “EXIT”.');
   assert.equal(factAnswer('Where does the QR code go?', room), 'The code links to example.com. Hold its label to open it.');
   assert.equal(factAnswer('Is this safe to eat?', room), null);
+});
+
+test('eyes only: offers just the follow-ups it can answer', async () => {
+  const room: Region[] = [
+    { id: 's', mark: 1, kind: 'subject', box, text: 'person' },
+    { id: 'a', mark: 2, kind: 'object', box, text: 'person' },
+    { id: 'b', mark: 3, kind: 'object', box, text: 'chair' },
+    { id: 't', mark: 4, kind: 'text', box, text: 'EXIT' },
+  ];
+  const offered = eyesSuggestions(room);
+  assert.deepEqual(offered, ['How many people are there?', 'What does it say?']);
+  for (const q of offered) assert.notEqual(factAnswer(q, room), null, q);
+  assert.deepEqual(eyesSuggestions([{ id: 'c', mark: 1, kind: 'barcode', box, text: 'WIFI:S:Home;T:WPA;P:pw;;' }]), ['Which Wi-Fi is this?']);
+  // One of everything and nothing to read: nothing worth asking.
+  assert.deepEqual(eyesSuggestions([{ id: 'x', mark: 1, kind: 'subject', box, text: 'truck' }]), []);
+  const ev = await run({ regions: room });
+  assert.deepEqual(ev.filter((e) => e.kind === 'suggest').map((e) => (e as { text: string }).text), offered);
 });

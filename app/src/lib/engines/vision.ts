@@ -18,12 +18,17 @@ const DISPLAY: Record<string, string> = { tv: 'TV' };
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 const num = (n: number) => (n < WORDS.length ? WORDS[n] : String(n));
 
+/** "person" → "people", "bus" → "buses", "car" → "cars". */
+function plural(word: string): string {
+  const w = word.trim().toLowerCase();
+  return PLURALS[w] ?? (/(s|x|z|ch|sh)$/.test(w) ? `${w}es` : `${w}s`);
+}
+
 /** "a truck", "an orange", "two cars", "12 people". */
 export function counted(word: string, n: number): string {
   const w = word.trim().toLowerCase();
   if (n === 1) return `${/^[aeiou]/.test(w) ? 'an' : 'a'} ${DISPLAY[w] ?? w}`;
-  const many = PLURALS[w] ?? (/(s|x|z|ch|sh)$/.test(w) ? `${w}es` : `${w}s`);
-  return `${num(n)} ${many}`;
+  return `${num(n)} ${plural(w)}`;
 }
 
 const area = (r: Region) => r.box.w * r.box.h;
@@ -118,6 +123,28 @@ export function factAnswer(question: string, regions: Region[]): string | null {
 }
 
 /**
+ * Follow-ups the eyes can answer themselves (see factAnswer), so a capture
+ * without a model still offers questions that get real answers.
+ */
+export function eyesSuggestions(regions: Region[]): string[] {
+  const out: string[] = [];
+  const tally = new Map<string, number>();
+  for (const r of regions) {
+    const k = (r.kind === 'object' || r.kind === 'subject') && r.text ? r.text.trim().toLowerCase() : '';
+    if (k) tally.set(k, (tally.get(k) ?? 0) + 1);
+  }
+  const most = [...tally].sort((a, b) => b[1] - a[1])[0];
+  if (most && most[1] > 1) out.push(`How many ${plural(most[0])} are there?`);
+  const code = regions.find((r) => r.kind === 'barcode' && r.text);
+  if (code?.text) {
+    const m = readCode(code.text);
+    out.push(m.kind === 'url' ? 'Where does the code go?' : m.kind === 'wifi' ? 'Which Wi-Fi is this?' : 'What does the code say?');
+  }
+  if (regions.some((r) => r.kind === 'text' && r.text)) out.push('What does it say?');
+  return out.slice(0, 2);
+}
+
+/**
  * No model at all: say only what the on-device eyes actually found. Always
  * available, instant, and honest about being limited.
  */
@@ -197,6 +224,7 @@ export const visionEngine: Engine = {
         });
       }
       if (texts.length) out.push({ kind: 'fact', text: `Text: ${texts.slice(0, 3).map((t) => `“${clip(t.text ?? '', 30)}”`).join(', ')}` });
+      for (const q of eyesSuggestions(req.regions)) out.push({ kind: 'suggest', text: q });
     }
     for (const e of out) {
       emit(e);
