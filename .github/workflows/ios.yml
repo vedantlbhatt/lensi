@@ -57,7 +57,9 @@ jobs:
             ultralytics/ultralytics/main/ultralytics/assets/bus.jpg \
             opencv/opencv/4.x/samples/data/imageTextN.png \
             opencv/opencv/4.x/samples/data/board.jpg \
-            zxing/zxing/master/core/src/test/resources/blackbox/qrcode-1/1.png; do
+            zxing/zxing/master/core/src/test/resources/blackbox/qrcode-1/1.png \
+            pjreddie/darknet/master/data/dog.jpg \
+            pjreddie/darknet/master/data/kite.jpg; do
             curl -fsSL -o "eyes-in/public-$(echo "$u" | tr '/' '_' | tail -c 60)" "https://raw.githubusercontent.com/$u" || echo "skip $u"
           done
           cp -R out/models/*.mlmodelc models-all/

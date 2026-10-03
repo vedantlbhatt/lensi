@@ -149,7 +149,11 @@ final class SAMSegmenter: @unchecked Sendable {
   /// labels: 1 = on the object, 0 = not on it. At most 5 points (3 with a box) are used.
   /// A single positive point picks the best of SAM's three candidate masks; anything else
   /// uses the single-mask output.
-  func segment(id: String, points: [CGPoint], labels: [Int], box: CGRect?) throws -> SAMMask {
+  ///
+  /// `preferPart`: for a single tap, take the best candidate that is part-sized (a headlamp,
+  /// not the whole car filling the photo) when there is one. SAM scores the whole object
+  /// highest more often than not, which is the wrong answer to "what's this?".
+  func segment(id: String, points: [CGPoint], labels: [Int], box: CGRect?, preferPart: Bool = false) throws -> SAMMask {
     lock.lock()
     defer { lock.unlock() }
     guard let prepared = cache[id] else { throw SAMError.notPrepared(id) }
@@ -158,8 +162,36 @@ final class SAMSegmenter: @unchecked Sendable {
     let used = Array(zip(points, labels).prefix(SAMSegmenter.slots - (box == nil ? 0 : 2)))
     guard !used.isEmpty || box != nil else { throw SAMError.noPrompt }
     let (masks, scores) = try decode(used, box: box, prepared: prepared)
-    let k = SAMSegmenter.chooseMask(scores, labels: used.map { $0.1 }, hasBox: box != nil)
+    var k = SAMSegmenter.chooseMask(scores, labels: used.map { $0.1 }, hasBox: box != nil)
+    if preferPart, box == nil, used.count == 1, used[0].1 == 1,
+       let part = SAMSegmenter.partCandidate(masks, scores: scores, prepared: prepared) {
+      k = part
+    }
     return try outline(masks, candidate: k, score: scores[k], prepared: prepared)
+  }
+
+  /// The best-scoring multimask candidate (1...3) whose area is part-sized: not a speck, and
+  /// not most of the photo. Nil when none is, e.g. a tap on the sky.
+  private static func partCandidate(_ masks: [Float], scores: [Float], prepared: Prepared,
+                                    minArea: Float = 0.0015, maxArea: Float = 0.35, minScore: Float = 0.75) -> Int? {
+    let n = maskSide
+    let plane = n * n
+    let validW = min(n, max(1, Int((Double(prepared.resizedWidth) / 4).rounded(.up))))
+    let validH = min(n, max(1, Int((Double(prepared.resizedHeight) / 4).rounded(.up))))
+    let cells = Float(validW * validH)
+    var best: (k: Int, score: Float)?
+    for k in 1...3 where scores[k] >= minScore && scores[k] > (best?.score ?? -1) {
+      var on = 0
+      let base = k * plane
+      for y in 0..<validH {
+        let row = base + y * n
+        for x in 0..<validW where masks[row + x] > 0 { on += 1 }
+      }
+      let area = Float(on) / cells
+      guard area >= minArea, area <= maxArea else { continue }
+      best = (k: k, score: scores[k])
+    }
+    return best?.k
   }
 
   /// Part proposals for set-of-marks prompting: single positive points on a grid over `region`

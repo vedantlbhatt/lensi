@@ -34,7 +34,9 @@ final class Detector {
     guard let model = try? MLModel(contentsOf: url, configuration: config),
           let vnModel = try? VNCoreMLModel(for: model) else { return }
     let request = VNCoreMLRequest(model: vnModel)
-    request.imageCropAndScaleOption = .scaleFill
+    // Letterbox, as YOLO was trained: stretching a 16:9 frame into the square input
+    // made a row of water bottles 1.8x thinner, and the detector called them knives.
+    request.imageCropAndScaleOption = .scaleFit
     yolo = request
   }
 

@@ -185,7 +185,7 @@ final class Analyzer {
     if let sam = SAMSegmenter.shared {
       do {
         try sam.prepare(image: image, id: uri)
-        let mask = try sam.segment(id: uri, points: [point], labels: [1], box: nil)
+        let mask = try sam.segment(id: uri, points: [point], labels: [1], box: nil, preferPart: true)
         if mask.polygon.count > 2 {
           return [
             "polygon": mask.polygon.map { ["x": Double($0.x), "y": Double($0.y)] },
