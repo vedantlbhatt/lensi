@@ -70,7 +70,7 @@ export function tapAnswer(part: Region, regions: Region[]): EngineEvent[] {
         { kind: 'callout', label: cap(DISPLAY[thing.text] ?? thing.text), mark: part.mark },
       ];
     }
-    return [{ kind: 'answer', text: `Part of the ${thing.text.toLowerCase()}, outlined on this phone. Naming the part itself needs Apple Intelligence.` }];
+    return [{ kind: 'answer', text: `Part of the ${thing.text.toLowerCase()}. Naming the part itself needs Apple Intelligence.` }];
   }
   return [{ kind: 'answer', text: 'Outlined on this phone. Naming it needs Apple Intelligence.' }];
 }
