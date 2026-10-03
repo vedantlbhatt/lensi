@@ -25,7 +25,7 @@ heyclicky for your camera. Lensi opens straight into a full-screen camera. Point
 |---|---|---|
 | Live detection brackets | YOLO11n on the Neural Engine, about 15 fps | Live mode only |
 | The eyes | Vision: foreground instance outlines, OCR, barcodes, classification, saliency, plus YOLO on the still | About 0.5–1.5 s |
-| Part outlines | MobileSAM (Meta's Segment Anything, mobile variant) on Core ML, point-prompted | Falls back to Vision instances |
+| Part outlines | MobileSAM (Meta's Segment Anything, mobile variant) on Core ML. A grid of point prompts over the subject proposes parts (knobs, ports, handles) that become numbered marks; taps and labels are point-prompted | Falls back to Vision instances |
 | The brain | Apple Intelligence (Foundation Models). On iOS 27 the photo goes in with numbered marks drawn on it, and the model answers by mark number | Claude (via `server/`) or vision-only as fallbacks |
 | The ears | On-device speech recognition | |
 
