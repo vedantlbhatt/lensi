@@ -117,6 +117,8 @@ export const LensiAR = {
       imageUri: string;
       question?: string;
       walkthrough?: boolean;
+      guide?: boolean;
+      check?: string | null;
       marks?: { mark: number; kind: string; box: { x: number; y: number; w: number; h: number } }[];
     };
     const s = sceneForUri(req.imageUri);
@@ -127,13 +129,31 @@ export const LensiAR = {
       t += delay;
       list.push(setTimeout(() => emit({ requestId, type: 'event', event }), t));
     };
-    if (!s) {
+    if (req.check) {
+      // Scripted: the preview has no live camera to look at, so every check passes.
+      at(900, { kind: 'check', done: true, text: 'Looks done from here.' });
+    } else if (!s) {
       at(0, { kind: 'title', text: 'Something new' });
       at(500, { kind: 'summary', text: 'The web preview only knows its demo scenes.' });
     } else if (req.walkthrough) {
       const sc = s.script;
       at(0, { kind: 'title', text: sc.title });
-      sc.steps.forEach((st, i) => at(i === 0 ? 300 : 420, { kind: 'step', text: st.text, at: st.at && { x: st.at[0], y: st.at[1] } }));
+      // Each step's part, named by the scripted label nearest to where it points.
+      const partNear = (p?: [number, number]) =>
+        p
+          ? [...sc.callouts]
+              .map((c) => ({ c, d: Math.hypot(c.at[0] - p[0], c.at[1] - p[1]) }))
+              .filter((x) => x.d < 0.22)
+              .sort((a, b) => a.d - b.d)[0]?.c.label
+          : undefined;
+      sc.steps.forEach((st, i) =>
+        at(i === 0 ? 300 : 420, {
+          kind: 'step',
+          text: st.text,
+          at: st.at && { x: st.at[0], y: st.at[1] },
+          ...(req.guide && partNear(st.at) ? { label: partNear(st.at) } : {}),
+        }),
+      );
     } else if (req.question) {
       // "What's this?" about a tapped mark: name the scripted part nearest to it.
       const sc = s.script;

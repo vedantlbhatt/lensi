@@ -133,3 +133,10 @@ test('eyes only: offers just the follow-ups it can answer', async () => {
   const ev = await run({ regions: room });
   assert.deepEqual(ev.filter((e) => e.kind === 'suggest').map((e) => (e as { text: string }).text), offered);
 });
+
+test('eyes only: a step check says it cannot judge, rather than guessing', async () => {
+  const ev = await run({ regions, check: 'Unscrew the cap.' });
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].kind, 'check');
+  assert.equal((ev[0] as { done: boolean | null }).done, null);
+});

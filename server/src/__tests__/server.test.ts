@@ -70,3 +70,22 @@ test("user text carries hint, marks, history and the task", () => {
   assert.match(t, /The user asks: Why won't it boil\?/);
   assert.match(userText({ image: "x", walkthrough: true }), /walkthrough for: using this/);
 });
+
+test("live guide streams steps that name their parts", async () => {
+  const events = await stream({ image: "x", walkthrough: true, guide: true, question: "Fix the leak", marks: "2: object (sink), center" });
+  assert.equal(events[0]!.kind, "title");
+  const steps = events.filter((e) => e!.kind === "step");
+  assert.deepEqual(steps[0], { kind: "step", text: "Turn off the power at the switch first." });
+  assert.deepEqual(steps[1], { kind: "step", text: "Loosen the marked part by hand.", mark: 2, label: "marked part" });
+  assert.deepEqual(steps[2], { kind: "step", text: "Unscrew the drain cap anticlockwise.", at: { x: 0.61, y: 0.72 }, label: "drain cap" });
+});
+
+test("a check answers with one verdict", async () => {
+  const events = await stream({ image: "x", check: "Unscrew the drain cap." });
+  assert.deepEqual(events, [{ kind: "check", done: false, text: "Turn it a little further, then check again." }]);
+});
+
+test("user text asks for G lines in a live guide and one C line in a check", () => {
+  assert.match(userText({ image: "x", walkthrough: true, guide: true, question: "Replace the trap" }), /live guide for: Replace the trap\. Use T then G lines\./);
+  assert.match(userText({ image: "x", check: "Remove the cap." }), /They are doing this step: Remove the cap\.\nCheck it against the photo\. One C line\./);
+});

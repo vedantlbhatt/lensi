@@ -41,3 +41,18 @@ test('splits chunks across line boundaries', () => {
   assert.deepEqual(s.flush(), ['F|tail']);
   assert.deepEqual(s.flush(), []);
 });
+
+test('live-guide steps carry their part; checks carry a verdict', () => {
+  assert.deepEqual(parseLine('G|500|250|slip nut|Loosen the slip nut by hand.'), {
+    kind: 'step',
+    text: 'Loosen the slip nut by hand.',
+    at: { x: 0.5, y: 0.25 },
+    label: 'slip nut',
+  });
+  assert.deepEqual(parseLine('G|3|P-trap|Pull the trap down.'), { kind: 'step', text: 'Pull the trap down.', mark: 3, label: 'P-trap' });
+  assert.deepEqual(parseLine('G|Turn the water off under the sink.'), { kind: 'step', text: 'Turn the water off under the sink.' });
+  assert.deepEqual(parseLine('C|yes|The nut is off the thread.'), { kind: 'check', done: true, text: 'The nut is off the thread.' });
+  assert.deepEqual(parseLine('C|no|Keep turning anticlockwise.'), { kind: 'check', done: false, text: 'Keep turning anticlockwise.' });
+  assert.deepEqual(parseLine('C|unsure|Show me the joint up close.'), { kind: 'check', done: null, text: 'Show me the joint up close.' });
+  assert.equal(parseLine('C|yes|'), null);
+});

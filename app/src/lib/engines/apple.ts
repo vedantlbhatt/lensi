@@ -36,7 +36,9 @@ function toEvent(raw: Record<string, unknown>): EngineEvent | null {
     case 'callout':
       return label ? { kind, label, mark, at, detail: typeof raw.detail === 'string' ? raw.detail : undefined } : null;
     case 'step':
-      return text ? { kind, text, mark, at } : null;
+      return text ? { kind, text, mark, at, ...(label ? { label } : {}) } : null;
+    case 'check':
+      return text ? { kind, text, done: typeof raw.done === 'boolean' ? raw.done : null } : null;
     default:
       return null;
   }
@@ -104,6 +106,8 @@ export const appleEngine: Engine = {
         hint: req.hint,
         question: req.question ?? null,
         walkthrough: req.walkthrough ?? false,
+        guide: req.guide ?? false,
+        check: req.check ?? null,
         history: req.history ?? [],
         marks: req.regions.map((r) => ({ mark: r.mark, kind: r.kind, text: r.text ?? null, box: r.box })),
       };

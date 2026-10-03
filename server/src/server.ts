@@ -121,7 +121,7 @@ export function createServer() {
       return;
     }
 
-    const kind = body.walkthrough ? "walk" : body.question ? "ask" : "annotate";
+    const kind = body.check ? "check" : body.walkthrough ? (body.guide ? "guide" : "walk") : body.question ? "ask" : "annotate";
     console.log(`${kind} lens=${body.lens ?? "identify"} label=${body.label ?? "-"}`);
     res.writeHead(200, {
       "content-type": "text/plain; charset=utf-8",

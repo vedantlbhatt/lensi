@@ -136,9 +136,12 @@ export type EngineEvent =
   | { kind: 'summary'; text: string }
   | { kind: 'callout'; label: string; mark?: number; at?: Pt; detail?: string }
   | { kind: 'fact'; text: string }
-  | { kind: 'step'; text: string; mark?: number; at?: Pt }
+  /** `label` is the step's part in 1-3 words, for its tag in the live guide. */
+  | { kind: 'step'; text: string; mark?: number; at?: Pt; label?: string }
   | { kind: 'answer'; text: string }
   | { kind: 'suggest'; text: string }
+  /** A step checked against a fresh frame: done, not yet, or can't tell (null), and what to say. */
+  | { kind: 'check'; done: boolean | null; text: string }
   | { kind: 'error'; text: string };
 
 export type EngineRequest = {
@@ -154,6 +157,10 @@ export type EngineRequest = {
   history?: { question: string; answer: string }[];
   /** Ask for a numbered walkthrough instead of an annotation. */
   walkthrough?: boolean;
+  /** Live guide: the walkthrough is for someone mid-job, and each step names its part. */
+  guide?: boolean;
+  /** Check this step against the photo: is it done, and if not, what now? */
+  check?: string;
 };
 
 export interface Engine {

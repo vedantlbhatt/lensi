@@ -16,6 +16,10 @@ struct IntelPayload: Decodable {
   let hint: String?
   let question: String?
   let walkthrough: Bool
+  /// Live guide: someone mid-job, hands busy; each step names its part.
+  let guide: Bool?
+  /// A step to check against the photo: done, or what to do now.
+  let check: String?
   let history: [Turn]
   let marks: [Mark]
 }
@@ -167,6 +171,19 @@ struct LensiStep {
 
   @Guide(description: "Number of the mark to act on, or 0 if none fits")
   var mark: Int
+
+  @Guide(description: "Name of that part, 1 to 3 words, or empty if none")
+  var part: String
+}
+
+@available(iOS 26.0, *)
+@Generable(description: "Whether a step someone is doing looks finished in the photo")
+struct LensiCheck {
+  @Guide(description: "True only if the photo shows the step is finished")
+  var done: Bool
+
+  @Guide(description: "If done, what you see, at most 12 words. If not, the one thing to do now, at most 14 words")
+  var say: String
 }
 
 @available(iOS 26.0, *)
@@ -235,7 +252,13 @@ final class IntelligenceRunner: @unchecked Sendable {
     let prompt = makePrompt(text: promptText(for: p), image: marked)
     let valid = Set(p.marks.map(\.mark))
 
-    if p.walkthrough {
+    if let step = p.check, !step.isEmpty {
+      // One short verdict; nothing streams usefully before it is complete.
+      let response = try await session.respond(to: prompt, generating: LensiCheck.self, options: GenerationOptions(temperature: 0.2))
+      try Task.checkCancellation()
+      let say = response.content.say.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !say.isEmpty { emit(["kind": "check", "done": response.content.done, "text": say]) }
+    } else if p.walkthrough {
       let stream = session.streamResponse(to: prompt, generating: LensiGuide.self, options: GenerationOptions(temperature: 0.3))
       var out = GuideEmitter(valid: valid, emit: emit)
       var last: LensiGuide.PartiallyGenerated?
@@ -286,9 +309,15 @@ final class IntelligenceRunner: @unchecked Sendable {
     You are Lensi, a camera assistant. Someone just pointed their phone at something; help them understand it or do something with it.
     The photo has small numbered circles drawn on things the phone found, and a list says what each number is. Point at parts only by those numbers, and never use a number that isn't in the list. Use 0 when no number fits.
     Be specific, practical and brief. No hedging, no markdown.
-    \(lensBrief(p.lens))
+    \(lensBrief(p.lens))\(p.guide == true ? "\n" + guideBrief : "")
     """
   }
+
+  /// Live guide: a person mid-repair with the phone propped up and both hands busy.
+  static let guideBrief = """
+    They are in the middle of a job (car, plumbing, wiring, appliances) with both hands busy, following you step by step.
+    Keep every step one physical action. Put safety first: power, water or gas off before anything is opened. Name the part each step touches in 1 to 3 words.
+    """
 
   static func lensBrief(_ lens: String) -> String {
     switch lens {
@@ -327,9 +356,12 @@ final class IntelligenceRunner: @unchecked Sendable {
     for t in p.history.suffix(3) {
       lines.append("Earlier question: \(t.question)\nEarlier answer: \(t.answer)")
     }
-    if p.walkthrough {
+    if let step = p.check, !step.isEmpty {
+      lines.append("They are doing this step: \(step)")
+      lines.append("Look at the photo. Is that step finished? If it is, say what you see. If not, say the one thing to do now.")
+    } else if p.walkthrough {
       let goal = (p.question?.isEmpty == false) ? p.question! : "using this"
-      lines.append("Write a short step-by-step walkthrough for: \(goal). Give each step the number of the mark to act on.")
+      lines.append("Write a short step-by-step walkthrough for: \(goal). Give each step the number of the mark to act on and the name of that part.")
     } else if let q = p.question, !q.isEmpty {
       lines.append("Their question: \(q)")
       lines.append("Answer in one to three short sentences, and point at marked parts if that helps.")
@@ -442,6 +474,7 @@ private struct GuideEmitter {
         guard let text = s.instruction, !text.isEmpty else { continue }
         var e: [String: Any] = ["kind": "step", "text": text]
         if let m = s.mark, valid.contains(m) { e["mark"] = m }
+        if let part = s.part?.trimmingCharacters(in: .whitespacesAndNewlines), !part.isEmpty { e["label"] = part }
         emit(e)
       }
     }

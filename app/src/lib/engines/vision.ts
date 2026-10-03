@@ -163,6 +163,11 @@ export const visionEngine: Engine = {
     const codes = req.regions.filter((r) => r.kind === 'barcode');
     const objects = req.regions.filter((r) => r.kind === 'object' && r.text);
 
+    // Judging whether a step is done needs a model; the eyes only know something moved.
+    if (req.check) {
+      emit({ kind: 'check', done: null, text: 'Something changed there. Say “next” when this step is done.' });
+      return;
+    }
     // A tap on the print arrives as a question about one mark.
     const tapped = req.question ? /mark (\d+)/.exec(req.question)?.[1] : undefined;
     const part = tapped ? req.regions.find((r) => r.mark === Number(tapped)) : undefined;

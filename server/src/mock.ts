@@ -7,6 +7,17 @@ import type { AnnotateBody } from "./prompt.js";
  */
 export function mockLines(body: AnnotateBody): string[] {
   const firstMark = body.marks?.match(/^(\d+):/m)?.[1];
+  if (body.check) {
+    return ["C|no|Turn it a little further, then check again."];
+  }
+  if (body.walkthrough && body.guide) {
+    return [
+      "T|Mock repair",
+      "G|Turn off the power at the switch first.",
+      firstMark ? `G|${firstMark}|marked part|Loosen the marked part by hand.` : "G|420|380|cover|Lift the cover off.",
+      "G|610|720|drain cap|Unscrew the drain cap anticlockwise.",
+    ];
+  }
   if (body.walkthrough) {
     return [
       "T|Mock appliance",

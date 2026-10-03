@@ -103,6 +103,8 @@ export const cloudEngine: Engine = {
           lens: req.lens,
           question: req.question,
           walkthrough: req.walkthrough ?? false,
+          guide: req.guide ?? false,
+          check: req.check,
           marks: describeMarks(req.regions),
           history: req.history ?? [],
         }),
