@@ -57,6 +57,8 @@ export const CameraSurface = forwardRef<
     onScene?: (s: DemoScene) => void;
     onGuideChange?: (e: GuideChangeEvent) => void;
     guidePins?: VirtualGuidePins;
+    /** Room the chrome takes above and below: a guide tag whose part is out of view waits inside it. */
+    pinInsets?: { top: number; bottom: number };
     /** Virtual camera only: which demo scene to show. */
     sceneKey?: string;
   }
@@ -166,6 +168,7 @@ export const CameraSurface = forwardRef<
       livePins={props.livePins}
       accentColor={props.pen}
       paused={props.paused}
+      pinInsets={props.pinInsets}
       onFocusChange={(e) => props.onFocusChange?.(e.nativeEvent.label)}
       onTrackingChange={(e) => props.onTracking?.(e.nativeEvent)}
       onSelect={(e) => props.onSelect?.(e.nativeEvent)}

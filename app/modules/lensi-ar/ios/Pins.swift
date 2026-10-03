@@ -23,9 +23,20 @@ final class PinLabel: UIView {
   enum Emphasis { case normal, focused, dimmed }
 
   private let label = UILabel()
+  /// Live guide, the part out of view: an arrow on the tag points the way to it.
+  private let arrow = UIImageView(image: UIImage(systemName: "arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .heavy)))
   var color: UIColor { didSet { apply() } }
   var emphasis: Emphasis = .normal { didSet { if emphasis != oldValue { apply() } } }
   let isCallout: Bool
+
+  /// Screen-space direction to the part, in radians (0 = right, π/2 = down);
+  /// nil while the part is in view.
+  var pointing: CGFloat? {
+    didSet {
+      if (pointing == nil) != (oldValue == nil) { sizeToFitContent() }
+      if let a = pointing { arrow.transform = CGAffineTransform(rotationAngle: a + .pi / 2) }
+    }
+  }
 
   init(text: String, color: UIColor, isCallout: Bool) {
     self.color = color
@@ -40,6 +51,10 @@ final class PinLabel: UIView {
     label.font = isCallout ? UIFont.systemFont(ofSize: 13, weight: .semibold) : UIFont.systemFont(ofSize: 16, weight: .bold)
     label.text = text
     addSubview(label)
+    arrow.tintColor = .black
+    arrow.contentMode = .center
+    arrow.isHidden = true
+    addSubview(arrow)
     apply()
   }
 
@@ -66,8 +81,14 @@ final class PinLabel: UIView {
     let pad: CGFloat = isCallout ? 9 : 12
     let size = label.sizeThatFits(CGSize(width: 220, height: 40))
     let w = min(size.width, 220)
-    bounds = CGRect(x: 0, y: 0, width: w + pad * 2, height: isCallout ? 26 : 32)
-    label.frame = CGRect(x: pad, y: 0, width: w, height: bounds.height)
+    let h: CGFloat = isCallout ? 26 : 32
+    // Room for the arrow ahead of the name while it points off screen.
+    let lead: CGFloat = pointing == nil ? 0 : 17
+    bounds = CGRect(x: 0, y: 0, width: w + pad * 2 + lead, height: h)
+    arrow.isHidden = pointing == nil
+    arrow.bounds = CGRect(x: 0, y: 0, width: 14, height: 14)
+    arrow.center = CGPoint(x: pad + 6, y: h / 2)
+    label.frame = CGRect(x: pad + lead, y: 0, width: w, height: h)
   }
 }
 

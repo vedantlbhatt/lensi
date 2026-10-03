@@ -79,6 +79,8 @@ export type LensiARViewProps = ViewProps & {
   accentColor?: string;
   /** Pause the AR session (e.g. while a capture is open on top). */
   paused?: boolean;
+  /** Room the app's chrome takes above and below (the guide panel): guide tags keep clear of it. */
+  pinInsets?: { top: number; bottom: number };
   onSelect?: (e: { nativeEvent: SelectEvent }) => void;
   onFocusChange?: (e: { nativeEvent: { label: string | null } }) => void;
   onTrackingChange?: (e: { nativeEvent: TrackingEvent }) => void;

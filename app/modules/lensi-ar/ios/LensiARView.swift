@@ -22,6 +22,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   var showDetections = true
   /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
   var livePins = false
+  /// Room the app's own chrome takes (the guide panel below, the top bar):
+  /// guide tags keep clear of it.
+  var pinInsets: UIEdgeInsets = .zero
   /// The current lens pen: focused bracket, its tag and new pins.
   var accent: UIColor = .white {
     didSet {
@@ -354,14 +357,32 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
+    // Where a tag can be read: clear of the app's own panel and top bar.
+    let visible = bounds.inset(by: pinInsets)
     for id in pinOrder {
       guard let pin = pins[id] else { continue }
-      guard let (p, dist) = project(pin.world) else { pin.setHidden(true); continue }
+      let projected = project(pin.world)
+      if pin.parentId == Self.guideParent {
+        // A little hysteresis, so a part right on the edge doesn't flicker between the two.
+        let slack = pin.label.pointing == nil ? CGSize(width: -pin.label.bounds.width / 4, height: -6) : CGSize(width: 10, height: 10)
+        let inView = projected.map { visible.insetBy(dx: slack.width, dy: slack.height).contains($0.0) } ?? false
+        if !inView {
+          // Out of view: the current step's tag waits on the edge, pointing the
+          // way to its part; the others keep out of the way.
+          if pin.label.emphasis == .focused, placeOnEdge(pin, in: visible) { continue }
+          pin.label.pointing = nil
+          pin.setHidden(true)
+          continue
+        }
+        pin.label.pointing = nil
+      }
+      guard let (p, dist) = projected else { pin.setHidden(true); continue }
       pin.setHidden(false)
       // The tag sits on the thing itself: no dot, no leader line. A part near
       // the edge keeps its whole tag on screen.
       let half = pin.label.bounds.width / 2 + 8
-      pin.label.center = CGPoint(x: min(max(p.x, half), bounds.width - half), y: p.y)
+      let y = pin.parentId == Self.guideParent ? min(max(p.y, visible.minY + 13), visible.maxY - 13) : p.y
+      pin.label.center = CGPoint(x: min(max(p.x, half), bounds.width - half), y: y)
 
       if let outline = pin.outline {
         let s = CGFloat(pin.outlineDistance / max(dist, 0.05))
@@ -372,6 +393,32 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         )
       }
     }
+  }
+
+  /// Puts a tag on the edge of `area`, on the line from its middle towards
+  /// the tag's part, with its arrow pointing that way. A part behind the phone
+  /// is mirrored in front first, so its side still says which way to turn.
+  private func placeOnEdge(_ pin: Pin, in area: CGRect) -> Bool {
+    guard let camera = sceneView.session.currentFrame?.camera else { return false }
+    var local = simd_mul(camera.transform.inverse, simd_float4(pin.world, 1))
+    local.z = -max(abs(local.z), 0.05)
+    let ahead = simd_mul(camera.transform, local)
+    let q = sceneView.projectPoint(SCNVector3(ahead.x, ahead.y, ahead.z))
+    let middle = CGPoint(x: area.midX, y: area.midY)
+    var d = CGVector(dx: CGFloat(q.x) - middle.x, dy: CGFloat(q.y) - middle.y)
+    // Dead behind: say "turn around" by pointing down, where the panel is.
+    if abs(d.dx) + abs(d.dy) < 1 { d = CGVector(dx: 0, dy: 1) }
+    pin.label.pointing = atan2(d.dy, d.dx)
+    let size = pin.label.bounds.size
+    let r = area.insetBy(dx: size.width / 2 + 8, dy: size.height / 2 + 6)
+    guard r.width > 0, r.height > 0 else { return false }
+    let tx = d.dx > 0 ? (r.maxX - middle.x) / d.dx : d.dx < 0 ? (r.minX - middle.x) / d.dx : .infinity
+    let ty = d.dy > 0 ? (r.maxY - middle.y) / d.dy : d.dy < 0 ? (r.minY - middle.y) / d.dy : .infinity
+    let t = min(tx, ty)
+    guard t.isFinite else { return false }
+    pin.setHidden(false)
+    pin.label.center = CGPoint(x: middle.x + d.dx * t, y: middle.y + d.dy * t)
+    return true
   }
 
   // MARK: - Selection

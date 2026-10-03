@@ -101,6 +101,8 @@ export default function Camera() {
   }, [retryCamera]);
   const [engine, setEngine] = useState<EngineId | null>(null);
   const [touched, setTouched] = useState(false);
+  // Where the guide panel starts, so tags whose part is out of view wait above it.
+  const [panelTop, setPanelTop] = useState(0);
 
   const pen = lensInfo(lens).pen;
   const voice = useVoice();
@@ -407,6 +409,7 @@ export default function Camera() {
             onScene={onScene}
             onGuideChange={guide.onChange}
             guidePins={guideLens ? { parts: guide.state.parts, focus: guide.part?.id ?? null } : undefined}
+            pinInsets={guideLens && panelTop ? { top: insets.top + 56, bottom: Math.max(0, height - panelTop + 8) } : undefined}
             sceneKey={params.scene}
           />
         </View>
@@ -449,7 +452,11 @@ export default function Camera() {
         ) : null}
 
         {guideLens ? (
-          <View style={[styles.bottom, { paddingBottom: insets.bottom + 10 }]} pointerEvents="box-none">
+          <View
+            style={[styles.bottom, { paddingBottom: insets.bottom + 10 }]}
+            pointerEvents="box-none"
+            onLayout={(e) => setPanelTop(Math.round(e.nativeEvent.layout.y))}
+          >
             {guideStatus === 'idle' && !voice.listening ? (
               <>
                 <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : null} pen={pen} />

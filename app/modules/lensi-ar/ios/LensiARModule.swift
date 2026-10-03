@@ -1,5 +1,12 @@
 import ARKit
 import ExpoModulesCore
+import UIKit
+
+/// Room the app's chrome takes above and below the camera, in points.
+struct PinInsets: Record {
+  @Field var top: Double = 0
+  @Field var bottom: Double = 0
+}
 
 public class LensiARModule: Module {
   private let analyzer = Analyzer()
@@ -108,6 +115,10 @@ public class LensiARModule: Module {
 
       Prop("paused") { (view: LensiARView, value: Bool) in
         view.setPaused(value)
+      }
+
+      Prop("pinInsets") { (view: LensiARView, value: PinInsets?) in
+        view.pinInsets = UIEdgeInsets(top: value?.top ?? 0, left: 0, bottom: value?.bottom ?? 0, right: 0)
       }
 
       AsyncFunction("capture") { (view: LensiARView) in
