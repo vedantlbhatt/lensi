@@ -215,9 +215,13 @@ final class Analyzer {
 
   // MARK: Coordinates
 
+  /// Detector classes that are usually what the subject stands on (bottles on a table).
+  static let surfaces: Set<String> = ["dining table", "bed", "couch", "bench"]
+
   static func prominence(_ d: Detection) -> CGFloat {
     let off = hypot(d.rect.midX - 0.5, d.rect.midY - 0.5)
-    return CGFloat(d.confidence) * (d.rect.width * d.rect.height).squareRoot() * max(0.2, 1 - off * 1.3)
+    let surface: CGFloat = surfaces.contains(d.label) ? 0.2 : 1
+    return surface * CGFloat(d.confidence) * (d.rect.width * d.rect.height).squareRoot() * max(0.2, 1 - off * 1.3)
   }
 
   static func iou(_ a: CGRect, _ b: CGRect) -> CGFloat {

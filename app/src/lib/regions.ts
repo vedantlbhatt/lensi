@@ -49,6 +49,9 @@ function sliver(b: Box): boolean {
   return edge && b.w * b.h < 0.04;
 }
 
+/** Detector classes that are usually what the subject stands on. */
+const SURFACES = new Set(['dining table', 'bed', 'couch', 'bench']);
+
 const MAX_TEXT = 8;
 const MAX_OBJECTS = 5;
 const MAX_PARTS = 6;
@@ -69,9 +72,13 @@ export function buildRegions(a: AnalysisLike): { subject: Region | null; regions
 
   const subjectSrc = a.subject ?? a.instances[0] ?? null;
   const detected = a.objects.filter((o) => !sliver(o.box));
-  // Most the subject: big, central and confident (confidence alone picks a small car at the edge).
-  const prominence = (o: { confidence: number; box: Box }) =>
-    o.confidence * Math.sqrt(o.box.w * o.box.h) * Math.max(0.2, 1 - Math.hypot(o.box.x + o.box.w / 2 - 0.5, o.box.y + o.box.h / 2 - 0.5) * 1.3);
+  // Most the subject: big, central and confident (confidence alone picks a small car at the
+  // edge). Things other things stand on rarely are, when anything else is in the frame.
+  const prominence = (o: { label: string; confidence: number; box: Box }) =>
+    (SURFACES.has(o.label) ? 0.2 : 1) *
+    o.confidence *
+    Math.sqrt(o.box.w * o.box.h) *
+    Math.max(0.2, 1 - Math.hypot(o.box.x + o.box.w / 2 - 0.5, o.box.y + o.box.h / 2 - 0.5) * 1.3);
   const topObject = [...detected].sort((p, q) => prominence(q) - prominence(p))[0];
   if (subjectSrc) {
     // Name the subject after whichever detector box overlaps it most.

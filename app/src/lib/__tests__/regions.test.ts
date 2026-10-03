@@ -175,3 +175,21 @@ test('without a subject mask, the subject is the most prominent detection, not t
   });
   assert.equal(subject?.text, 'truck');
 });
+
+test('bottles on a table: the bottles are the subject, not the table', () => {
+  const { subject } = buildRegions({
+    subject: null,
+    instances: [],
+    text: [],
+    barcodes: [],
+    objects: [
+      { label: 'dining table', confidence: 0.99, box: { x: 0.05, y: 0.45, w: 0.9, h: 0.45 } },
+      { label: 'bottle', confidence: 1, box: { x: 0.45, y: 0.25, w: 0.09, h: 0.35 } },
+      { label: 'bottle', confidence: 1, box: { x: 0.1, y: 0.25, w: 0.09, h: 0.35 } },
+    ],
+    labels: [],
+    salient: [],
+  });
+  assert.equal(subject?.text, 'bottle');
+  assert.ok(subject && subject.box.x > 0.4, 'the central bottle');
+});
