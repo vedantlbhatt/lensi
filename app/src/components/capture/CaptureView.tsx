@@ -1,8 +1,9 @@
+import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import * as Speech from 'expo-speech';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Linking, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -259,14 +260,40 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   // ---- editing labels: hold one to rename or remove it ---------------------------------
   const [menuFor, setMenuFor] = useState<PlacedCallout | null>(null);
   const [renaming, setRenaming] = useState<PlacedCallout | null>(null);
+  // Text or a code the eyes read under that label can be copied, or a link opened.
+  const menuRead = useMemo(() => {
+    const r = menuFor?.regionId ? capture.regions.find((x) => x.id === menuFor.regionId) : undefined;
+    return r && (r.kind === 'text' || r.kind === 'barcode') && r.text ? r.text : null;
+  }, [menuFor, capture.regions]);
+  const menuExtra = useMemo(() => {
+    if (!menuRead) return null;
+    const text = menuRead.trim();
+    if (/^https?:\/\/\S+$/i.test(text)) {
+      return {
+        kind: 'open' as const,
+        run: () => {
+          setMenuFor(null);
+          Linking.openURL(text).catch(() => toast("Couldn't open that link"));
+        },
+      };
+    }
+    return {
+      kind: 'copy' as const,
+      run: () => {
+        setMenuFor(null);
+        void Clipboard.setStringAsync(text).then(() => toast(`Copied “${text.length > 28 ? `${text.slice(0, 27)}…` : text}”`));
+      },
+    };
+  }, [menuRead]);
   const menuAt = useMemo(() => {
     if (!menuFor) return null;
+    const w = menuRead ? MENU.wide : MENU.w;
     const cx = menuFor.slot.x + menuFor.width / 2;
-    const x = Math.min(screen.width - MENU.w - 10, Math.max(10, cx - MENU.w / 2));
+    const x = Math.min(screen.width - w - 10, Math.max(10, cx - w / 2));
     const above = menuFor.slot.y - MENU.h - 8;
     const below = above < insets.top + 56;
     return { x, y: below ? menuFor.slot.y + LABEL.height + 8 : above, below };
-  }, [menuFor, screen.width, insets.top]);
+  }, [menuFor, menuRead, screen.width, insets.top]);
 
   // ---- tap the print: "what's this?" ------------------------------------------------
   const sparks = useRef<SparksRef>(null);
@@ -406,6 +433,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
           x={menuAt.x}
           y={menuAt.y}
           below={menuAt.below}
+          extra={menuExtra}
           onClose={() => setMenuFor(null)}
           onRename={() => {
             setRenaming(menuFor);

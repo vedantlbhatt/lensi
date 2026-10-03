@@ -6,16 +6,18 @@ import { glassStrong, hairline, paper } from '../../theme/tokens';
 import { fonts } from '../../theme/type';
 import { Icon, type IconName } from '../icons/Icon';
 
-export const MENU = { w: 196, h: 42 };
+export const MENU = { w: 196, h: 42, wide: 286 };
 
 /**
- * What a long-pressed label can do: be called something else, or go away.
+ * What a long-pressed label can do: be called something else, or go away;
+ * when the eyes read text or a code there, copy it (or open its link).
  * Pops out of the label it belongs to; a tap anywhere else folds it.
  */
 export function LabelMenu({
   x,
   y,
   below,
+  extra,
   onRename,
   onRemove,
   onClose,
@@ -24,6 +26,8 @@ export function LabelMenu({
   y: number;
   /** Sits under the label (it was too close to the top), so grow downwards. */
   below: boolean;
+  /** Copy what was read there, or open the link a code carries. */
+  extra?: { kind: 'copy' | 'open'; run: () => void } | null;
   onRename: () => void;
   onRemove: () => void;
   onClose: () => void;
@@ -34,8 +38,9 @@ export function LabelMenu({
       <Animated.View
         entering={ZoomIn.springify().damping(15).stiffness(340)}
         exiting={FadeOut.duration(120)}
-        style={[styles.menu, { left: x, top: y, transformOrigin: below ? 'center top' : 'center bottom' }]}
+        style={[styles.menu, { left: x, top: y, width: extra ? MENU.wide : MENU.w, transformOrigin: below ? 'center top' : 'center bottom' }]}
       >
+        {extra ? <Item icon={extra.kind === 'open' ? 'share' : 'paste'} label={extra.kind === 'open' ? 'OPEN' : 'COPY'} onPress={extra.run} /> : null}
         <Item icon="pencil" label="RENAME" onPress={onRename} />
         <Item icon="close" label="REMOVE" onPress={onRemove} tint="#FF9C8F" />
       </Animated.View>
@@ -65,7 +70,6 @@ function Item({ icon, label, onPress, tint = paper }: { icon: IconName; label: s
 const styles = StyleSheet.create({
   menu: {
     position: 'absolute',
-    width: MENU.w,
     height: MENU.h,
     flexDirection: 'row',
     padding: 4,
