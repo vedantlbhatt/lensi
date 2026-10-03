@@ -122,7 +122,7 @@ export function InfoCard({
               {latest.answer.join(' ')}
             </Animated.Text>
           ) : latest.steps?.length ? (
-            <Text style={styles.summary}>{latest.steps.length} steps, playing above.</Text>
+            <Text style={styles.summary}>{latest.steps.length} steps, ready when you are.</Text>
           ) : (
             <ShinyText text="Thinking…" style={styles.summary} />
           )}
@@ -198,7 +198,7 @@ export function InfoCard({
               ))}
               {x.steps?.length ? (
                 <Text style={styles.stepsNote}>
-                  {x.steps.length} STEPS · <Text style={{ color: lens.pen }}>PLAY ABOVE</Text>
+                  <Text style={{ color: lens.pen }}>{x.steps.length}</Text> STEPS
                 </Text>
               ) : null}
               {x.pending && x.answer.length === 0 && !x.steps?.length ? <ShinyText text="Thinking…" style={styles.metaText} /> : null}

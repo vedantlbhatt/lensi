@@ -180,9 +180,11 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   const { steps, key: stepsKey, pending: stepsPending } = activeSteps(capture);
   const [walking, setWalking] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const autoWalked = useRef<string | null>(null);
   // A re-annotation (another lens) brings new steps under the same key.
   const walkKey = `${stepsKey}:${steps[0]?.id ?? ''}`;
+  // Steps that were already there when this opened (a capture reopened from
+  // Memories) wait for "Walk me through"; only steps arriving now start it.
+  const autoWalked = useRef<string | null>(steps.length && !stepsPending ? walkKey : null);
 
   // A walkthrough that was asked for starts itself as soon as step one lands.
   useEffect(() => {
