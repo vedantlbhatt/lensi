@@ -94,6 +94,7 @@ CI also builds for the iOS 27 Simulator, drives scripted captures through deep l
 
 ## Design
 
-- **Type:** Bricolage Grotesque (display), Funnel Sans (text), Fragment Mono (anything the machine reads), Instrument Serif italic (quiet asides).
-- **Colour:** ink, paper, and one highlighter per lens. No gradients-for-the-sake-of-it, no blue AI glow.
-- **Motion:** everything physical is a spring. Things grow out of where they come from: labels from their marks, the card from the shutter, a capture back into Memories.
+- **Type:** SF Pro, the iPhone's own, in sentence case. No display faces, no monospace, no italics. (The web preview substitutes Inter.)
+- **Labels:** a plain white tag sitting on the thing it names. No dots, no leader lines.
+- **Colour:** black and white like the Camera app, plus one highlighter per lens for outlines and the pointer.
+- **Motion:** everything physical is a spring: tags settle onto their parts, the card rises from the shutter, a capture goes back into Memories.

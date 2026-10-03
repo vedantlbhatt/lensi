@@ -4,7 +4,7 @@ import Animated, { FadeInLeft } from 'react-native-reanimated';
 
 import { PressScale } from '../../motion/PressScale';
 import { hairline, ink, LENSES, paper, type Lens } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 
 /**
  * The six pens, fanned out of the capture's lens chip. Picking another one
@@ -32,8 +32,7 @@ export function LensPicker({ lens, onPick }: { lens: Lens; onPick: (l: Lens) => 
               accessibilityLabel={on ? `${l.name}, current lens` : `Look again with ${l.name}`}
             >
               <View style={[styles.opt, on && { backgroundColor: l.pen, borderColor: l.pen }]}>
-                <View style={[styles.dot, { backgroundColor: on ? ink : l.pen }]} />
-                <Text style={[styles.text, on && { color: ink }]}>{l.name.toUpperCase()}</Text>
+                <Text style={[styles.text, { color: on ? ink : l.pen }]}>{l.name}</Text>
               </View>
             </PressScale>
           </Animated.View>
@@ -50,12 +49,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    height: 26,
-    paddingHorizontal: 10,
-    borderRadius: 13,
+    height: 28,
+    paddingHorizontal: 11,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
   },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  text: { color: paper, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
+  text: { color: paper, ...face.semibold, fontSize: 13 },
 });

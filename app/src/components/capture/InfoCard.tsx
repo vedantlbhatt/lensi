@@ -7,17 +7,17 @@ import { BlurText } from '../../motion/BlurText';
 import { PressScale } from '../../motion/PressScale';
 import { ShinyText } from '../../motion/ShinyText';
 import { faint, hairline, ink, lensInfo, mist, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon } from '../icons/Icon';
 import { LensPicker } from './LensPicker';
 
 const SOURCE_COPY: Record<Capture['source'], string> = {
-  camera: 'PHOTO',
-  video: 'VIDEO',
-  library: 'FROM PHOTOS',
-  files: 'FROM FILES',
-  clipboard: 'PASTED',
-  voice: 'SPOKEN',
+  camera: 'Photo',
+  video: 'Video',
+  library: 'From Photos',
+  files: 'From Files',
+  clipboard: 'Pasted',
+  voice: 'Spoken',
 };
 
 function when(ts: number): string {
@@ -84,8 +84,7 @@ export function InfoCard({
             accessibilityLabel={`${lens.name} lens. Change lens`}
           >
             <View style={styles.lensChip}>
-              <View style={[styles.lensDot, { backgroundColor: lens.pen }]} />
-              <Text style={styles.metaText}>{lens.name.toUpperCase()}</Text>
+              <Text style={[styles.metaText, { color: lens.pen }]}>{lens.name}</Text>
               <Icon name="down" size={10} color={faint} stroke={2.6} />
             </View>
           </PressScale>
@@ -94,7 +93,7 @@ export function InfoCard({
           </Text>
           {!expanded && a.facts.length ? (
             <Text style={[styles.metaFaint, styles.metaRight]} numberOfLines={1}>
-              {a.facts.length} {a.facts.length === 1 ? 'FACT' : 'FACTS'} ↑
+              {a.facts.length} {a.facts.length === 1 ? 'fact' : 'facts'}
             </Text>
           ) : null}
         </View>
@@ -249,26 +248,25 @@ const styles = StyleSheet.create({
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 24 },
   metaSlot: { height: 24, justifyContent: 'center' },
   lensChip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 24 },
-  lensDot: { width: 7, height: 7, borderRadius: 4 },
-  metaText: { color: paper, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
-  metaFaint: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
+  metaText: { color: paper, ...face.semibold, fontSize: 13 },
+  metaFaint: { color: faint, ...face.medium, fontSize: 13 },
   titleSlot: { minHeight: 34, justifyContent: 'center' },
-  title: { color: paper, fontFamily: fonts.display, fontSize: 30, lineHeight: 33, letterSpacing: -1 },
+  title: { color: paper, ...face.bold, fontSize: 30, lineHeight: 33, letterSpacing: -0.5 },
   titleLong: { fontSize: 24, lineHeight: 27, letterSpacing: -0.7 },
   metaRight: { marginLeft: 'auto', paddingLeft: 8 },
   shrink: { flexShrink: 1 },
   chipScroll: { flexGrow: 0, marginHorizontal: -18 },
   waiting: { height: 34, justifyContent: 'center' },
-  waitingText: { color: paper, fontFamily: fonts.serifItalic, fontSize: 28, letterSpacing: -0.3 },
-  summary: { color: mist, fontFamily: fonts.text, fontSize: 15.5, lineHeight: 21 },
+  waitingText: { color: paper, ...face.semibold, fontSize: 22, letterSpacing: -0.3 },
+  summary: { color: mist, ...face.regular, fontSize: 15.5, lineHeight: 21 },
   latest: { gap: 2 },
-  latestQ: { color: paper, fontFamily: fonts.serifItalic, fontSize: 19, lineHeight: 22 },
+  latestQ: { color: paper, ...face.semibold, fontSize: 15, lineHeight: 20 },
   skeletons: { gap: 8, paddingVertical: 4 },
-  skeleton: { height: 12, borderRadius: 6, backgroundColor: 'rgba(244,241,234,0.1)' },
+  skeleton: { height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.1)' },
   errorRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  error: { flex: 1, color: '#FF9C8F', fontFamily: fonts.textMedium, fontSize: 14 },
-  retry: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 32, borderRadius: 16, backgroundColor: 'rgba(244,241,234,0.1)' },
-  retryText: { color: paper, fontFamily: fonts.textSemi, fontSize: 14 },
+  error: { flex: 1, color: '#FF9C8F', ...face.medium, fontSize: 14 },
+  retry: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 32, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.1)' },
+  retryText: { color: paper, ...face.semibold, fontSize: 14 },
   chips: { flexDirection: 'row', gap: 8, marginTop: 2, paddingHorizontal: 18 },
   chip: {
     flexDirection: 'row',
@@ -279,14 +277,14 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
-    backgroundColor: 'rgba(244,241,234,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  chipText: { color: paper, fontFamily: fonts.textSemi, fontSize: 14 },
+  chipText: { color: paper, ...face.semibold, fontSize: 14 },
   more: { maxHeight: 260, marginTop: 4 },
   fact: { flexDirection: 'row', gap: 12 },
-  factN: { fontFamily: fonts.mono, fontSize: 12, lineHeight: 21, width: 18 },
-  factText: { flex: 1, color: paper, fontFamily: fonts.text, fontSize: 15, lineHeight: 21 },
+  factN: { ...face.medium, fontSize: 13, lineHeight: 21, width: 18 },
+  factText: { flex: 1, color: paper, ...face.regular, fontSize: 15, lineHeight: 21 },
   qa: { gap: 6, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: hairline },
-  q: { color: paper, fontFamily: fonts.serifItalic, fontSize: 20, lineHeight: 24, marginTop: 8 },
-  stepsNote: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.1 },
+  q: { color: paper, ...face.semibold, fontSize: 16, lineHeight: 22, marginTop: 8 },
+  stepsNote: { color: faint, ...face.medium, fontSize: 12 },
 });

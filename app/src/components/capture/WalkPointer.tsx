@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -17,7 +17,6 @@ import { haptic } from '../../lib/haptics';
 import type { Pt } from '../../lib/types';
 import { Ripple } from '../../motion/Ripple';
 import { ink } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
 
 const W = 30;
 const H = 36;
@@ -32,14 +31,11 @@ export function WalkPointer({
   index,
   pen,
   home,
-  badge = true,
 }: {
   target: Pt | null;
   index: number;
   pen: string;
   home: Pt;
-  /** Show the step number (walkthroughs); answers point without one. */
-  badge?: boolean;
 }) {
   const from = useSharedValue<Pt>(home);
   const to = useSharedValue<Pt>(home);
@@ -111,7 +107,6 @@ export function WalkPointer({
       {landedKey && target ? (
         <View key={landedKey} style={[styles.rippleAt, { left: target.x, top: target.y }]}>
           <Ripple size={20} color={pen} duration={760} grow={3.2} stroke={2.4} />
-          <Ripple size={20} color="#FFFFFF" duration={900} delay={90} grow={2.2} stroke={1.2} />
         </View>
       ) : null}
       <Animated.View style={[styles.pointer, a]}>
@@ -125,11 +120,6 @@ export function WalkPointer({
           />
           <Path d="M6.2 6.4l1.1 17.4" stroke="rgba(255,255,255,0.65)" strokeWidth={1.6} strokeLinecap="round" />
         </Svg>
-        {badge ? (
-          <View style={[styles.badge, { borderColor: pen }]}>
-            <Text style={[styles.badgeText, { color: pen }]}>{index + 1}</Text>
-          </View>
-        ) : null}
       </Animated.View>
     </View>
   );
@@ -149,19 +139,5 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 5 },
   },
   svg: { position: 'absolute', left: -3, top: -2 },
-  badge: {
-    position: 'absolute',
-    left: 22,
-    top: 26,
-    minWidth: 20,
-    height: 20,
-    paddingHorizontal: 5,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    backgroundColor: ink,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeText: { fontFamily: fonts.mono, fontSize: 11, lineHeight: 13 },
   rippleAt: { position: 'absolute', width: 0, height: 0 },
 });

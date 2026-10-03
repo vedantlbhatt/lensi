@@ -15,7 +15,7 @@ import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 
 import { getSettings } from '../../lib/settings';
 import { LENSES, paper, type Lens } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 
 const ITEM = 92;
 
@@ -93,7 +93,6 @@ export function LensCarousel({ lens, onChange }: { lens: Lens; onChange: (l: Len
           />
         ))}
       </Animated.ScrollView>
-      <Notch x={x} />
     </View>
   );
 }
@@ -121,26 +120,17 @@ function Item({ name, pen, index, x, onPress }: { name: string; pen: string; ind
   );
 }
 
-/** The little tick under the centred lens; stretches while you swipe. */
-function Notch({ x }: { x: SharedValue<number> }) {
-  const a = useAnimatedStyle(() => {
-    const off = Math.abs(x.value / ITEM - Math.round(x.value / ITEM));
-    return { width: 6 + off * 26, opacity: 1 - off * 0.5 };
-  });
-  return <Animated.View style={[styles.notch, a]} pointerEvents="none" />;
-}
 
 const styles = StyleSheet.create({
   wrap: { height: 44, alignSelf: 'stretch', justifyContent: 'center' },
   scroll: { flexGrow: 0 },
   item: { width: ITEM, height: 34, alignItems: 'center', justifyContent: 'center' },
   text: {
-    fontFamily: fonts.displayBold,
+    ...face.bold,
     fontSize: 16,
     letterSpacing: -0.2,
     textShadowColor: 'rgba(0,0,0,0.45)',
     textShadowRadius: 8,
     textShadowOffset: { width: 0, height: 1 },
   },
-  notch: { position: 'absolute', bottom: 0, alignSelf: 'center', height: 3, borderRadius: 2, backgroundColor: paper },
 });

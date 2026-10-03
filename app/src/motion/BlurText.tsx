@@ -24,7 +24,7 @@ export function BlurText({
   delay = 0,
   step = 70,
   duration = 620,
-  color = '#F4F1EA',
+  color = '#FFFFFF',
   rise = 10,
 }: {
   text: string;

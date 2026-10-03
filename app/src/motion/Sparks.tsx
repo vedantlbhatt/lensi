@@ -11,7 +11,7 @@ type Burst = { id: number; x: number; y: number; color: string };
  * Mount once, full-screen, `pointerEvents="none"`; call `burst()` from taps.
  */
 export const Sparks = forwardRef<SparksRef, { count?: number; radius?: number; color?: string }>(function Sparks(
-  { count = 9, radius = 34, color = '#F4F1EA' },
+  { count = 9, radius = 34, color = '#FFFFFF' },
   ref,
 ) {
   const [bursts, setBursts] = useState<Burst[]>([]);

@@ -3,7 +3,7 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { PressScale } from '../../motion/PressScale';
 import { hairline, ink, mist, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon } from '../icons/Icon';
 
 /**
@@ -59,12 +59,12 @@ export function CameraBlocked({
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, backgroundColor: ink },
   card: { alignSelf: 'stretch', gap: 2 },
-  lead: { color: paper, fontFamily: fonts.serifItalic, fontSize: 36, lineHeight: 38, letterSpacing: -0.5 },
-  big: { fontFamily: fonts.display, fontSize: 44, lineHeight: 46, letterSpacing: -1.6 },
-  body: { color: mist, fontFamily: fonts.text, fontSize: 16, lineHeight: 22, marginTop: 12, maxWidth: 320 },
+  lead: { color: paper, ...face.semibold, fontSize: 29, lineHeight: 35, letterSpacing: -0.3 },
+  big: { ...face.bold, fontSize: 44, lineHeight: 46, letterSpacing: -0.8 },
+  body: { color: mist, ...face.regular, fontSize: 16, lineHeight: 22, marginTop: 12, maxWidth: 320 },
   row: { flexDirection: 'row', gap: 10, marginTop: 22 },
   primary: { height: 48, paddingHorizontal: 20, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  primaryText: { color: ink, fontFamily: fonts.textBold, fontSize: 16 },
+  primaryText: { color: ink, ...face.bold, fontSize: 16 },
   secondary: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
-    backgroundColor: 'rgba(244,241,234,0.07)',
+    backgroundColor: 'rgba(255,255,255,0.07)',
   },
-  secondaryText: { color: paper, fontFamily: fonts.textSemi, fontSize: 16 },
+  secondaryText: { color: paper, ...face.semibold, fontSize: 16 },
 });

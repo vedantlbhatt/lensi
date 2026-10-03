@@ -38,7 +38,7 @@ import { useVoice } from '../lib/voice';
 import { Sparks, type SparksRef } from '../motion/Sparks';
 import { springs } from '../theme/motion';
 import { LENSES, lensInfo, type Lens } from '../theme/tokens';
-import { fonts } from '../theme/type';
+import { face } from '../theme/type';
 
 const TRACKING_HINTS: Record<string, string> = {
   initializing: 'Move your phone slowly',
@@ -351,7 +351,7 @@ export default function Camera() {
         ) : null}
 
         <Animated.View style={[styles.bottom, { paddingBottom: insets.bottom + 18 }, bottomStyle]} pointerEvents="box-none">
-          <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'PREVIEW' : 'SIM') : live ? 'LIVE' : null} pen={pen} />
+          <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : live ? 'Live' : null} pen={pen} />
           <LensCarousel lens={lens} onChange={setLens} />
           <View style={styles.row}>
             <MemoriesButton uri={latest?.media.stillUri ?? null} count={captures.length} onPress={() => setMemories(true)} />
@@ -415,9 +415,9 @@ export function ErrorBoundary({ error, retry }: { error: Error; retry: () => Pro
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
   crash: { justifyContent: 'center', paddingHorizontal: 28, gap: 12, backgroundColor: '#0B0B0C' },
-  crashTitle: { color: '#F4F1EA', fontFamily: fonts.serifItalic, fontSize: 40, letterSpacing: -0.6 },
-  crashBody: { color: 'rgba(244,241,234,0.62)', fontFamily: fonts.text, fontSize: 16, lineHeight: 22 },
-  crashCode: { color: 'rgba(244,241,234,0.38)', fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 16 },
+  crashTitle: { color: '#FFFFFF', ...face.semibold, fontSize: 32, letterSpacing: -0.3 },
+  crashBody: { color: 'rgba(255,255,255,0.62)', ...face.regular, fontSize: 16, lineHeight: 22 },
+  crashCode: { color: 'rgba(255,255,255,0.38)', ...face.medium, fontSize: 12.5, lineHeight: 16 },
   crashButton: {
     alignSelf: 'flex-start',
     marginTop: 12,
@@ -427,14 +427,14 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: '#E4FF4F',
     color: '#0B0B0C',
-    fontFamily: fonts.display,
+    ...face.bold,
     fontSize: 17,
   },
   top30: { zIndex: 30 },
   shade: { position: 'absolute', left: 0, right: 0 },
   top: { position: 'absolute', left: 14, right: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   hintWrap: { position: 'absolute', alignSelf: 'center', paddingHorizontal: 14, height: 32, borderRadius: 16, justifyContent: 'center', backgroundColor: 'rgba(11,11,12,0.7)' },
-  hint: { color: '#F4F1EA', fontFamily: fonts.textSemi, fontSize: 14 },
+  hint: { color: '#FFFFFF', ...face.semibold, fontSize: 14 },
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, alignItems: 'center', gap: 6 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', alignSelf: 'stretch', paddingHorizontal: 26 },
 });

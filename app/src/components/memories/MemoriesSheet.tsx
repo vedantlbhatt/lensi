@@ -14,7 +14,7 @@ import { PressScale } from '../../motion/PressScale';
 import { RotatingText } from '../../motion/RotatingText';
 import { springs } from '../../theme/motion';
 import { faint, ink, lensInfo, mist, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon } from '../icons/Icon';
 import type { Rect } from '../capture/CaptureView';
 
@@ -66,7 +66,7 @@ export function MemoriesSheet({ onOpen, onClose }: { onOpen: (id: string, from: 
             <View>
               <Text style={styles.title}>Memories</Text>
               <Text style={styles.count}>
-                {list.length} {list.length === 1 ? 'CAPTURE' : 'CAPTURES'} · SAVED ON THIS PHONE
+                {list.length} {list.length === 1 ? 'capture' : 'captures'}, saved on this iPhone
               </Text>
             </View>
             <PressScale onPress={close} accessibilityRole="button" accessibilityLabel="Back to camera" scaleTo={0.85}>
@@ -85,7 +85,7 @@ export function MemoriesSheet({ onOpen, onClose }: { onOpen: (id: string, from: 
             <Text style={styles.emptyText}>Point Lensi at </Text>
             <RotatingText words={['a coffee machine', 'a breaker box', 'a houseplant', 'a router', 'your car']} style={[styles.emptyText, { color: paper }]} />
           </View>
-          <Text style={styles.emptyHint}>TAP FOR A PHOTO · HOLD FOR VIDEO · DROP ANYTHING IN</Text>
+          <Text style={styles.emptyHint}>Tap for a photo, hold for video, or drop something in.</Text>
         </View>
       ) : (
         <FlatList
@@ -127,8 +127,7 @@ function Tile({ c, index, width, onOpen }: { c: Capture; index: number; width: n
           ) : null}
           <View style={styles.tileText}>
             <View style={styles.tileMeta}>
-              <View style={[styles.dot, { backgroundColor: lens.pen }]} />
-              <Text style={styles.tileLens}>{lens.name.toUpperCase()}</Text>
+              <Text style={[styles.tileLens, { color: lens.pen }]}>{lens.name}</Text>
             </View>
             <Text style={styles.tileTitle} numberOfLines={2}>
               {c.annotation.title ?? (c.status === 'analyzing' ? 'Still looking…' : 'Untitled')}
@@ -143,18 +142,17 @@ function Tile({ c, index, width, onOpen }: { c: Capture; index: number; width: n
 const styles = StyleSheet.create({
   sheet: { backgroundColor: ink, zIndex: 20 },
   head: { paddingHorizontal: 18, paddingBottom: 16 },
-  grab: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(244,241,234,0.2)', marginBottom: 14 },
+  grab: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: 14 },
   headRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  title: { color: paper, fontFamily: fonts.serifItalic, fontSize: 50, lineHeight: 52, letterSpacing: -1 },
-  count: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2, marginTop: 2 },
-  close: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(244,241,234,0.08)' },
+  title: { color: paper, ...face.bold, fontSize: 34, lineHeight: 41, letterSpacing: -0.4 },
+  count: { color: faint, ...face.medium, fontSize: 12, marginTop: 2 },
+  close: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
   tile: { borderRadius: 20, overflow: 'hidden', backgroundColor: '#1a1a1c', borderCurve: 'continuous' },
   fade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%' },
   tileText: { position: 'absolute', left: 12, right: 12, bottom: 12, gap: 5 },
   tileMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  tileLens: { color: mist, fontFamily: fonts.mono, fontSize: 10, letterSpacing: 1.2 },
-  tileTitle: { color: paper, fontFamily: fonts.display, fontSize: 18, lineHeight: 20, letterSpacing: -0.5 },
+  tileLens: { color: mist, ...face.semibold, fontSize: 12 },
+  tileTitle: { color: paper, ...face.bold, fontSize: 18, lineHeight: 20, letterSpacing: -0.2 },
   videoTag: { position: 'absolute', top: 10, right: 10, width: 22, height: 22, borderRadius: 11, backgroundColor: paper, alignItems: 'center', justifyContent: 'center' },
   photosTag: {
     position: 'absolute',
@@ -168,10 +166,10 @@ const styles = StyleSheet.create({
     gap: 4,
     backgroundColor: paper,
   },
-  photosText: { color: ink, fontFamily: fonts.mono, fontSize: 11 },
+  photosText: { color: ink, ...face.medium, fontSize: 12 },
   empty: { flex: 1, paddingHorizontal: 24, paddingTop: 60, gap: 10 },
-  emptyTitle: { color: paper, fontFamily: fonts.display, fontSize: 30, letterSpacing: -1 },
+  emptyTitle: { color: paper, ...face.bold, fontSize: 30, letterSpacing: -0.5 },
   emptyRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline' },
-  emptyText: { color: mist, fontFamily: fonts.serifItalic, fontSize: 24 },
-  emptyHint: { color: faint, fontFamily: fonts.mono, fontSize: 10.5, letterSpacing: 1.2, marginTop: 18 },
+  emptyText: { color: mist, ...face.semibold, fontSize: 19 },
+  emptyHint: { color: faint, ...face.medium, fontSize: 11.5, marginTop: 18 },
 });

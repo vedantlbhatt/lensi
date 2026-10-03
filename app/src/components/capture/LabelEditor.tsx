@@ -4,7 +4,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { PressScale } from '../../motion/PressScale';
 import { faint, hairline, ink, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon } from '../icons/Icon';
 import { LABEL } from './layout';
 
@@ -38,13 +38,12 @@ export function LabelEditor({
   return (
     <Animated.View entering={FadeInDown.duration(240)} style={styles.wrap}>
       <View style={styles.head}>
-        <Text style={styles.kicker}>RENAME LABEL</Text>
+        <Text style={styles.kicker}>Rename label</Text>
         <PressScale onPress={onCancel} scaleTo={0.9} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cancel">
           <Text style={styles.cancel}>Cancel</Text>
         </PressScale>
       </View>
       <View style={styles.bar}>
-        <View style={[styles.dot, { backgroundColor: pen }]} />
         <TextInput
           ref={input}
           value={v}
@@ -74,8 +73,8 @@ export function LabelEditor({
 const styles = StyleSheet.create({
   wrap: { gap: 12, paddingBottom: 2 },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 24 },
-  kicker: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
-  cancel: { color: paper, fontFamily: fonts.textSemi, fontSize: 15 },
+  kicker: { color: faint, ...face.medium, fontSize: 12 },
+  cancel: { color: paper, ...face.semibold, fontSize: 15 },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -89,7 +88,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
   },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  input: { flex: 1, minWidth: 0, color: paper, fontFamily: fonts.mono, fontSize: 16, letterSpacing: 0.2, height: 48, paddingVertical: 0, outlineWidth: 0 },
+  input: { flex: 1, minWidth: 0, color: paper, ...face.medium, fontSize: 17, height: 48, paddingVertical: 0, outlineWidth: 0 },
   ok: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 });

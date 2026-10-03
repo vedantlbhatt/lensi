@@ -5,7 +5,7 @@ import Animated, { FadeInUp } from 'react-native-reanimated';
 import type { Moment } from '../../lib/types';
 import { PressScale } from '../../motion/PressScale';
 import { paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon } from '../icons/Icon';
 
 const fmt = (ms: number) => `0:${String(Math.floor(ms / 1000)).padStart(2, '0')}`;
@@ -76,10 +76,10 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     overflow: 'hidden',
     borderWidth: 2,
-    borderColor: 'rgba(244,241,234,0.35)',
+    borderColor: 'rgba(255,255,255,0.35)',
     backgroundColor: '#111',
   },
   add: { alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(11,11,12,0.6)' },
   time: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingVertical: 1, backgroundColor: 'rgba(11,11,12,0.6)' },
-  timeText: { color: paper, fontFamily: fonts.mono, fontSize: 8.5, textAlign: 'center', letterSpacing: 0.3 },
+  timeText: { color: paper, ...face.medium, fontSize: 9.5, textAlign: 'center' },
 });

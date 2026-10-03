@@ -1,19 +1,4 @@
-import {
-  BlurMask,
-  Canvas,
-  Circle,
-  DashPathEffect,
-  FillType,
-  Group,
-  Path,
-  rect,
-  rrect,
-  Skia,
-  Text as SkText,
-  useFont,
-  type SkFont,
-  type SkPath,
-} from '@shopify/react-native-skia';
+import { BlurMask, Canvas, DashPathEffect, FillType, Group, Path, rect, rrect, Skia, type SkPath } from '@shopify/react-native-skia';
 import { useEffect, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import {
@@ -22,37 +7,31 @@ import {
   useSharedValue,
   withDelay,
   withRepeat,
-  withSequence,
-  withSpring,
   withTiming,
   type EasingFunction,
   type EasingFunctionFactory,
   type SharedValue,
 } from 'react-native-reanimated';
 
-import { leaderPath, outlinePath, toView, type Fit } from '../../lib/geometry';
+import { outlinePath, type Fit } from '../../lib/geometry';
 import type { Pt, Region, Step } from '../../lib/types';
 import { useArrivalOrder, useMountValue } from '../../motion/stagger';
-import { springs } from '../../theme/motion';
-import { alpha, ink } from '../../theme/tokens';
+import { alpha } from '../../theme/tokens';
 import { FRAME_RADIUS, type PlacedCallout } from './layout';
-
-const MONO = require('@expo-google-fonts/fragment-mono/400Regular/FragmentMono_400Regular.ttf');
 
 function svgPath(d: string): SkPath {
   return Skia.Path.MakeFromSVGString(d) ?? Skia.Path.Make();
 }
 
 /**
- * Everything drawn on top of the photo. The story it tells, in order: the
- * eyes outline the subject (light runs along the edge while the model
- * thinks), numbered marks appear on what the eyes found, and as the model
- * names things each label grows out of its mark.
+ * Everything drawn on top of the photo: the subject's outline (light runs
+ * along the edge while the model thinks), each named part's outline as its
+ * tag arrives, and whatever a walkthrough step or a tap is about. The tags
+ * themselves are views (CalloutLabels), sitting on the parts.
  */
 export function AnnotationOverlay({
   frame,
   subject,
-  regions,
   placed,
   settled,
   thinking,
@@ -63,7 +42,6 @@ export function AnnotationOverlay({
 }: {
   frame: Fit;
   subject: Region | null;
-  regions: Region[];
   placed: PlacedCallout[];
   /** The photo has landed in its frame. */
   settled: boolean;
@@ -75,16 +53,12 @@ export function AnnotationOverlay({
   /** Outline of a part the user just tapped, while its answer is on the way. */
   focus?: Pt[] | null;
 }) {
-  const font = useFont(MONO, 10);
   const clip = useMemo(() => rrect(rect(frame.x, frame.y, frame.w, frame.h), FRAME_RADIUS, FRAME_RADIUS), [frame]);
   const subjectD = useMemo(
     () => (subject?.polygon && subject.polygon.length > 2 ? outlinePath(subject.polygon, frame, 0.55) : null),
     [subject, frame],
   );
-  const marks = useMemo(() => regions.filter((r) => r.kind !== 'subject').slice(0, 9), [regions]);
   const order = useArrivalOrder(placed.map((c) => c.id));
-  // Mark numbers next to a walkthrough's numbered steps would read as the same thing.
-  const showMarks = settled && thinking && placed.length === 0 && !walking;
 
   return (
     <View style={[StyleSheet.absoluteFill, styles.passthrough]}>
@@ -97,18 +71,9 @@ export function AnnotationOverlay({
           ) : null,
         )}
         {settled && subjectD ? <SubjectOutline d={subjectD} pen={pen} thinking={thinking} dim={walking} /> : null}
-        {showMarks && font
-          ? marks.map((r, i) => <Mark key={r.id} at={toView({ x: r.box.x + r.box.w / 2, y: r.box.y + r.box.h / 2 }, frame)} n={r.mark} pen={pen} font={font} delay={i * 70} />)
-          : null}
         {highlight ? <StepHighlight key={highlight.id} step={highlight} frame={frame} pen={pen} /> : null}
         {focus && focus.length > 2 ? <Marching key={focus.length + focus[0].x} d={outlinePath(focus, frame, 0.5)} pen={pen} /> : null}
       </Group>
-      {placed.map((c, i) => (
-        <Leader key={`l-${c.id}`} from={c.slot.anchor} to={c.slot.attach} delay={order(i) * 110} dim={walking} />
-      ))}
-      {placed.map((c, i) => (
-        <Dot key={`d-${c.id}`} at={c.slot.anchor} pen={pen} delay={order(i) * 110} dim={walking} />
-      ))}
     </Canvas>
     </View>
   );
@@ -116,10 +81,9 @@ export function AnnotationOverlay({
 
 const styles = StyleSheet.create({ passthrough: { pointerEvents: 'none' } });
 
-const DRAW = Easing.bezier(0.16, 1, 0.3, 1);
 // Made once: an easing built during render is a new function every time, which
 // re-runs the effect that starts the animation.
-const LEADER = Easing.out(Easing.cubic);
+const DRAW = Easing.bezier(0.16, 1, 0.3, 1);
 
 function useEnter(delay: number, duration = 900, easing: EasingFunction | EasingFunctionFactory = DRAW) {
   const entry = useMountValue(delay);
@@ -199,61 +163,8 @@ function PartOutline({ d, pen, delay, dim }: { d: string; pen: string; delay: nu
   );
 }
 
-/** A numbered set-of-marks tag: what the eyes found, before the model names it. */
-function Mark({ at, n, pen, font, delay }: { at: Pt; n: number; pen: string; font: SkFont; delay: number }) {
-  const entry = useMountValue(delay);
-  const s = useSharedValue(0);
-  useEffect(() => {
-    s.value = withDelay(entry, withSpring(1, springs.pop));
-  }, [entry, s]);
-  const transform = useDerivedValue(() => [{ scale: s.value }]);
-  const label = String(n);
-  // Fragment Mono advances exactly 0.618 em (measureText isn't on web).
-  const w = label.length * font.getSize() * 0.618;
-  return (
-    <Group transform={transform} origin={at}>
-      <Circle cx={at.x} cy={at.y} r={9.5} color="rgba(11,11,12,0.55)" />
-      <Circle cx={at.x} cy={at.y} r={8} color={pen} />
-      <SkText x={at.x - w / 2} y={at.y + 3.6} text={label} font={font} color={ink} />
-    </Group>
-  );
-}
 
-function Leader({ from, to, delay, dim }: { from: Pt; to: Pt; delay: number; dim: boolean }) {
-  const path = useMemo(() => svgPath(leaderPath(from, to)), [from, to]);
-  const draw = useEnter(delay + 140, 420, LEADER);
-  const dimmer = useDim(dim, 0.12);
-  return (
-    <Group opacity={dimmer}>
-      <Path path={path} style="stroke" strokeWidth={3.2} color="rgba(0,0,0,0.28)" end={draw} strokeCap="round" />
-      <Path path={path} style="stroke" strokeWidth={1.4} color="rgba(255,255,255,0.95)" end={draw} strokeCap="round" />
-    </Group>
-  );
-}
 
-function Dot({ at, pen, delay, dim }: { at: Pt; pen: string; delay: number; dim: boolean }) {
-  const entry = useMountValue(delay);
-  const s = useSharedValue(0);
-  const ring = useSharedValue(0);
-  useEffect(() => {
-    s.value = withDelay(entry, withSpring(1, springs.pop));
-    ring.value = withDelay(entry, withSequence(withTiming(0, { duration: 1 }), withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) })));
-  }, [entry, s, ring]);
-  const transform = useDerivedValue(() => [{ scale: s.value }]);
-  const ringR = useDerivedValue(() => 5 + ring.value * 15);
-  const ringOpacity = useDerivedValue(() => (1 - ring.value) * 0.9);
-  const dimmer = useDim(dim, 0.2);
-  return (
-    <Group opacity={dimmer}>
-      <Circle cx={at.x} cy={at.y} r={ringR} style="stroke" strokeWidth={1.5} color={pen} opacity={ringOpacity} />
-      <Group transform={transform} origin={at}>
-        <Circle cx={at.x} cy={at.y} r={6.6} color="rgba(0,0,0,0.35)" />
-        <Circle cx={at.x} cy={at.y} r={5.4} color="#FFFFFF" />
-        <Circle cx={at.x} cy={at.y} r={3.6} color={pen} />
-      </Group>
-    </Group>
-  );
-}
 
 /** Marching ants around a tapped part: "this one", while the model answers. */
 function Marching({ d, pen }: { d: string; pen: string }) {
@@ -275,7 +186,7 @@ function Marching({ d, pen }: { d: string; pen: string }) {
   );
 }
 
-/** The current walkthrough target: its outline glows; a bare point gets rings. */
+/** The current walkthrough target's outline glows. A bare point has no outline; the pointer marks it. */
 function StepHighlight({ step, frame, pen }: { step: Step; frame: Fit; pen: string }) {
   const d = useMemo(() => (step.polygon && step.polygon.length > 2 ? outlinePath(step.polygon, frame, 0.5) : null), [step, frame]);
   const path = useMemo(() => (d ? svgPath(d) : null), [d]);
@@ -285,27 +196,14 @@ function StepHighlight({ step, frame, pen }: { step: Step; frame: Fit; pen: stri
     pulse.value = withRepeat(withTiming(1, { duration: 1300, easing: Easing.inOut(Easing.sin) }), -1, true);
   }, [pulse]);
   const glow = useDerivedValue(() => (0.35 + pulse.value * 0.45) * t.value);
-  const at = step.at ? toView(step.at, frame) : null;
-  const r1 = useDerivedValue(() => 18 + pulse.value * 5);
-  const r2 = useDerivedValue(() => 30 + pulse.value * 9);
-  const o2 = useDerivedValue(() => (0.55 - pulse.value * 0.35) * t.value);
-  if (path) {
-    return (
-      <Group>
-        <Path path={path} color={alpha(pen, 0.22)} opacity={t} />
-        <Path path={path} style="stroke" strokeWidth={8} color={pen} opacity={glow}>
-          <BlurMask blur={8} style="normal" />
-        </Path>
-        <Path path={path} style="stroke" strokeWidth={2.8} color={pen} end={t} strokeJoin="round" />
-      </Group>
-    );
-  }
-  if (!at) return null;
+  if (!path) return null;
   return (
     <Group>
-      <Circle cx={at.x} cy={at.y} r={r2} style="stroke" strokeWidth={2} color={pen} opacity={o2} />
-      <Circle cx={at.x} cy={at.y} r={r1} style="stroke" strokeWidth={3} color={pen} opacity={t} />
-      <Circle cx={at.x} cy={at.y} r={r1} color={alpha(pen, 0.18)} opacity={t} />
+      <Path path={path} color={alpha(pen, 0.22)} opacity={t} />
+      <Path path={path} style="stroke" strokeWidth={8} color={pen} opacity={glow}>
+        <BlurMask blur={8} style="normal" />
+      </Path>
+      <Path path={path} style="stroke" strokeWidth={2.8} color={pen} end={t} strokeJoin="round" />
     </Group>
   );
 }

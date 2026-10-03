@@ -38,22 +38,6 @@
       ],
       "expo-router",
       [
-        "expo-font",
-        {
-          "fonts": [
-            "./node_modules/@expo-google-fonts/bricolage-grotesque/800ExtraBold/BricolageGrotesque_800ExtraBold.ttf",
-            "./node_modules/@expo-google-fonts/bricolage-grotesque/700Bold/BricolageGrotesque_700Bold.ttf",
-            "./node_modules/@expo-google-fonts/funnel-sans/400Regular/FunnelSans_400Regular.ttf",
-            "./node_modules/@expo-google-fonts/funnel-sans/500Medium/FunnelSans_500Medium.ttf",
-            "./node_modules/@expo-google-fonts/funnel-sans/600SemiBold/FunnelSans_600SemiBold.ttf",
-            "./node_modules/@expo-google-fonts/funnel-sans/700Bold/FunnelSans_700Bold.ttf",
-            "./node_modules/@expo-google-fonts/fragment-mono/400Regular/FragmentMono_400Regular.ttf",
-            "./node_modules/@expo-google-fonts/instrument-serif/400Regular/InstrumentSerif_400Regular.ttf",
-            "./node_modules/@expo-google-fonts/instrument-serif/400Regular_Italic/InstrumentSerif_400Regular_Italic.ttf"
-          ]
-        }
-      ],
-      [
         "expo-image-picker",
         {
           "photosPermission": "Lensi opens photos and videos you pick so it can annotate them.",

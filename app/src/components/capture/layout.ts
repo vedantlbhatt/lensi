@@ -1,21 +1,16 @@
-import { fitRect, layoutLabels, toView, type Fit, type LabelSlot } from '../../lib/geometry';
+import { fitRect, layoutTags, toView, type Fit, type LabelSlot } from '../../lib/geometry';
 import type { Callout, Capture } from '../../lib/types';
-import { fonts } from '../../theme/type';
 
 export const TOP_BAR = 52;
 /** Height the bottom card takes when it is down, its bottom margin included. */
 export const CARD_PEEK = 274;
 export const FRAME_RADIUS = 26;
 
-/** Mono label metrics: Fragment Mono advances exactly 0.618 em. */
+/** Tag metrics: SF Pro Text Semibold 13 on a white tag. */
 export const LABEL = {
-  font: fonts.mono,
-  size: 12,
-  letter: 0.15,
-  padX: 10,
-  dot: 6,
-  gap: 7,
-  height: 28,
+  size: 13,
+  padX: 9,
+  height: 26,
   maxChars: 24,
 };
 
@@ -24,10 +19,18 @@ export function labelText(s: string): string {
   return t.length > LABEL.maxChars ? `${t.slice(0, LABEL.maxChars - 1).trimEnd()}…` : t;
 }
 
+/**
+ * A close estimate of a tag's width (React Native can't measure text
+ * synchronously). Advances are SF Pro Text Semibold's, in ems, rounded up a
+ * little so the estimate errs wide; the tag itself sizes to its text and is
+ * centred in this width, so a near miss never shows.
+ */
 export function labelWidth(s: string): number {
-  const n = labelText(s).length;
-  // +6: slack so sub-pixel rounding never wraps the last word.
-  return Math.ceil(n * (LABEL.size * 0.618 + LABEL.letter) + LABEL.padX * 2 + LABEL.dot + LABEL.gap + 6);
+  let em = 0;
+  for (const ch of labelText(s)) {
+    em += /[ijl.,:;'!|]/.test(ch) ? 0.28 : /[frt() -]/.test(ch) ? 0.38 : /[mwMW@]/.test(ch) ? 0.9 : /[A-Z0-9]/.test(ch) ? 0.68 : 0.58;
+  }
+  return Math.ceil(em * LABEL.size + LABEL.padX * 2 + 4);
 }
 
 export type Stage = {
@@ -64,7 +67,7 @@ export function placeCallouts(callouts: Callout[], stage: Stage): PlacedCallout[
   if (!callouts.length) return [];
   const anchors = callouts.map((c) => toView(c.at, stage.frame));
   const sizes = callouts.map((c) => ({ w: labelWidth(c.label), h: LABEL.height }));
-  const slots = layoutLabels(anchors, sizes, stage.labelBounds, stage.frame.x + stage.frame.w / 2, { gap: 8, reach: 30 });
+  const slots = layoutTags(anchors, sizes, stage.labelBounds, { gap: 4 });
   return callouts.map((c, i) => ({ ...c, slot: slots[i], width: sizes[i].w }));
 }
 

@@ -33,7 +33,7 @@ import { PressScale } from '../../motion/PressScale';
 import { ShinyText } from '../../motion/ShinyText';
 import { springs } from '../../theme/motion';
 import { glassStrong, hairline, ink, lensInfo, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Glass } from '../camera/Glass';
 import { Icon } from '../icons/Icon';
 import { toast } from '../ui/Toast';
@@ -476,7 +476,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
     }
   };
 
-  const engineLabel = capture.engine === 'apple' ? 'ON-DEVICE' : capture.engine === 'cloud' ? 'CLAUDE' : capture.engine === 'vision' ? 'EYES ONLY' : '';
+  const engineLabel = capture.engine === 'apple' ? 'On-device' : capture.engine === 'cloud' ? 'Claude' : capture.engine === 'vision' ? 'Eyes only' : '';
 
   return (
     <View style={StyleSheet.absoluteFill}>
@@ -497,7 +497,6 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
         <AnnotationOverlay
           frame={frame}
           subject={capture.subject}
-          regions={capture.regions}
           placed={placed}
           settled={settled}
           thinking={thinking}
@@ -508,7 +507,6 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
         />
         <CalloutLabels
           placed={placed}
-          pen={lens.pen}
           dim={walking}
           focusId={menuFor?.id ?? renaming?.id ?? tourCallout?.id ?? null}
           onPress={(c) => onAsk(`Tell me about the ${c.label.toLowerCase()}`)}
@@ -526,7 +524,6 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
           <WalkPointer
             target={pointerTarget}
             index={walking ? stepIndex : (tour?.i ?? 0)}
-            badge={walking}
             pen={lens.pen}
             home={{ x: screen.width / 2, y: screen.height - CARD_PEEK }}
           />
@@ -586,7 +583,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
         </PressScale>
         <View style={styles.engine}>
           {anyPending ? (
-            <ShinyText text={capture.engine ? `${engineLabel} · THINKING` : 'LOOKING'} style={styles.engineText} />
+            <ShinyText text={capture.engine ? `${engineLabel} · Thinking` : 'Looking'} style={styles.engineText} />
           ) : engineLabel ? (
             <Animated.View entering={FadeIn} style={styles.engineRow}>
               {capture.engine === 'apple' ? <Icon name="spark" size={12} color={lens.pen} fill={lens.pen} stroke={1} /> : null}
@@ -779,7 +776,7 @@ const styles = StyleSheet.create({
   round: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   engine: { flex: 1, alignItems: 'center' },
   engineRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  engineText: { color: paper, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.3 },
+  engineText: { color: paper, ...face.medium, fontSize: 12 },
   cardWrap: { position: 'absolute', left: 10, right: 10, bottom: 0 },
   card: {
     borderRadius: 30,
@@ -793,7 +790,7 @@ const styles = StyleSheet.create({
     minHeight: CARD_PEEK - 8,
   },
   cardCompact: { minHeight: 0 },
-  handle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(244,241,234,0.22)', marginBottom: 10 },
+  handle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.22)', marginBottom: 10 },
   // Pinned to the bottom of the card, so the card keeps one height while the answer streams in.
   ask: { marginTop: 'auto', paddingTop: 14 },
   videoBadge: { position: 'absolute', right: 12, bottom: 12 },

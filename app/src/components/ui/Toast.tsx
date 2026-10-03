@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { glassStrong, hairline, ink, paper } from '../../theme/tokens';
 import { haptic } from '../../lib/haptics';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 
 type Action = { label: string; run: () => void };
 type T = { id: number; text: string; action?: Action };
@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
     borderColor: hairline,
   },
   pillAction: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6, paddingRight: 6 },
-  text: { color: paper, fontFamily: fonts.mono, fontSize: 12.5, letterSpacing: 0.2, textAlign: 'center' },
+  text: { color: paper, ...face.medium, fontSize: 13.5, textAlign: 'center' },
   actionPill: { height: 26, paddingHorizontal: 11, borderRadius: 13, backgroundColor: paper, justifyContent: 'center' },
-  action: { color: ink, fontFamily: fonts.textBold, fontSize: 13 },
+  action: { color: ink, ...face.bold, fontSize: 13 },
 });

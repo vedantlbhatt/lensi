@@ -5,7 +5,7 @@ import {
   arcControl,
   centroid,
   fitRect,
-  layoutLabels,
+  layoutTags,
   outlinePath,
   pointInPolygon,
   polygonArea,
@@ -74,55 +74,55 @@ test('smooth paths are closed and well formed', () => {
   assert.doesNotMatch(o, /NaN/);
 });
 
-test('labels never overlap on a side and stay in bounds', () => {
-  const anchors = Array.from({ length: 6 }, (_, i) => ({ x: 100 + (i % 2) * 190, y: 300 + i * 4 }));
-  const sizes = anchors.map(() => ({ w: 110, h: 28 }));
-  const bounds = { x: 12, y: 80, w: 366, h: 600 };
-  const slots = layoutLabels(anchors, sizes, bounds, 195);
-  for (const s of slots) {
-    assert.ok(s.x >= bounds.x - 1e-6 && s.x + 110 <= bounds.x + bounds.w + 1e-6, 'x in bounds');
-    assert.ok(s.y >= bounds.y - 1e-6 && s.y + 28 <= bounds.y + bounds.h + 1e-6, 'y in bounds');
-  }
-  assertNoOverlap(slots, slots.map(() => ({ w: 110, h: 28 })));
+test('tags sit on their anchors when there is room', () => {
+  const anchors = [
+    { x: 120, y: 200 },
+    { x: 260, y: 420 },
+  ];
+  const sizes = [
+    { w: 80, h: 26 },
+    { w: 100, h: 26 },
+  ];
+  const slots = layoutTags(anchors, sizes, { x: 8, y: 60, w: 377, h: 600 });
+  slots.forEach((s, i) => {
+    assert.equal(s.x + sizes[i].w / 2, anchors[i].x);
+    assert.equal(s.y + sizes[i].h / 2, anchors[i].y);
+  });
 });
 
-function assertNoOverlap(slots: ReturnType<typeof layoutLabels>, sizes: { w: number; h: number }[]) {
+test('tags that would collide step apart, stay near their things and in bounds', () => {
+  // Three people standing close together, as in the store-aisle clip.
+  const anchors = [
+    { x: 150, y: 300 },
+    { x: 170, y: 306 },
+    { x: 160, y: 312 },
+  ];
+  const sizes = anchors.map(() => ({ w: 72, h: 26 }));
+  const bounds = { x: 8, y: 80, w: 377, h: 600 };
+  const slots = layoutTags(anchors, sizes, bounds, { gap: 4 });
+  assertNoOverlap(slots, sizes);
+  slots.forEach((s, i) => {
+    assert.ok(Math.hypot(s.x + 36 - anchors[i].x, s.y + 13 - anchors[i].y) <= 60, 'stays next to its thing');
+    assert.ok(s.x >= bounds.x && s.x + 72 <= bounds.x + bounds.w, 'x in bounds');
+  });
+});
+
+test('tags near an edge are pulled inside', () => {
+  const slots = layoutTags([{ x: 10, y: 70 }], [{ w: 120, h: 26 }], { x: 8, y: 60, w: 377, h: 600 });
+  assert.equal(slots[0].x, 8);
+  assert.equal(slots[0].y, 60);
+});
+
+function assertNoOverlap(slots: ReturnType<typeof layoutTags>, sizes: { w: number; h: number }[]) {
   for (let i = 0; i < slots.length; i++) {
     for (let j = i + 1; j < slots.length; j++) {
       const a = { ...slots[i], ...sizes[i] };
       const b = { ...slots[j], ...sizes[j] };
       const apart = a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
-      assert.ok(apart, `labels ${i} and ${j} overlap`);
+      assert.ok(apart, `tags ${i} and ${j} overlap`);
     }
   }
 }
-
-test('labels hanging from opposite sides never meet mid-print', () => {
-  // A right-reaching label from a left-of-centre anchor and a left-reaching one
-  // from the right edge, at nearly the same height (the truck's door handle and
-  // headlamp in the web preview).
-  const anchors = [
-    { x: 150, y: 276 },
-    { x: 370, y: 268 },
-    { x: 300, y: 330 },
-  ];
-  const sizes = [
-    { w: 120, h: 28 },
-    { w: 100, h: 28 },
-    { w: 110, h: 28 },
-  ];
-  const bounds = { x: 8, y: 100, w: 377, h: 460 };
-  const slots = layoutLabels(anchors, sizes, bounds, 196, { gap: 8, reach: 30 });
-  assertNoOverlap(slots, sizes);
-  for (let i = 0; i < slots.length; i++) {
-    assert.ok(Math.abs(slots[i].y + 14 - anchors[i].y) < 80, 'stays near its anchor');
-  }
-});
-
-test('labels flip sides when the preferred side has no room', () => {
-  const slots = layoutLabels([{ x: 20, y: 200 }], [{ w: 120, h: 28 }], { x: 10, y: 0, w: 370, h: 800 }, 195);
-  assert.equal(slots[0].side, 1);
-});
 
 test('arc bulges upward', () => {
   const c = arcControl({ x: 0, y: 100 }, { x: 100, y: 100 });

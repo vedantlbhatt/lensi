@@ -4,16 +4,18 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
-import { leaderPath, outlinePath } from '../../lib/geometry';
+import { outlinePath } from '../../lib/geometry';
 import type { Capture } from '../../lib/types';
 import { lensInfo } from '../../theme/tokens';
 import { toast } from '../ui/Toast';
-import { labelText, type PlacedCallout, type Stage } from './layout';
+import { LABEL, labelText, type PlacedCallout, type Stage } from './layout';
 
+// Skia draws with its own font files, and SF Pro can't be bundled: Inter is the
+// nearest open match.
 const FONT_FILES = {
-  display: require('@expo-google-fonts/bricolage-grotesque/800ExtraBold/BricolageGrotesque_800ExtraBold.ttf'),
-  text: require('@expo-google-fonts/funnel-sans/400Regular/FunnelSans_400Regular.ttf'),
-  mono: require('@expo-google-fonts/fragment-mono/400Regular/FragmentMono_400Regular.ttf'),
+  bold: require('@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf'),
+  semibold: require('@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf'),
+  regular: require('@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf'),
 };
 
 let faces: Promise<Record<keyof typeof FONT_FILES, SkTypeface | null>> | null = null;
@@ -54,8 +56,8 @@ function wrap(text: string, font: SkFont, width: number, maxLines: number): stri
 }
 
 /**
- * Renders the annotated print the way it looks on screen (photo, outline,
- * dots, leaders, labels) plus a title footer, as a JPEG, then opens the share
+ * Renders the annotated print the way it looks on screen (photo, outlines,
+ * tags on the things) plus a title footer, as a JPEG, then opens the share
  * sheet. Everything is redrawn with Skia at 3x so it stays crisp.
  */
 export async function shareCapture(c: Capture, placed: PlacedCallout[], stage: Stage) {
@@ -88,7 +90,7 @@ export async function renderAnnotated(c: Capture, placed: PlacedCallout[], stage
   const canvas = surface.getCanvas();
   const f = await loadFaces();
   const pen = Skia.Color(lensInfo(c.lens).pen);
-  const paperC = Skia.Color('#F4F1EA');
+  const paperC = Skia.Color('#FFFFFF');
   const inkC = Skia.Color('#0B0B0C');
 
   // Screen → export space: keep x, shift y so the frame starts at `pad`.
@@ -108,53 +110,35 @@ export async function renderAnnotated(c: Capture, placed: PlacedCallout[], stage
   drawOverlay(canvas, c, { x: X(frame.x), y: Y(frame.y), w: frame.w * S, h: frame.h * S }, S, pen);
   canvas.restore();
 
-  // Leaders, dots, labels.
-  const stroke = (color: SkColor, w: number) => {
-    const p = Skia.Paint();
-    p.setStyle(PaintStyle.Stroke);
-    p.setStrokeWidth(w);
-    p.setStrokeCap(StrokeCap.Round);
-    p.setStrokeJoin(StrokeJoin.Round);
-    p.setColor(color);
-    p.setAntiAlias(true);
-    return p;
-  };
+  // Tags on the things, as on screen: white, black text, sized to the text.
   const fill = (color: SkColor) => {
     const p = Skia.Paint();
     p.setColor(color);
     p.setAntiAlias(true);
     return p;
   };
-  const monoFont = Skia.Font(f.mono ?? undefined, 12 * S);
+  const tagFont = Skia.Font(f.semibold ?? undefined, LABEL.size * S);
   for (const k of placed) {
-    const d = leaderPath({ x: X(k.slot.anchor.x), y: Y(k.slot.anchor.y) }, { x: X(k.slot.attach.x), y: Y(k.slot.attach.y) });
-    const path = Skia.Path.MakeFromSVGString(d);
-    if (path) {
-      canvas.drawPath(path, stroke(Skia.Color('rgba(0,0,0,0.3)'), 3.2 * S));
-      canvas.drawPath(path, stroke(Skia.Color('rgba(255,255,255,0.95)'), 1.4 * S));
-    }
-    canvas.drawCircle(X(k.slot.anchor.x), Y(k.slot.anchor.y), 5.4 * S, fill(Skia.Color('#FFFFFF')));
-    canvas.drawCircle(X(k.slot.anchor.x), Y(k.slot.anchor.y), 3.6 * S, fill(pen));
-    const box = Skia.XYWHRect(X(k.slot.x), Y(k.slot.y), k.width * S, 28 * S);
-    canvas.drawRRect(Skia.RRectXY(box, 9 * S, 9 * S), fill(Skia.Color('rgba(11,11,12,0.88)')));
-    canvas.drawCircle(X(k.slot.x) + 13 * S, Y(k.slot.y) + 14 * S, 3 * S, fill(pen));
-    canvas.drawText(labelText(k.label), X(k.slot.x) + 23 * S, Y(k.slot.y) + 18.2 * S, fill(paperC), monoFont);
+    const text = labelText(k.label);
+    const w = Math.min(k.width, tagFont.measureText(text).width / S + LABEL.padX * 2);
+    const box = Skia.XYWHRect(X(k.slot.x + (k.width - w) / 2), Y(k.slot.y), w * S, LABEL.height * S);
+    canvas.drawRRect(Skia.RRectXY(box, 7 * S, 7 * S), fill(Skia.Color('#FFFFFF')));
+    canvas.drawText(text, X(k.slot.x + (k.width - w) / 2 + LABEL.padX), Y(k.slot.y) + 17.6 * S, fill(inkC), tagFont);
   }
 
   // Footer: title, summary, wordmark.
   const top = Y(frame.y + frame.h) + 18 * S;
   const left = X(frame.x) + 2 * S;
   const width = frame.w * S - 4 * S;
-  const titleFont = Skia.Font(f.display ?? undefined, 26 * S);
-  const textFont = Skia.Font(f.text ?? undefined, 14 * S);
-  const smallMono = Skia.Font(f.mono ?? undefined, 10 * S);
+  const titleFont = Skia.Font(f.bold ?? undefined, 26 * S);
+  const textFont = Skia.Font(f.regular ?? undefined, 14 * S);
+  const smallFont = Skia.Font(f.semibold ?? undefined, 11 * S);
   canvas.drawText((c.annotation.title ?? 'Lensi').slice(0, 40), left, top + 26 * S, fill(paperC), titleFont);
   wrap(c.annotation.summary ?? '', textFont, width, 2).forEach((line, i) =>
-    canvas.drawText(line, left, top + (52 + i * 19) * S, fill(Skia.Color('rgba(244,241,234,0.7)')), textFont),
+    canvas.drawText(line, left, top + (52 + i * 19) * S, fill(Skia.Color('rgba(255,255,255,0.7)')), textFont),
   );
-  const mark = `LENSI · ${lensInfo(c.lens).name.toUpperCase()}`;
-  canvas.drawCircle(left + 4 * S, H - 26 * S, 3.5 * S, fill(pen));
-  canvas.drawText(mark, left + 14 * S, H - 22.5 * S, fill(Skia.Color('rgba(244,241,234,0.55)')), smallMono);
+  const mark = `Lensi · ${lensInfo(c.lens).name}`;
+  canvas.drawText(mark, left, H - 22.5 * S, fill(Skia.Color('rgba(255,255,255,0.55)')), smallFont);
 
   surface.flush();
   const out = surface.makeImageSnapshot().encodeToBase64(ImageFormat.JPEG, 92);

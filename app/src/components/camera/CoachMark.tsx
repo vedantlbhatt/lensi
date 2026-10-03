@@ -2,8 +2,8 @@ import { StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 
 import { RotatingText } from '../../motion/RotatingText';
-import { faint, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { paper } from '../../theme/tokens';
+import { face } from '../../theme/type';
 
 const THINGS = ['the coffee machine', 'a breaker box', 'your router', 'a houseplant', 'the dishwasher', 'a car engine'];
 
@@ -20,13 +20,7 @@ export function CoachMark({ pen, top }: { pen: string; top: number }) {
       <View style={styles.rotor}>
         <RotatingText words={THINGS} style={[styles.thing, { color: pen }]} interval={2000} />
       </View>
-      <View style={styles.hints}>
-        <Text style={styles.hint}>TAP · PHOTO</Text>
-        <Text style={styles.dot}>/</Text>
-        <Text style={styles.hint}>HOLD · VIDEO</Text>
-        <Text style={styles.dot}>/</Text>
-        <Text style={styles.hint}>HOLD MIC · ASK</Text>
-      </View>
+      <Text style={styles.hint}>Tap for a photo, hold for video, hold the mic to ask.</Text>
     </Animated.View>
   );
 }
@@ -35,10 +29,8 @@ const shadow = { textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 14, text
 
 const styles = StyleSheet.create({
   wrap: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
-  lead: { color: paper, fontFamily: fonts.serifItalic, fontSize: 30, lineHeight: 32, ...shadow },
+  lead: { color: paper, ...face.semibold, fontSize: 22, lineHeight: 27, ...shadow },
   rotor: { height: 44, justifyContent: 'center', overflow: 'hidden' },
-  thing: { fontFamily: fonts.display, fontSize: 34, lineHeight: 40, letterSpacing: -1.1, ...shadow },
-  hints: { flexDirection: 'row', gap: 8, marginTop: 14, alignItems: 'center' },
-  hint: { color: paper, fontFamily: fonts.mono, fontSize: 10.5, letterSpacing: 1.3, ...shadow },
-  dot: { color: faint, fontFamily: fonts.mono, fontSize: 10.5 },
+  thing: { ...face.bold, fontSize: 34, lineHeight: 40, letterSpacing: -0.6, ...shadow },
+  hint: { color: paper, ...face.medium, fontSize: 14, marginTop: 14, textAlign: 'center', ...shadow },
 });

@@ -1,29 +1,25 @@
-import { Pressable, StyleSheet, View } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming, ZoomOut } from 'react-native-reanimated';
 import { useEffect } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { Easing, FadeOut, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 
 import { haptic } from '../../lib/haptics';
-import { DecryptedText } from '../../motion/DecryptedText';
 import { useArrivalOrder, useMountValue } from '../../motion/stagger';
 import { springs } from '../../theme/motion';
-import { paper } from '../../theme/tokens';
+import { face } from '../../theme/type';
 import { LABEL, labelText, type PlacedCallout } from './layout';
 
 /**
- * Label pills for callouts. Each one unfolds from the end of its leader line
- * (so it reads as growing out of the dot) and its text decrypts in. Tapping a
- * label asks about that part; holding one opens its menu.
+ * The names, written on the things themselves: a plain white tag centred on
+ * each part. Tapping one asks about that part; holding one opens its menu.
  */
 export function CalloutLabels({
   placed,
-  pen,
   dim,
   focusId,
   onPress,
   onLongPress,
 }: {
   placed: PlacedCallout[];
-  pen: string;
   dim: boolean;
   /** One label being edited: the others step back. */
   focusId?: string | null;
@@ -34,11 +30,10 @@ export function CalloutLabels({
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {placed.map((c, i) => (
-        <Label
+        <Tag
           key={c.id}
           c={c}
-          pen={pen}
-          delay={order(i) * 110 + 380}
+          delay={order(i) * 110 + 300}
           dim={dim || (!!focusId && focusId !== c.id)}
           lifted={focusId === c.id}
           onPress={onPress}
@@ -49,9 +44,8 @@ export function CalloutLabels({
   );
 }
 
-function Label({
+function Tag({
   c,
-  pen,
   delay,
   dim,
   lifted,
@@ -59,7 +53,6 @@ function Label({
   onLongPress,
 }: {
   c: PlacedCallout;
-  pen: string;
   delay: number;
   dim: boolean;
   lifted: boolean;
@@ -81,23 +74,15 @@ function Label({
   useEffect(() => {
     d.value = withTiming(dim ? 0.18 : 1, { duration: 320, easing: Easing.out(Easing.quad) });
   }, [dim, d]);
-  const fromLeft = c.slot.side === 1;
   const a = useAnimatedStyle(() => ({
     opacity: Math.min(1, t.value * 1.4) * d.value,
-    transform: [
-      { translateX: (1 - t.value) * (fromLeft ? -14 : 14) },
-      { scaleX: (0.35 + t.value * 0.65) * (1 + lift.value * 0.08) },
-      { scaleY: (0.7 + t.value * 0.3) * (1 + lift.value * 0.08) },
-    ],
+    transform: [{ translateY: (1 - t.value) * 6 }, { scale: (0.88 + t.value * 0.12) * (1 + lift.value * 0.08) }],
   }));
   return (
     <Animated.View
-      style={[
-        styles.pill,
-        { left: c.slot.x, top: c.slot.y, width: c.width, transformOrigin: fromLeft ? 'left center' : 'right center' },
-        a,
-      ]}
-      exiting={ZoomOut.duration(200)}
+      style={[styles.slot, { left: c.slot.x, top: c.slot.y, width: c.width }, a]}
+      exiting={FadeOut.duration(160)}
+      pointerEvents="box-none"
     >
       <Pressable
         onPress={() => onPress?.(c)}
@@ -107,30 +92,30 @@ function Label({
         accessibilityRole="button"
         accessibilityLabel={`${c.label}. Ask about it.`}
         accessibilityHint={onLongPress ? 'Hold to rename or remove' : undefined}
-        style={styles.row}
+        style={styles.tag}
       >
-        <View style={[styles.dot, { backgroundColor: pen }]} />
-        <DecryptedText text={labelText(c.label)} delay={entry + 90} style={styles.text} speed={24} scrambles={3} numberOfLines={1} />
+        <Text style={styles.text} numberOfLines={1}>
+          {labelText(c.label)}
+        </Text>
       </Pressable>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  pill: {
-    position: 'absolute',
+  slot: { position: 'absolute', height: LABEL.height, alignItems: 'center', justifyContent: 'center' },
+  tag: {
     height: LABEL.height,
-    borderRadius: 9,
+    maxWidth: '100%',
+    paddingHorizontal: LABEL.padX,
+    borderRadius: 7,
     borderCurve: 'continuous',
-    backgroundColor: 'rgba(11,11,12,0.84)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(244,241,234,0.22)',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
     shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
   },
-  row: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: LABEL.padX, gap: LABEL.gap },
-  dot: { width: LABEL.dot, height: LABEL.dot, borderRadius: LABEL.dot / 2 },
-  text: { color: paper, fontFamily: LABEL.font, fontSize: LABEL.size, letterSpacing: LABEL.letter },
+  text: { color: '#000000', ...face.semibold, fontSize: LABEL.size, letterSpacing: -0.08 },
 });

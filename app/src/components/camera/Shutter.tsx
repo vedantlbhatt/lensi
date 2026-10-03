@@ -19,7 +19,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { getSettings } from '../../lib/settings';
 import { springs } from '../../theme/motion';
 import { paper, record } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -139,7 +139,7 @@ export function Shutter({
 
   const ring = useAnimatedStyle(() => ({
     transform: [{ scale: interpolate(rec.value, [0, 1], [1, 1.26]) * (1 - press.value * 0.06) }],
-    borderColor: interpolateColor(rec.value, [0, 1], [paper, 'rgba(244,241,234,0.28)']),
+    borderColor: interpolateColor(rec.value, [0, 1], [paper, 'rgba(255,255,255,0.28)']),
   }));
   const disc = useAnimatedStyle(() => {
     const size = interpolate(rec.value, [0, 1], [DISC, 30]);
@@ -169,7 +169,6 @@ export function Shutter({
   return (
     <View style={styles.wrap} accessibilityRole="button" accessibilityLabel="Shutter. Tap for a photo, hold to record video.">
       <Animated.View style={[styles.timer, timer]} pointerEvents="none">
-        <View style={styles.recDot} />
         <Text style={styles.timerText}>{`0:${String(Math.floor(secs)).padStart(2, '0')}`}</Text>
       </Animated.View>
       <Svg width={arcR * 2 + 8} height={arcR * 2 + 8} style={styles.arc} pointerEvents="none">
@@ -209,14 +208,13 @@ const styles = StyleSheet.create({
   timer: {
     position: 'absolute',
     top: -34,
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
+    justifyContent: 'center',
+    paddingHorizontal: 9,
     height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(11,11,12,0.6)',
+    borderRadius: 6,
+    borderCurve: 'continuous',
+    backgroundColor: record,
   },
-  recDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: record },
-  timerText: { color: paper, fontFamily: fonts.mono, fontSize: 12, letterSpacing: 0.4 },
+  timerText: { color: '#FFFFFF', ...face.semibold, fontSize: 14, fontVariant: ['tabular-nums'] },
 });

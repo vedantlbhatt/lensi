@@ -3,15 +3,15 @@ import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanima
 
 import { PressScale } from '../../motion/PressScale';
 import { faint, glassStrong, hairline, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon, type IconName } from '../icons/Icon';
 
 export type DropChoice = 'library' | 'files' | 'paste';
 
 const CHOICES: { key: DropChoice; icon: IconName; title: string; hint: string }[] = [
-  { key: 'library', icon: 'photo', title: 'Photos & videos', hint: 'FROM YOUR LIBRARY' },
-  { key: 'files', icon: 'file', title: 'Files', hint: 'IMAGES, CLIPS' },
-  { key: 'paste', icon: 'paste', title: 'Paste', hint: 'WHATEVER YOU COPIED' },
+  { key: 'library', icon: 'photo', title: 'Photos & videos', hint: 'From your library' },
+  { key: 'files', icon: 'file', title: 'Files', hint: 'Images and clips' },
+  { key: 'paste', icon: 'paste', title: 'Paste', hint: 'Whatever you copied' },
 ];
 
 /** "Drop anything": a small card that unfolds from the rail. */
@@ -59,9 +59,9 @@ const styles = StyleSheet.create({
     borderColor: hairline,
     transformOrigin: 'top right',
   },
-  head: { color: paper, fontFamily: 'InstrumentSerif-Italic', fontSize: 22, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 6 },
+  head: { color: paper, ...face.bold, fontSize: 17, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 8, borderRadius: 14 },
-  icon: { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(244,241,234,0.08)', alignItems: 'center', justifyContent: 'center' },
-  title: { color: paper, fontFamily: fonts.textSemi, fontSize: 15.5 },
-  hint: { color: faint, fontFamily: fonts.mono, fontSize: 10, letterSpacing: 1, marginTop: 2 },
+  icon: { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
+  title: { color: paper, ...face.semibold, fontSize: 15.5 },
+  hint: { color: faint, ...face.regular, fontSize: 13, marginTop: 1 },
 });

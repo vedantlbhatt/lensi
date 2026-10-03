@@ -9,7 +9,7 @@ import { toast } from '../ui/Toast';
 
 import { PressScale } from '../../motion/PressScale';
 import { faint, hairline, ink, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon } from '../icons/Icon';
 
 /** Type a follow-up, or hold the mic and say it; the words stream into the field. */
@@ -105,13 +105,13 @@ const styles = StyleSheet.create({
     paddingLeft: 16,
     paddingRight: 5,
     borderRadius: 25,
-    backgroundColor: 'rgba(244,241,234,0.07)',
+    backgroundColor: 'rgba(255,255,255,0.07)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: hairline,
   },
-  input: { flex: 1, color: paper, fontFamily: fonts.text, fontSize: 16, paddingVertical: 0, height: 48, outlineWidth: 0 },
+  input: { flex: 1, color: paper, ...face.regular, fontSize: 16, paddingVertical: 0, height: 48, outlineWidth: 0 },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   sendGhost: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   micGlow: { position: 'absolute', width: 34, height: 34, borderRadius: 17 },
-  inputListening: { fontFamily: fonts.serifItalic, fontSize: 18 },
+  inputListening: { ...face.medium, fontSize: 16 },
 });

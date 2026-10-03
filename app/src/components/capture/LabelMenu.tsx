@@ -3,7 +3,7 @@ import Animated, { FadeOut, ZoomIn } from 'react-native-reanimated';
 
 import { PressScale } from '../../motion/PressScale';
 import { glassStrong, hairline, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon, type IconName } from '../icons/Icon';
 
 export const MENU = { w: 196, h: 42, wide: 286 };
@@ -40,9 +40,9 @@ export function LabelMenu({
         exiting={FadeOut.duration(120)}
         style={[styles.menu, { left: x, top: y, width: extra ? MENU.wide : MENU.w, transformOrigin: below ? 'center top' : 'center bottom' }]}
       >
-        {extra ? <Item icon={extra.kind === 'open' ? 'share' : 'paste'} label={extra.kind === 'open' ? 'OPEN' : 'COPY'} onPress={extra.run} /> : null}
-        <Item icon="pencil" label="RENAME" onPress={onRename} />
-        <Item icon="close" label="REMOVE" onPress={onRemove} tint="#FF9C8F" />
+        {extra ? <Item icon={extra.kind === 'open' ? 'share' : 'paste'} label={extra.kind === 'open' ? 'Open' : 'Copy'} onPress={extra.run} /> : null}
+        <Item icon="pencil" label="Rename" onPress={onRename} />
+        <Item icon="close" label="Remove" onPress={onRemove} tint="#FF9C8F" />
       </Animated.View>
     </View>
   );
@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     borderRadius: 10,
-    backgroundColor: 'rgba(244,241,234,0.07)',
+    backgroundColor: 'rgba(255,255,255,0.07)',
   },
-  text: { fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.2 },
+  text: { ...face.semibold, fontSize: 14 },
 });

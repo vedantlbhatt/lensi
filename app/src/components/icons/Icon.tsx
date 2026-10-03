@@ -42,7 +42,7 @@ export type IconName =
 export function Icon({
   name,
   size = 24,
-  color = '#F4F1EA',
+  color = '#FFFFFF',
   stroke = 1.9,
   fill,
 }: {

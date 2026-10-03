@@ -1,14 +1,13 @@
 /**
- * Lensi paints on the world like a set of highlighters: one ink, one paper,
- * and a pen per lens. Nothing is blue-on-purple; every hue is a marker you
- * could buy.
+ * Black and white, like the Camera app, plus one highlighter per lens for
+ * what the app draws on the world.
  */
 export const ink = '#0B0B0C';
 export const ink2 = '#151517';
-export const paper = '#F4F1EA';
-export const mist = 'rgba(244,241,234,0.62)';
-export const faint = 'rgba(244,241,234,0.38)';
-export const hairline = 'rgba(244,241,234,0.14)';
+export const paper = '#FFFFFF';
+export const mist = 'rgba(255,255,255,0.66)';
+export const faint = 'rgba(255,255,255,0.42)';
+export const hairline = 'rgba(255,255,255,0.14)';
 export const glass = 'rgba(14,14,16,0.56)';
 export const glassStrong = 'rgba(14,14,16,0.82)';
 export const record = '#FF3B30';

@@ -170,73 +170,55 @@ export function roundedBoxPath(b: Box, radius: number): string {
 }
 
 export type LabelSlot = {
-  /** Where the dot sits (view space). */
+  /** The point the tag names (view space). */
   anchor: Pt;
-  /** Top-left of the label pill (view space). */
+  /** Top-left of the tag (view space). */
   x: number;
   y: number;
-  side: -1 | 1;
-  /** Where the leader line meets the pill. */
-  attach: Pt;
 };
 
 /**
- * Exploded-diagram layout: each label goes to the side of the subject its
- * anchor is on, stays as close to the anchor's height as it can, and never
- * overlaps another label, on either side. Labels stay inside `bounds`.
+ * Tags sit on the things they name, centred on the anchor. One that would
+ * cover a tag already placed moves to the nearest spot that clears every
+ * other tag (beside or above or below them), so it still sits on or next to
+ * its thing. Tags stay inside `bounds`.
  */
-export function layoutLabels(
+export function layoutTags(
   anchors: Pt[],
   sizes: { w: number; h: number }[],
   bounds: { x: number; y: number; w: number; h: number },
-  centerX: number,
-  opts: { gap?: number; reach?: number } = {},
+  opts: { gap?: number } = {},
 ): LabelSlot[] {
-  const gap = opts.gap ?? 8;
-  const reach = opts.reach ?? 34;
+  const gap = opts.gap ?? 4;
   const slots: LabelSlot[] = new Array(anchors.length);
-  const sides: Record<-1 | 1, number[]> = { [-1]: [], [1]: [] };
-
-  anchors.forEach((a, i) => {
-    let side: -1 | 1 = a.x < centerX ? -1 : 1;
-    const w = sizes[i].w;
-    // Not enough room on the preferred side: flip.
-    if (side === -1 && a.x - reach - w < bounds.x) side = 1;
-    else if (side === 1 && a.x + reach + w > bounds.x + bounds.w) side = -1;
-    sides[side].push(i);
-  });
-
-  // Columns are fixed by side; heights are placed greedily, top anchor first,
-  // each label at the free height nearest its anchor. Free means clear of every
-  // label already placed that shares any horizontal extent, whichever side it
-  // hangs from: a left-reaching and a right-reaching label can meet mid-print.
-  const order = anchors.map((_, i) => i).sort((p, q) => anchors[p].y - anchors[q].y);
-  const side = (i: number): -1 | 1 => (sides[-1].includes(i) ? -1 : 1);
   const placed: { x: number; y: number; w: number; h: number }[] = [];
-  const top = bounds.y;
+  const order = anchors.map((_, i) => i).sort((p, q) => anchors[p].y - anchors[q].y);
   for (const i of order) {
     const a = anchors[i];
     const { w, h } = sizes[i];
-    const s = side(i);
-    const x = clamp(s === -1 ? a.x - reach - w : a.x + reach, bounds.x, bounds.x + bounds.w - w);
-    const bottom = bounds.y + bounds.h - h;
-    const desired = clamp(a.y - h / 2, top, bottom);
-    const blockers = placed.filter((r) => r.x < x + w + gap && x < r.x + r.w + gap);
-    const free = (y: number) => blockers.every((r) => y + h + gap <= r.y + 1e-6 || y >= r.y + r.h + gap - 1e-6);
-    const candidates = [desired, ...blockers.flatMap((r) => [r.y + r.h + gap, r.y - h - gap])]
-      .filter((y) => y >= top - 1e-6 && y <= bottom + 1e-6)
-      .sort((p, q) => Math.abs(p - desired) - Math.abs(q - desired));
-    const y = candidates.find(free) ?? desired;
-    placed.push({ x, y, w, h });
-    slots[i] = { anchor: a, x, y, side: s, attach: { x: s === -1 ? x + w : x, y: y + h / 2 } };
+    const cx = (v: number) => clamp(v, bounds.x, bounds.x + bounds.w - w);
+    const cy = (v: number) => clamp(v, bounds.y, bounds.y + bounds.h - h);
+    const x0 = cx(a.x - w / 2);
+    const y0 = cy(a.y - h / 2);
+    const free = (x: number, y: number) =>
+      placed.every((r) => x + w + gap <= r.x + 1e-6 || r.x + r.w + gap <= x + 1e-6 || y + h + gap <= r.y + 1e-6 || r.y + r.h + gap <= y + 1e-6);
+    const xs = [x0, ...placed.flatMap((r) => [cx(r.x - w - gap), cx(r.x + r.w + gap)])];
+    const ys = [y0, ...placed.flatMap((r) => [cy(r.y - h - gap), cy(r.y + r.h + gap)])];
+    let best = { x: x0, y: y0 };
+    let bestD = Infinity;
+    for (const x of xs) {
+      for (const y of ys) {
+        const d = Math.hypot(x - x0, y - y0);
+        if (d < bestD && free(x, y)) {
+          best = { x, y };
+          bestD = d;
+        }
+      }
+    }
+    placed.push({ ...best, w, h });
+    slots[i] = { anchor: a, ...best };
   }
   return slots;
-}
-
-/** A soft S-curve from the dot to the pill, leaving horizontally at both ends. */
-export function leaderPath(from: Pt, to: Pt): string {
-  const mx = (from.x + to.x) / 2;
-  return `M${r(from.x)} ${r(from.y)} C${r(mx)} ${r(from.y)} ${r(mx)} ${r(to.y)} ${r(to.x)} ${r(to.y)}`;
 }
 
 /**

@@ -5,7 +5,7 @@ import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { BlurText } from '../../motion/BlurText';
 import { ShinyText } from '../../motion/ShinyText';
 import { faint, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 
 /**
  * While the mic is held: the camera dims from the bottom, and what you say
@@ -18,8 +18,7 @@ export function ListeningOverlay({ transcript, pen, top }: { transcript: string;
       <LinearGradient colors={['rgba(11,11,12,0.55)', 'rgba(11,11,12,0.1)', 'rgba(11,11,12,0.75)']} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
       <View style={[styles.text, { top }]}>
         <View style={styles.kickerRow}>
-          <View style={[styles.dot, { backgroundColor: pen }]} />
-          <Text style={styles.kicker}>LISTENING · LET GO TO ASK</Text>
+          <Text style={styles.kicker}>Listening. Let go to ask.</Text>
         </View>
         {words ? (
           <Animated.View entering={FadeInDown.duration(240)}>
@@ -36,8 +35,7 @@ export function ListeningOverlay({ transcript, pen, top }: { transcript: string;
 const styles = StyleSheet.create({
   text: { position: 'absolute', left: 22, right: 22, gap: 14 },
   kickerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  kicker: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.4 },
-  words: { color: paper, fontFamily: fonts.display, fontSize: 34, lineHeight: 38, letterSpacing: -1.1 },
-  placeholder: { color: paper, fontFamily: fonts.serifItalic, fontSize: 30 },
+  kicker: { color: faint, ...face.medium, fontSize: 12 },
+  words: { color: paper, ...face.bold, fontSize: 34, lineHeight: 38, letterSpacing: -0.6 },
+  placeholder: { color: paper, ...face.semibold, fontSize: 24 },
 });

@@ -9,7 +9,7 @@ import { RollingNumber } from '../../motion/RollingNumber';
 import { ShinyText } from '../../motion/ShinyText';
 import { springs } from '../../theme/motion';
 import { faint, ink, mist, paper } from '../../theme/tokens';
-import { fonts } from '../../theme/type';
+import { face } from '../../theme/type';
 import { Icon } from '../icons/Icon';
 
 /**
@@ -43,10 +43,10 @@ export function StepPlayer({
   return (
     <View style={styles.wrap}>
       <View style={styles.head}>
-        <Text style={styles.kicker}>STEP</Text>
-        <RollingNumber value={index + 1} style={[styles.count, { color: pen }]} lineHeight={18} />
-        <Text style={styles.of}>/</Text>
-        <RollingNumber value={steps.length} style={styles.count} lineHeight={18} />
+        <Text style={styles.kicker}>Step</Text>
+        <RollingNumber value={index + 1} pad={1} style={styles.count} lineHeight={20} />
+        <Text style={styles.kicker}>of</Text>
+        <RollingNumber value={steps.length} pad={1} style={styles.count} lineHeight={20} />
         {pending ? <ShinyText text=" writing…" style={styles.writing} /> : null}
         <View style={{ flex: 1 }} />
         <PressScale onPress={onNarrate} accessibilityRole="button" accessibilityLabel={narrate ? 'Stop reading steps aloud' : 'Read steps aloud'} scaleTo={0.85} hitSlop={8}>
@@ -126,20 +126,19 @@ function Segment({ on, current, pen }: { on: boolean; current: boolean; pen: str
 
 const styles = StyleSheet.create({
   wrap: { gap: 12 },
-  head: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 30 },
-  kicker: { color: faint, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1.6 },
-  count: { color: paper, fontFamily: fonts.mono, fontSize: 15, letterSpacing: 0.5 },
-  of: { color: faint, fontFamily: fonts.mono, fontSize: 15 },
-  writing: { color: mist, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 0.6 },
-  iconBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(244,241,234,0.07)' },
-  question: { color: mist, fontFamily: fonts.serifItalic, fontSize: 19, lineHeight: 22, marginTop: -4 },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 30 },
+  kicker: { color: mist, ...face.semibold, fontSize: 15 },
+  count: { color: paper, ...face.semibold, fontSize: 15, fontVariant: ['tabular-nums'] },
+  writing: { color: mist, ...face.medium, fontSize: 13 },
+  iconBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.07)' },
+  question: { color: mist, ...face.semibold, fontSize: 15, lineHeight: 20, marginTop: -4 },
   segments: { flexDirection: 'row', gap: 4, height: 4 },
-  segment: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: 'rgba(244,241,234,0.12)' },
+  segment: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.12)' },
   body: { minHeight: 58, justifyContent: 'center' },
-  text: { color: paper, fontFamily: fonts.displayBold, fontSize: 21, lineHeight: 26, letterSpacing: -0.4 },
+  text: { color: paper, ...face.bold, fontSize: 21, lineHeight: 26, letterSpacing: -0.2 },
   controls: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   nextSlot: { flex: 1 },
-  prev: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(244,241,234,0.08)' },
+  prev: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
   next: { height: 52, borderRadius: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  nextText: { color: ink, fontFamily: fonts.display, fontSize: 18, letterSpacing: -0.3 },
+  nextText: { color: ink, ...face.bold, fontSize: 18, letterSpacing: -0.1 },
 });

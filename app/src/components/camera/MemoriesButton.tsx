@@ -57,6 +57,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderCurve: 'continuous',
   },
-  back: { transform: [{ rotate: '8deg' }, { translateX: 3 }], opacity: 0.5, backgroundColor: 'rgba(244,241,234,0.25)' },
+  back: { transform: [{ rotate: '8deg' }, { translateX: 3 }], opacity: 0.5, backgroundColor: 'rgba(255,255,255,0.25)' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

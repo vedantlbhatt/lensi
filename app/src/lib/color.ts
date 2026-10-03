@@ -1,7 +1,7 @@
 /**
  * `rgba()` from a #RRGGBB colour and an alpha, safe to build every frame on the
  * UI thread. The alpha is clamped and rounded to three decimals: a tiny number
- * would otherwise print in exponent form ("rgba(244,241,234,9.4e-7)"), which
+ * would otherwise print in exponent form ("rgba(255,255,255,9.4e-7)"), which
  * Reanimated's colour parser rejects by throwing, and in a Release build an
  * error thrown in a worklet aborts the app.
  */

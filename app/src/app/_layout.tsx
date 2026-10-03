@@ -14,8 +14,7 @@ import { fontAssets } from '../theme/type';
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
-  // Fonts are also embedded at build time by the expo-font plugin; this keeps
-  // the web preview and Expo Go-style reloads honest.
+  // iOS uses the system font and loads nothing; the web preview loads Inter.
   const [fontsLoaded, fontError] = useFonts(fontAssets);
 
   useEffect(() => {

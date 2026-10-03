@@ -344,26 +344,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       guard let pin = pins[id] else { continue }
       guard let (p, dist) = project(pin.world) else { pin.setHidden(true); continue }
       pin.setHidden(false)
-      pin.dot.position = p
-
-      let labelCenter: CGPoint
-      if pin.parentId == nil {
-        labelCenter = CGPoint(x: p.x, y: p.y - 46)
-      } else {
-        let w = pin.label.bounds.width
-        labelCenter = CGPoint(x: p.x + pin.side * (w / 2 + 26), y: p.y - 18)
-      }
-      pin.label.center = labelCenter
-      let path = UIBezierPath()
-      path.move(to: p)
-      if pin.parentId == nil {
-        path.addLine(to: CGPoint(x: p.x, y: labelCenter.y + pin.label.bounds.height / 2))
-      } else {
-        let edge = CGPoint(x: labelCenter.x - pin.side * pin.label.bounds.width / 2, y: labelCenter.y)
-        path.addLine(to: CGPoint(x: edge.x - pin.side * 8, y: edge.y))
-        path.addLine(to: edge)
-      }
-      pin.line.path = path.cgPath
+      // The tag sits on the thing itself: no dot, no leader line.
+      pin.label.center = p
 
       if let outline = pin.outline {
         let s = CGFloat(pin.outlineDistance / max(dist, 0.05))
@@ -510,8 +492,6 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private func addPin(_ pin: Pin) {
     pins[pin.id] = pin
     pinOrder.append(pin.id)
-    pinLayer.layer.addSublayer(pin.line)
-    pinLayer.layer.addSublayer(pin.dot)
     pinLayer.addSubview(pin.label)
     layoutPins()
     pin.popIn()
