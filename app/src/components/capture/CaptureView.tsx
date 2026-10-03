@@ -21,7 +21,7 @@ import { devhooks } from '../../lib/devhooks';
 import { fromView, toView } from '../../lib/geometry';
 import { haptic } from '../../lib/haptics';
 import { say } from '../../lib/narrate';
-import { analyze, ask, askAbout, cancel, isHowTo } from '../../lib/pipeline';
+import { analyze, ask, askAbout, cancel, isHowTo, switchMoment } from '../../lib/pipeline';
 import { setSettings, useSettings } from '../../lib/settings';
 import { getCapture, removeCapture, useCapture } from '../../lib/store';
 import type { Capture, Pt } from '../../lib/types';
@@ -38,6 +38,7 @@ import { AnnotationOverlay } from './AnnotationOverlay';
 import { AskBar } from './AskBar';
 import { CalloutLabels } from './CalloutLabels';
 import { InfoCard } from './InfoCard';
+import { MomentStrip } from './MomentStrip';
 import { activeSteps, CARD_PEEK, FRAME_RADIUS, placeCallouts, stageFor } from './layout';
 import { renderAnnotated, shareCapture } from './share';
 import { StepPlayer } from './StepPlayer';
@@ -297,6 +298,12 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
         {walking ? <WalkPointer target={pointerTarget} index={stepIndex} pen={lens.pen} home={{ x: screen.width / 2, y: screen.height - CARD_PEEK }} /> : null}
       </Animated.View>
 
+      {capture.media.kind === 'video' && capture.moments.length > 1 && settled && !walking ? (
+        <Animated.View style={[styles.moments, { left: frame.x + 10, top: frame.y + frame.h - 66 }, chrome]}>
+          <MomentStrip moments={capture.moments} active={capture.media.stillUri} pen={lens.pen} onPick={(uri) => switchMoment(capture.id, uri)} />
+        </Animated.View>
+      ) : null}
+
       <Sparks ref={sparks} color={lens.pen} />
 
       {/* Top bar */}
@@ -479,5 +486,6 @@ const styles = StyleSheet.create({
   handle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(244,241,234,0.22)', marginBottom: 10 },
   ask: { marginTop: 14 },
   videoBadge: { position: 'absolute', right: 12, bottom: 12 },
+  moments: { position: 'absolute' },
   playBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: paper, alignItems: 'center', justifyContent: 'center' },
 });

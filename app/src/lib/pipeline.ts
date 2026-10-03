@@ -222,6 +222,23 @@ export async function askAbout(id: string, at: Pt): Promise<Pt[] | null> {
   return polygon ?? null;
 }
 
+/** Video: annotate a different keyframe. Clears the old drawing; keeps the thread. */
+export function switchMoment(id: string, uri: string) {
+  const c = getCapture(id);
+  if (!c || c.media.stillUri === uri) return;
+  cancel(id);
+  patchCapture(id, (x) => ({
+    ...x,
+    media: { ...x.media, stillUri: uri },
+    subject: null,
+    regions: [],
+    annotation: emptyAnnotation(),
+    status: 'analyzing',
+    error: null,
+  }));
+  void analyze(id, { walkthrough: false });
+}
+
 export function cancel(id: string) {
   controllers.get(id)?.abort();
   controllers.get(`${id}:ask`)?.abort();
