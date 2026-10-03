@@ -20,8 +20,9 @@ export function RotatingText({
   return (
     <Animated.Text
       key={i}
-      entering={FadeInDown.duration(420).easing(Easing.bezier(0.16, 1, 0.3, 1)).withInitialValues({ transform: [{ translateY: 14 }] })}
-      exiting={FadeOutUp.duration(260)}
+      // The old word is mostly gone before the new one rises, so they never sit on top of each other.
+      entering={FadeInDown.delay(170).duration(420).easing(Easing.bezier(0.16, 1, 0.3, 1)).withInitialValues({ transform: [{ translateY: 14 }] })}
+      exiting={FadeOutUp.duration(190)}
       style={style}
     >
       {words[i]}
