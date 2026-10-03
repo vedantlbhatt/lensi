@@ -178,13 +178,17 @@ export default function Camera() {
     }, quick ? 900 : 1500);
     return () => clearTimeout(t);
   }, [guideOn, voice.listening, voice.transcript, stopVoice, onHeard]);
-  // A mic left open: after 15 s, use whatever was heard (hands free opens it again).
+  // A mic left open: after 15 s, use whatever was heard. Hands free waits
+  // longer before starting a fresh session (each one is a recognition request).
   useEffect(() => {
     if (!guideOn || !voice.listening) return;
     const free = freeRef.current;
-    const t = setTimeout(() => {
-      void stopVoice().then((q) => q && onHeard(q, free));
-    }, 15000);
+    const t = setTimeout(
+      () => {
+        void stopVoice().then((q) => q && onHeard(q, free));
+      },
+      free ? 45000 : 15000,
+    );
     return () => clearTimeout(t);
   }, [guideOn, voice.listening, stopVoice, onHeard]);
   // Hands free ends with the job.
