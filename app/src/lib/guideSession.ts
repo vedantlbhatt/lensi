@@ -325,6 +325,13 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     if (state.status === 'finished') speak('All done.');
   }, [state.status, speak]);
 
+  // A job runs with the phone propped up and nobody touching it: keep the screen on.
+  const jobOn = opts.enabled && state.status !== 'idle';
+  useEffect(() => {
+    void LensiAR.setKeepAwake(jobOn).catch(() => {});
+  }, [jobOn]);
+  useEffect(() => () => void LensiAR.setKeepAwake(false).catch(() => {}), []);
+
   // Leaving the guide (another lens, a capture on top) stops the work and the watch.
   useEffect(() => {
     if (!opts.enabled) {

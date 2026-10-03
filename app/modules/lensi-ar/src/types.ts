@@ -147,4 +147,6 @@ export type LensiARModuleShape = {
   speechRequestPermission(): Promise<boolean>;
   speechStart(): Promise<void>;
   speechStop(): Promise<void>;
+  /** Keep the screen from locking (a hands-free job has no touches for minutes). */
+  setKeepAwake(on: boolean): Promise<void>;
 };

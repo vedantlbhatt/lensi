@@ -241,6 +241,7 @@ export const LensiAR = {
       listeners.onSpeech.forEach((fn) => fn(e));
     }, 230);
   },
+  async setKeepAwake(_on: boolean) {},
   async speechStop() {
     if (speechTimer) clearInterval(speechTimer);
     speechTimer = null;

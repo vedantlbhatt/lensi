@@ -96,6 +96,11 @@ public class LensiARModule: Module {
       }
     }
 
+    // A hands-free job has no touches for minutes: keep the screen from locking.
+    AsyncFunction("setKeepAwake") { (on: Bool) in
+      UIApplication.shared.isIdleTimerDisabled = on
+    }.runOnQueue(.main)
+
     // MARK: The camera
 
     View(LensiARView.self) {
