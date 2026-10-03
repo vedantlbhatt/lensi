@@ -126,6 +126,10 @@ alive export
 if [ -n "$DATA" ]; then
   find "$DATA" -name 'lensi-*.jpg' -newer "$OUT/01-camera.png" -size +20k 2>/dev/null | head -3 | while read -r f; do cp "$f" "$OUT/13-export-$(basename "$f")"; echo "export $f"; done
   find "$DATA/Documents/lensi" -name capture.json 2>/dev/null | head -12 | while read -r f; do cp "$f" "$OUT/capture-$(basename "$(dirname "$f")").json"; done
+  # Scripted steps that failed leave their error here (Release builds log no JS).
+  cp "$DATA"/Documents/lensi-*-error.txt "$OUT/" 2>/dev/null || true
+  tl "share images: $(find "$DATA" -name 'lensi-*.jpg' 2>/dev/null | wc -l | tr -d ' ')"
+
 fi
 
 # A real deep link into the running app, last (it may leave a system prompt up).

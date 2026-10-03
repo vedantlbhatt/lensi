@@ -268,16 +268,25 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
 
   // CI: render the share image once the annotation has landed.
   const exported = useRef(false);
+  const latest = useRef({ capture, placed, stage });
+  latest.current = { capture, placed, stage };
   useEffect(() => {
     if (!devhooks.autoExport || exported.current || !settled || capture.status !== 'ready') return;
-    exported.current = true;
+    // Marked done only when it fires: the capture keeps changing for a moment after it's
+    // ready (outlines refine, labels land), and each change used to cancel the pending
+    // export for good.
     const t = setTimeout(() => {
-      renderAnnotated(capture, placed, stage)
+      exported.current = true;
+      const { capture: c, placed: p, stage: s } = latest.current;
+      renderAnnotated(c, p, s)
         .then((uri) => console.log(`[lensi] exported ${uri}`))
-        .catch((e) => console.warn('[lensi] export failed', e));
+        .catch((e) => {
+          console.warn('[lensi] export failed', e);
+          devhooks.report('export', e);
+        });
     }, 1500);
     return () => clearTimeout(t);
-  }, [settled, capture, placed, stage]);
+  }, [settled, capture.status]);
   const thinking = capture.status === 'analyzing';
   const anyPending = thinking || capture.thread.some((x) => x.pending);
 
