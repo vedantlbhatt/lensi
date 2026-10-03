@@ -126,6 +126,32 @@ final class Analyzer {
       ["label": $0.label, "confidence": Double($0.confidence), "box": Analyzer.box(upright: $0.rect)]
     }
 
+    // Part proposals: SAM on a grid over the subject, so the model can point at the buttons,
+    // knobs and handles of a thing and not only at whole objects and text. Also leaves the
+    // image's SAM embedding cached for the taps and refinements that follow.
+    var partOut: [[String: Any]] = []
+    if let sam = SAMSegmenter.shared {
+      var region = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+      if let box = subject?.box {
+        region = box
+      } else if let top = objects.max(by: { $0.confidence < $1.confidence }) {
+        region = top.rect
+      } else if let b = saliency.results?.first?.salientObjects?.first?.boundingBox {
+        region = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+      }
+      region = region.insetBy(dx: -0.04, dy: -0.04).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+      do {
+        try sam.prepare(image: image, id: uri)
+        let parts = try sam.proposeParts(id: uri, region: region)
+        partOut = parts.map { (m: SAMMask) -> [String: Any] in
+          let polygon: [[String: Double]] = m.polygon.map { p in ["x": Double(p.x), "y": Double(p.y)] }
+          return ["polygon": polygon, "box": Analyzer.box(upright: m.bounds), "score": Double(m.score)]
+        }
+      } catch {
+        NSLog("[lensi] part proposals failed: %@", error.localizedDescription)
+      }
+    }
+
     return [
       "width": image.width,
       "height": image.height,
@@ -136,6 +162,7 @@ final class Analyzer {
       "objects": objectOut,
       "labels": labels,
       "salient": salient,
+      "parts": partOut,
       "ms": Int((CACurrentMediaTime() - started) * 1000),
     ]
   }

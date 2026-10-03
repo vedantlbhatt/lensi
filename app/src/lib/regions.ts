@@ -10,6 +10,7 @@ export type AnalysisLike = {
   objects: { label: string; confidence: number; box: Box }[];
   labels: { label: string; confidence: number }[];
   salient: Box[];
+  parts?: { polygon: Pt[]; box: Box; score: number }[];
 };
 
 const area = (b: Box) => Math.max(0, b.w) * Math.max(0, b.h);
@@ -40,7 +41,8 @@ export function thingLabel(labels: { label: string; confidence: number }[]): str
 
 const MAX_TEXT = 8;
 const MAX_OBJECTS = 5;
-const MAX_REGIONS = 16;
+const MAX_PARTS = 6;
+const MAX_REGIONS = 18;
 
 /**
  * Turns raw on-device findings into numbered regions, most useful first. The
@@ -93,6 +95,17 @@ export function buildRegions(a: AnalysisLike): { subject: Region | null; regions
   }
 
   for (const b of a.barcodes) add({ kind: 'barcode', box: b.box, text: b.payload });
+
+  // SAM's part proposals: what the model can point at inside the thing (a knob,
+  // a port, a handle). Skip ones that repeat a region already marked.
+  const parts = [...(a.parts ?? [])].sort((p, q) => q.score - p.score);
+  let partCount = 0;
+  for (const p of parts) {
+    if (partCount >= MAX_PARTS) break;
+    if (p.polygon.length < 3 || regions.some((r) => iou(r.box, p.box) > 0.6)) continue;
+    add({ kind: 'part', box: p.box, polygon: p.polygon, confidence: p.score });
+    partCount++;
+  }
 
   // Biggest, most confident text first; skip single stray characters.
   const text = a.text

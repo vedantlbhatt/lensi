@@ -76,6 +76,8 @@ export type Analysis = {
   /** Whole-image classification, best first. */
   labels: { label: string; confidence: number }[];
   salient: NBox[];
+  /** SAM part proposals over the subject (buttons, knobs, handles), best first. */
+  parts?: { polygon: NPt[]; box: NBox; score: number }[];
   ms: number;
 };
 

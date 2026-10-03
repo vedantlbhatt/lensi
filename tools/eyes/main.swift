@@ -57,7 +57,9 @@ for url in images {
       }
     }
 
-    // Overlay: subject (yellow), other instances (white), SAM parts (magenta), text boxes (cyan), objects (orange).
+    // Overlay: subject (yellow), other instances (white), SAM parts at prompts (magenta), SAM part
+    // proposals from analyze() (green), text boxes (cyan), objects (orange).
+    let proposals = result["parts"] as? [[String: Any]] ?? []
     let cs = CGColorSpace(name: CGColorSpace.sRGB)!
     guard let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
                               space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
@@ -85,6 +87,7 @@ for url in images {
     if let s = result["subject"] as? [String: Any] { stroke(pts(s["polygon"]), CGColor(red: 0.89, green: 1, blue: 0.31, alpha: 1), lw * 2) }
     for t in result["text"] as? [[String: Any]] ?? [] { if let r = rect(t["box"]) { box(r, CGColor(red: 0.2, green: 0.9, blue: 1, alpha: 0.9)) } }
     for o in result["objects"] as? [[String: Any]] ?? [] { if let r = rect(o["box"]) { box(r, CGColor(red: 1, green: 0.6, blue: 0.24, alpha: 0.9)) } }
+    for p in proposals { stroke(pts(p["polygon"]), CGColor(red: 0.36, green: 0.95, blue: 0.65, alpha: 1), lw) }
     for p in parts { stroke(pts(p["polygon"]), CGColor(red: 1, green: 0.3, blue: 0.85, alpha: 1), lw * 1.5) }
 
     if let out = ctx.makeImage(),
@@ -94,7 +97,7 @@ for url in images {
     }
 
     var full = result
-    full["parts"] = parts
+    full["prompted"] = parts
     let json = try JSONSerialization.data(withJSONObject: full, options: [.prettyPrinted, .sortedKeys])
     try json.write(to: outDir.appendingPathComponent("\(name).json"))
 
@@ -110,6 +113,7 @@ for url in images {
       "objects": objects.joined(separator: ", "),
       "labels": labels.joined(separator: ", "),
       "parts": parts.map { "\($0["engine"] ?? "?"):\($0["points"] ?? 0)" }.joined(separator: " "),
+      "proposals": proposals.map { String(format: "%.2f", ($0["score"] as? Double) ?? 0) }.joined(separator: " "),
     ]
     summary.append(line)
     print(line)

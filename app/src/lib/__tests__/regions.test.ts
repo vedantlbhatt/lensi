@@ -97,3 +97,31 @@ test('the subject is named after a thing, not the scene', () => {
   });
   assert.equal(subject?.text, 'circuit board');
 });
+
+test('SAM part proposals become numbered parts, best first, without repeating marked regions', () => {
+  const part = (x: number, y: number, s: number, score: number) => ({
+    polygon: square(x, y, s),
+    box: { x, y, w: s, h: s },
+    score,
+  });
+  const { regions } = buildRegions({
+    subject: { box: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 }, polygon: square(0.1, 0.1, 0.8) },
+    instances: [],
+    text: [],
+    barcodes: [],
+    objects: [],
+    labels: [],
+    salient: [],
+    parts: [
+      part(0.2, 0.2, 0.1, 0.85),
+      part(0.1, 0.1, 0.8, 0.99), // the subject again: skipped
+      part(0.5, 0.5, 0.1, 0.95),
+      ...Array.from({ length: 8 }, (_, i) => part(0.12 + i * 0.09, 0.8, 0.05, 0.8)),
+    ],
+  });
+  const parts = regions.filter((r) => r.kind === 'part');
+  assert.equal(parts.length, 6);
+  assert.deepEqual(parts[0].box, { x: 0.5, y: 0.5, w: 0.1, h: 0.1 });
+  assert.ok(parts.every((p) => (p.polygon?.length ?? 0) >= 3));
+  assert.equal(regions[0].kind, 'subject');
+});

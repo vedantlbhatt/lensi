@@ -157,6 +157,80 @@ final class SAMSegmenter: @unchecked Sendable {
 
     let used = Array(zip(points, labels).prefix(SAMSegmenter.slots - (box == nil ? 0 : 2)))
     guard !used.isEmpty || box != nil else { throw SAMError.noPrompt }
+    let (masks, scores) = try decode(used, box: box, prepared: prepared)
+    let k = SAMSegmenter.chooseMask(scores, labels: used.map { $0.1 }, hasBox: box != nil)
+    return try outline(masks, candidate: k, score: scores[k], prepared: prepared)
+  }
+
+  /// Part proposals for set-of-marks prompting: single positive points on a grid over `region`
+  /// (normalized, upright, top-left origin). From each prompt it keeps the multimask candidate
+  /// that looks like a part (confident, between `minArea` and `maxArea` of the image), drops
+  /// candidates that mostly overlap a part already kept, and stops at `maxParts` or when
+  /// `budget` runs out. Best first. Call `prepare` first.
+  func proposeParts(id: String, region: CGRect, grid: Int = 5, maxParts: Int = 8,
+                    minArea: Float = 0.002, maxArea: Float = 0.2, minScore: Float = 0.8,
+                    budget: TimeInterval = 0.9) throws -> [SAMMask] {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let prepared = cache[id] else { throw SAMError.notPrepared(id) }
+    touch(id)
+    let started = Date()
+    let n = SAMSegmenter.maskSide
+    let plane = n * n
+    // The image fills the top-left resized/4 cells of each 256x256 plane.
+    let validW = min(n, max(1, Int((Double(prepared.resizedWidth) / 4).rounded(.up))))
+    let validH = min(n, max(1, Int((Double(prepared.resizedHeight) / 4).rounded(.up))))
+    let cells = Float(validW * validH)
+    var keptMasks: [SAMMask] = []
+    var keptBits: [[Bool]] = []
+    let g = max(1, grid)
+    scan: for gy in 0..<g {
+      for gx in 0..<g {
+        if keptMasks.count >= maxParts || Date().timeIntervalSince(started) > budget { break scan }
+        let p = CGPoint(x: region.minX + (CGFloat(gx) + 0.5) / CGFloat(g) * region.width,
+                        y: region.minY + (CGFloat(gy) + 0.5) / CGFloat(g) * region.height)
+        guard p.x > 0, p.x < 1, p.y > 0, p.y < 1 else { continue }
+        let (masks, scores) = try decode([(p, 1)], box: nil, prepared: prepared)
+        // Candidates 1...3 are the multimask outputs (roughly: subpart, part, whole).
+        var best: (k: Int, bits: [Bool], score: Float)?
+        for k in 1...3 where scores[k] >= minScore && scores[k] > (best?.score ?? -1) {
+          var bits = [Bool](repeating: false, count: validW * validH)
+          var on = 0
+          let base = k * plane
+          for y in 0..<validH {
+            let row = base + y * n
+            for x in 0..<validW where masks[row + x] > 0 {
+              bits[y * validW + x] = true
+              on += 1
+            }
+          }
+          let area = Float(on) / cells
+          guard area >= minArea, area <= maxArea else { continue }
+          best = (k: k, bits: bits, score: scores[k])
+        }
+        guard let chosen = best else { continue }
+        let duplicate = keptBits.contains { (other: [Bool]) -> Bool in
+          var inter = 0
+          var union = 0
+          for i in 0..<other.count {
+            let a = other[i], b = chosen.bits[i]
+            if a && b { inter += 1 }
+            if a || b { union += 1 }
+          }
+          return union > 0 && Float(inter) / Float(union) > 0.6
+        }
+        if duplicate { continue }
+        let mask = try outline(masks, candidate: chosen.k, score: chosen.score, prepared: prepared)
+        guard mask.polygon.count >= 3 else { continue }
+        keptMasks.append(mask)
+        keptBits.append(chosen.bits)
+      }
+    }
+    return keptMasks.sorted { $0.score > $1.score }
+  }
+
+  /// One decoder pass: four 256x256 logit planes (row-major) and their predicted IoUs.
+  private func decode(_ used: [(CGPoint, Int)], box: CGRect?, prepared: Prepared) throws -> (masks: [Float], scores: [Float]) {
     let (coords, slotLabels) = try packPrompt(used, box: box, prepared: prepared)
     let input = try MLDictionaryFeatureProvider(dictionary: [
       "image_embeddings": MLFeatureValue(multiArray: prepared.embeddings),
@@ -173,18 +247,22 @@ final class SAMSegmenter: @unchecked Sendable {
     let scores = MLShapedArray<Float>(converting: scoresArray).scalars
     let plane = SAMSegmenter.maskSide * SAMSegmenter.maskSide
     guard scores.count == 4, masks.count == 4 * plane else { throw SAMError.badOutput("shape") }
+    return (masks: masks, scores: scores)
+  }
 
-    let k = SAMSegmenter.chooseMask(scores, labels: used.map { $0.1 }, hasBox: box != nil)
+  /// One candidate's largest region as a simplified outline, normalized to the prepared image.
+  private func outline(_ masks: [Float], candidate k: Int, score: Float, prepared: Prepared) throws -> SAMMask {
+    let plane = SAMSegmenter.maskSide * SAMSegmenter.maskSide
     let (binary, area) = try binaryMask(masks, offset: k * plane, prepared: prepared)
     let workWidth = CGFloat(CVPixelBufferGetWidth(binary))
     let workHeight = CGFloat(CVPixelBufferGetHeight(binary))
     let contour = try largestContour(binary)
-    guard contour.count >= 3 else { return SAMMask(polygon: [], score: scores[k], area: area) }
+    guard contour.count >= 3 else { return SAMMask(polygon: [], score: score, area: area) }
     let simplified = SAMSegmenter.simplifyClosed(
       contour, epsilon: SAMSegmenter.simplifyFraction * SAMSegmenter.perimeter(contour))
-    guard simplified.count >= 3 else { return SAMMask(polygon: [], score: scores[k], area: area) }
+    guard simplified.count >= 3 else { return SAMMask(polygon: [], score: score, area: area) }
     let polygon = simplified.map { CGPoint(x: $0.x / workWidth, y: $0.y / workHeight) }
-    return SAMMask(polygon: polygon, score: scores[k], area: area)
+    return SAMMask(polygon: polygon, score: score, area: area)
   }
 
   private func touch(_ id: String) {

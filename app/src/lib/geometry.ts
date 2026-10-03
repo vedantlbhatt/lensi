@@ -183,7 +183,7 @@ export type LabelSlot = {
 /**
  * Exploded-diagram layout: each label goes to the side of the subject its
  * anchor is on, stays as close to the anchor's height as it can, and never
- * overlaps another label on that side. Labels stay inside `bounds`.
+ * overlaps another label, on either side. Labels stay inside `bounds`.
  */
 export function layoutLabels(
   anchors: Pt[],
@@ -206,28 +206,29 @@ export function layoutLabels(
     sides[side].push(i);
   });
 
-  for (const side of [-1, 1] as const) {
-    const idx = sides[side].sort((p, q) => anchors[p].y - anchors[q].y);
-    // Desired centers, then a top-down sweep pushing overlaps down…
-    const ys = idx.map((i) => anchors[i].y - sizes[i].h / 2);
-    for (let k = 0; k < idx.length; k++) {
-      const minY = k === 0 ? bounds.y : ys[k - 1] + sizes[idx[k - 1]].h + gap;
-      ys[k] = Math.max(ys[k], minY);
-    }
-    // …and a bottom-up sweep pulling everything back inside the bounds.
-    for (let k = idx.length - 1; k >= 0; k--) {
-      const maxY = k === idx.length - 1 ? bounds.y + bounds.h - sizes[idx[k]].h : ys[k + 1] - sizes[idx[k]].h - gap;
-      ys[k] = Math.min(ys[k], maxY);
-    }
-    idx.forEach((i, k) => {
-      const a = anchors[i];
-      const { w, h } = sizes[i];
-      const y = clamp(ys[k], bounds.y, bounds.y + bounds.h - h);
-      let x = side === -1 ? a.x - reach - w : a.x + reach;
-      x = clamp(x, bounds.x, bounds.x + bounds.w - w);
-      const attach = { x: side === -1 ? x + w : x, y: y + h / 2 };
-      slots[i] = { anchor: a, x, y, side, attach };
-    });
+  // Columns are fixed by side; heights are placed greedily, top anchor first,
+  // each label at the free height nearest its anchor. Free means clear of every
+  // label already placed that shares any horizontal extent, whichever side it
+  // hangs from: a left-reaching and a right-reaching label can meet mid-print.
+  const order = anchors.map((_, i) => i).sort((p, q) => anchors[p].y - anchors[q].y);
+  const side = (i: number): -1 | 1 => (sides[-1].includes(i) ? -1 : 1);
+  const placed: { x: number; y: number; w: number; h: number }[] = [];
+  const top = bounds.y;
+  for (const i of order) {
+    const a = anchors[i];
+    const { w, h } = sizes[i];
+    const s = side(i);
+    const x = clamp(s === -1 ? a.x - reach - w : a.x + reach, bounds.x, bounds.x + bounds.w - w);
+    const bottom = bounds.y + bounds.h - h;
+    const desired = clamp(a.y - h / 2, top, bottom);
+    const blockers = placed.filter((r) => r.x < x + w + gap && x < r.x + r.w + gap);
+    const free = (y: number) => blockers.every((r) => y + h + gap <= r.y + 1e-6 || y >= r.y + r.h + gap - 1e-6);
+    const candidates = [desired, ...blockers.flatMap((r) => [r.y + r.h + gap, r.y - h - gap])]
+      .filter((y) => y >= top - 1e-6 && y <= bottom + 1e-6)
+      .sort((p, q) => Math.abs(p - desired) - Math.abs(q - desired));
+    const y = candidates.find(free) ?? desired;
+    placed.push({ x, y, w, h });
+    slots[i] = { anchor: a, x, y, side: s, attach: { x: s === -1 ? x + w : x, y: y + h / 2 } };
   }
   return slots;
 }

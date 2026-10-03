@@ -83,9 +83,39 @@ test('labels never overlap on a side and stay in bounds', () => {
     assert.ok(s.x >= bounds.x - 1e-6 && s.x + 110 <= bounds.x + bounds.w + 1e-6, 'x in bounds');
     assert.ok(s.y >= bounds.y - 1e-6 && s.y + 28 <= bounds.y + bounds.h + 1e-6, 'y in bounds');
   }
-  for (const side of [-1, 1]) {
-    const ys = slots.filter((s) => s.side === side).map((s) => s.y).sort((a, b) => a - b);
-    for (let i = 1; i < ys.length; i++) assert.ok(ys[i] - ys[i - 1] >= 28 + 8 - 1e-6, 'no overlap');
+  assertNoOverlap(slots, slots.map(() => ({ w: 110, h: 28 })));
+});
+
+function assertNoOverlap(slots: ReturnType<typeof layoutLabels>, sizes: { w: number; h: number }[]) {
+  for (let i = 0; i < slots.length; i++) {
+    for (let j = i + 1; j < slots.length; j++) {
+      const a = { ...slots[i], ...sizes[i] };
+      const b = { ...slots[j], ...sizes[j] };
+      const apart = a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+      assert.ok(apart, `labels ${i} and ${j} overlap`);
+    }
+  }
+}
+
+test('labels hanging from opposite sides never meet mid-print', () => {
+  // A right-reaching label from a left-of-centre anchor and a left-reaching one
+  // from the right edge, at nearly the same height (the truck's door handle and
+  // headlamp in the web preview).
+  const anchors = [
+    { x: 150, y: 276 },
+    { x: 370, y: 268 },
+    { x: 300, y: 330 },
+  ];
+  const sizes = [
+    { w: 120, h: 28 },
+    { w: 100, h: 28 },
+    { w: 110, h: 28 },
+  ];
+  const bounds = { x: 8, y: 100, w: 377, h: 460 };
+  const slots = layoutLabels(anchors, sizes, bounds, 196, { gap: 8, reach: 30 });
+  assertNoOverlap(slots, sizes);
+  for (let i = 0; i < slots.length; i++) {
+    assert.ok(Math.abs(slots[i].y + 14 - anchors[i].y) < 80, 'stays near its anchor');
   }
 });
 

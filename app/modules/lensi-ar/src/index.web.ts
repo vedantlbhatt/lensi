@@ -79,6 +79,15 @@ export const LensiAR = {
       objects: s.objects.map((o) => ({ label: o.label, confidence: 0.81, box: box(o.box) })),
       labels: s.labels.map((label, i) => ({ label, confidence: 0.9 - i * 0.2 })),
       salient: [subject.box],
+      // The precomputed MobileSAM outlines stand in for the native part proposals.
+      parts: s.parts.map((p) => {
+        const polygon = p.polygon.map(([x, y]) => ({ x, y }));
+        const xs = polygon.map((q) => q.x);
+        const ys = polygon.map((q) => q.y);
+        const x = Math.min(...xs);
+        const y = Math.min(...ys);
+        return { polygon, box: { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }, score: 0.9 };
+      }),
       ms: 14,
     };
   },
