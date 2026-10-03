@@ -11,6 +11,8 @@ export type ScriptParams = {
   brain?: string;
   /** Tap the print here once it's annotated, as `x,y` in 0–1 of the photo (CI films tap-to-ask). */
   tap?: string;
+  /** Video: once the first moment is read, switch to this keyframe (0-based) and read it too. */
+  moment?: string;
 };
 
 /** `"0.3,0.33"` as a point on the photo, or null when it isn't one. */

@@ -111,15 +111,16 @@ shot 10-guide-18s 9
 alive guide
 unrec
 
-# The video pipeline on real footage: keyframes, then Vision, YOLO and SAM on each.
+# The video pipeline on real footage: three keyframes, the middle one read first by Vision,
+# YOLO and SAM; then the run switches to the first keyframe (moment=0) and reads that too.
 n=20
 for v in "${STOCK[@]}"; do
   [ -n "$DATA" ] && [ -f "$DATA/Documents/$v.mp4" ] || continue
   case "$v" in store-*) lens=shop ;; fruit-*) lens=learn ;; *) lens=identify ;; esac
   rec "stock-$v"
-  launch "lensi:///?file=$v.mp4&lens=$lens&brain=vision"
-  shot "$n-stock-$v-10s" 10
-  shot "$((n + 1))-stock-$v-22s" 12
+  launch "lensi:///?file=$v.mp4&lens=$lens&brain=vision&moment=0"
+  shot "$n-stock-$v-12s" 12
+  shot "$((n + 1))-stock-$v-28s" 16
   alive "stock-$v"
   unrec
   n=$((n + 2))

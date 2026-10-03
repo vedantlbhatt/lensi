@@ -226,6 +226,7 @@ export default function Camera() {
   useEffect(() => {
     if (params.export) devhooks.autoExport = true;
     if (params.tap) devhooks.autoTap = pointOf(params.tap);
+    if (params.moment && /^\d+$/.test(params.moment)) devhooks.autoMoment = Number(params.moment);
     if (params.memories) setMemories(true);
     if (params.brain === 'auto' || params.brain === 'apple' || params.brain === 'cloud' || params.brain === 'vision') {
       setSettings({ brain: params.brain });
@@ -255,7 +256,7 @@ export default function Camera() {
     return () => {
       alive = false;
     };
-  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap]);
+  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment]);
 
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera
   // and the demo scene on the virtual one.

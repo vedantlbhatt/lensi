@@ -359,6 +359,21 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
     // tapAt is rebuilt every render; the tap only needs to happen once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settled, capture.status]);
+  // CI: a scripted video run reads a second keyframe once the first is done.
+  const autoSwitched = useRef(false);
+  useEffect(() => {
+    const i = devhooks.autoMoment;
+    if (i == null || autoSwitched.current || !settled || capture.status !== 'ready') return;
+    const target = capture.moments[i];
+    if (!target || target.uri === capture.media.stillUri) return;
+    const t = setTimeout(() => {
+      autoSwitched.current = true;
+      devhooks.autoMoment = null;
+      haptic.tick();
+      switchMoment(capture.id, target.uri);
+    }, 2600);
+    return () => clearTimeout(t);
+  }, [settled, capture.status, capture.moments, capture.media.stillUri, capture.id]);
   // Let the marching ants go once the answer to that tap has landed.
   useEffect(() => {
     if (!focus) return;
