@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { PressScale } from '../../motion/PressScale';
+import { cloudProvider } from '../../lib/engines/cloud';
 import type { EngineId } from '../../lib/types';
 import { paper } from '../../theme/tokens';
 import { face } from '../../theme/type';
@@ -16,12 +17,14 @@ const COPY: Record<EngineId | 'checking', string> = {
 
 /** Which brain will answer. Tap for settings. */
 export function BrainChip({ engine, pen, onPress }: { engine: EngineId | null; pen: string; onPress: () => void }) {
+  // A server in mock mode answers from a script: don't call that Claude.
+  const name = engine === 'cloud' && cloudProvider() === 'mock' ? 'Mock server' : COPY[engine ?? 'checking'];
   return (
-    <PressScale onPress={onPress} accessibilityRole="button" accessibilityLabel={`Brain: ${COPY[engine ?? 'checking']}. Open settings.`} scaleTo={0.92}>
+    <PressScale onPress={onPress} accessibilityRole="button" accessibilityLabel={`Brain: ${name}. Open settings.`} scaleTo={0.92}>
       <Glass style={styles.chip}>
         <View style={styles.row}>
           {engine === 'apple' ? <Icon name="spark" size={14} color={pen} fill={pen} stroke={1.2} /> : null}
-          <Text style={styles.text}>{COPY[engine ?? 'checking']}</Text>
+          <Text style={styles.text}>{name}</Text>
         </View>
       </Glass>
     </PressScale>

@@ -51,6 +51,11 @@ async function encode(req: EngineRequest): Promise<string> {
 }
 
 let lastHealth: { at: number; ok: boolean } | null = null;
+let provider: string | null = null;
+/** Who the server says answers: "anthropic", "bedrock", or "mock" (scripted answers, no model). */
+export function cloudProvider(): string | null {
+  return provider;
+}
 /** No bytes from the server for this long: it has stalled; stop so the eyes can fill in. */
 const STALL_MS = 45 * 1000;
 
@@ -64,6 +69,7 @@ export const cloudEngine: Engine = {
     try {
       const res = await withTimeout(fetch(`${serverURL()}/health`), 1500);
       ok = res.ok;
+      if (ok) provider = ((await res.json().catch(() => null)) as { provider?: string } | null)?.provider ?? null;
     } catch {
       ok = false;
     }
