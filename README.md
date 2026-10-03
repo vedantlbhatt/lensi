@@ -51,7 +51,7 @@ npx expo run:ios --device
 
 - **Simulator:** `npx expo run:ios`. The simulator has no ARKit, so the app shows a *virtual camera* over public demo scenes (swipe sideways to switch). Vision and SAM still run on the real stills.
 - **Web preview (UI and motion only):** `npm run web`. It uses the virtual camera, scripted model answers and simulated speech.
-- **Scripted runs:** `lensi:///?demo=truck&lens=guide&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F` captures a demo scene and runs it. Add `export=1` to also render the share image. CI hands the same URL over at launch (`SIMCTL_CHILD_LENSI_URL=… xcrun simctl launch …`), which avoids the "Open in Lensi?" prompt that `simctl openurl` can raise.
+- **Scripted runs:** `lensi:///?demo=truck&lens=guide&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F` captures a demo scene and runs it. Add `export=1` to also render the share image, `tap=0.3,0.33` to tap the print there once it's labelled, `brain=vision` to force the eyes-only brain, or `file=clip.mp4` (from the app's Documents) with `moment=0` to read a video and then a second keyframe. CI hands the same URL over at launch (`SIMCTL_CHILD_LENSI_URL=… xcrun simctl launch …`), which avoids the "Open in Lensi?" prompt that `simctl openurl` can raise.
 
 ### SAM models
 
@@ -90,7 +90,7 @@ cd app && npm test && npx tsc --noEmit
 cd server && npm test && npx tsc --noEmit
 ```
 
-CI also builds for the iOS 27 Simulator, drives scripted captures through deep links, and pushes screenshots, device logs and the exported share image to the `ci-results` branch.
+CI also builds for the iOS 27 Simulator, drives scripted captures through deep links, and pushes screenshots, a screen recording of each run, device logs, the app's stderr and the exported share image to the `ci-results` branch. Three stock clips (Intel IoT Devkit sample videos, CC BY 4.0) go through the video pipeline there: `lensi:///?file=car-detection.mp4` opens a video from the app's Documents.
 
 ## Design
 

@@ -6,7 +6,7 @@ A running log of the camera-first rebuild on branch `camera-first`: what exists,
 
 | Area | How it was checked | Status |
 |---|---|---|
-| TS logic (geometry, regions, protocol, links, QR codes, eyes-only engine) | `npm test` (node test runner, 30 tests) | passing |
+| TS logic (geometry, regions, protocol, links, QR codes, colours, eyes-only engine) | `npm test` (node test runner, 38 tests) | passing |
 | App ↔ server protocol | server tests run the real server in mock mode through the app's own parser | passing |
 | UI + motion | Expo web preview driven by Playwright (iPhone viewport, real touch events) | camera, capture, walkthrough, voice, memories, settings, drop menu reviewed |
 | MobileSAM → Core ML | `tools/sam`: torch vs wrapper (bit-exact decoder), fp16 interpreter, then **real Core ML on macOS CI** (CPU and all compute units) | passing |
@@ -48,7 +48,35 @@ tap.
   subject outline; phones do.
 - **Cold start is about 6 s in the VM.** The scripted runs wait for it before their first shot.
 - **Scene labels make bad names.** Vision's classifier often leads with "outdoor" or "machine";
-  `thingLabel` skips those when naming the subject.
+  `thingLabel` skips those when naming the subject. The list is in Vision's own form
+  (`night_sky`) while the phone sends `night sky`, so labels are normalised before the check
+  (a circuit board was once titled "Night sky").
+- **The detector guesses at slivers.** A car roof cut off by the frame's edge came back as a
+  "bottle"; small boxes touching the edge no longer get names.
+- **Vision's subject mask doesn't run in the VM**, so CI captures had no outline. When it
+  returns nothing, SAM is prompted with the detector's best box instead (also helps phones
+  on photos without a clear foreground).
+- **Build one architecture.** A generic Simulator destination compiled every file for arm64
+  and x86_64 (3,837 objects each). And ccache ran but wrote to its default directory,
+  because Xcode doesn't pass `CCACHE_DIR` to the compiler; CI now caches that directory.
+- **`launchctl list` lies while recording.** It reported the app gone while it was on screen;
+  liveness is now checked by the launched PID (Simulator apps are host processes).
+
+## The Release crash: a colour printed as `9.4e-7`
+
+Some capture screens aborted in the Simulator's Release build (SIGABRT from a worklet, no JS
+stack). In Release, an uncaught JS error on Reanimated's UI runtime is fatal. `BlurText` animates
+each word's colour every frame and built `rgba(…, ${a})` from a float; as a word settles its
+alpha drops below 1e-6 and JavaScript prints it in exponent form, which Reanimated's colour parser
+rejects by throwing. It hit the capture title about a second after it landed, every walkthrough
+step, and the listening overlay. `lib/color.ts` now builds every animated colour with the alpha
+clamped and rounded to three decimals, and a test pins the exponent case. Run 6 confirmed it: every
+scenario, the board and export ones included, ran to the end with no crash report.
+
+To catch the next one: CI launches the app with `simctl launch --stdout/--stderr`, because
+libc++abi prints an uncaught error's message there and nowhere else. Those paths must be
+absolute: the launched process opens them inside the Simulator, a relative path lands on a
+read-only volume, and the launch itself fails (run 5 never got the app running).
 
 ## Decisions
 
