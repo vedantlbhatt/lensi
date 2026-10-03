@@ -36,6 +36,14 @@ export async function imageSize(uri: string): Promise<{ width: number; height: n
   }
 }
 
+/**
+ * Web preview only: the pickers hand back blob: and data: URIs with no name,
+ * and the scripted stand-in engine knows its demo scenes by file name. A
+ * fragment carries the name without changing what the URI loads.
+ */
+const named = (uri: string, name?: string | null) =>
+  Platform.OS === 'web' && name && /^(blob|data):/.test(uri) && !uri.includes('#') ? `${uri}#${name}` : uri;
+
 const isVideoName = (name: string, mime?: string | null) =>
   (mime ?? '').startsWith('video/') || /\.(mov|mp4|m4v|webm)$/i.test(name);
 
@@ -51,7 +59,7 @@ export async function pickFromLibrary(): Promise<Picked | null> {
   const kind: MediaKind = a.type === 'video' ? 'video' : 'image';
   let { width, height } = a;
   if (!width || !height) ({ width, height } = await imageSize(a.uri));
-  return { kind, uri: a.uri, width, height, durationMs: a.duration ?? undefined, source: 'library' };
+  return { kind, uri: named(a.uri, a.fileName), width, height, durationMs: a.duration ?? undefined, source: 'library' };
 }
 
 /** One more photo for a capture: from the library, or the system camera. */
@@ -66,7 +74,7 @@ export async function pickPhoto(from: 'library' | 'camera'): Promise<Picked | nu
   const a = res.assets[0];
   let { width, height } = a;
   if (!width || !height) ({ width, height } = await imageSize(a.uri));
-  return { kind: 'image', uri: a.uri, width, height, source: from === 'camera' ? 'camera' : 'library' };
+  return { kind: 'image', uri: named(a.uri, a.fileName), width, height, source: from === 'camera' ? 'camera' : 'library' };
 }
 
 export async function pickFromFiles(): Promise<Picked | null> {
@@ -77,7 +85,8 @@ export async function pickFromFiles(): Promise<Picked | null> {
 }
 
 /** A photo or video file on the phone, as a capture's input. */
-export async function pickedFromFile(uri: string, name: string, mimeType: string | undefined, source: Picked['source']): Promise<Picked> {
+export async function pickedFromFile(file: string, name: string, mimeType: string | undefined, source: Picked['source']): Promise<Picked> {
+  const uri = named(file, name);
   if (isVideoName(name, mimeType)) {
     const [frame, durationMs] = await Promise.all([
       VideoThumbnails.getThumbnailAsync(uri, { time: 0, quality: 0.9 }).catch(() => null),
