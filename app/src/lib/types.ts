@@ -43,6 +43,15 @@ export type Step = {
   polygon?: Pt[];
 };
 
+/** A part an answer refers to, so the pointer can show it while the answer is read. */
+export type Pointing = {
+  at: Pt;
+  label: string;
+  /** The label on the print for that part, when it has one. */
+  calloutId?: string;
+  polygon?: Pt[];
+};
+
 export type Exchange = {
   id: string;
   question: string;
@@ -50,6 +59,8 @@ export type Exchange = {
   pending: boolean;
   /** Set when the answer turned into a walkthrough. */
   steps?: Step[];
+  /** Parts the answer pointed at, in the order it named them. */
+  points?: Pointing[];
 };
 
 export type EngineId = 'apple' | 'cloud' | 'vision';

@@ -24,7 +24,7 @@ import { say } from '../../lib/narrate';
 import { analyze, ask, askAbout, cancel, isHowTo, relens, removeCallout, renameCallout, switchMoment } from '../../lib/pipeline';
 import { setSettings, useSettings } from '../../lib/settings';
 import { getCapture, removeCapture, useCapture } from '../../lib/store';
-import type { Capture, Pt } from '../../lib/types';
+import type { Capture, Pt, Step } from '../../lib/types';
 import { Sparks, type SparksRef } from '../../motion/Sparks';
 import { PressScale } from '../../motion/PressScale';
 import { ShinyText } from '../../motion/ShinyText';
@@ -198,7 +198,45 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   }, [walking, step, settings.narrate]);
   useEffect(() => () => void Speech.stop().catch(() => {}), []);
 
-  const pointerTarget = step?.at ? toView(step.at, frame) : null;
+  // ---- pointing while answering ---------------------------------------------------
+  // heyclicky's trick, on a photo: when an answer names parts, the pointer
+  // visits each one in turn, then gets out of the way.
+  const latestEx = capture.thread.length ? capture.thread[capture.thread.length - 1] : null;
+  const latestPoints = latestEx && !latestEx.steps ? (latestEx.points?.length ?? 0) : 0;
+  const [tour, setTour] = useState<{ ex: string; i: number } | null>(null);
+  const toured = useRef(new Set<string>());
+  useEffect(() => {
+    if (!latestEx || walking || !latestPoints || toured.current.has(latestEx.id)) return;
+    toured.current.add(latestEx.id);
+    setTour({ ex: latestEx.id, i: 0 });
+  }, [latestEx, latestPoints, walking]);
+  const tourEx = tour ? capture.thread.find((x) => x.id === tour.ex) : undefined;
+  const tourCount = tourEx?.points?.length ?? 0;
+  const tourPending = !!tourEx?.pending;
+  const tourWords = tourEx ? tourEx.answer.join(' ').split(/\s+/).length : 0;
+  useEffect(() => {
+    if (!tour) return;
+    if (walking || !tourCount) {
+      setTour(null);
+      return;
+    }
+    const last = tour.i >= tourCount - 1;
+    // The last part stays shown while the answer may still name more.
+    if (last && tourPending) return;
+    // Rest on the last part about as long as the answer takes to read.
+    const dwell = last ? Math.min(8000, Math.max(3500, 2500 + tourWords * 180)) : 1900;
+    const h = setTimeout(() => setTour((t) => (t && t.ex === tour.ex ? (last ? null : { ...t, i: t.i + 1 }) : t)), dwell);
+    return () => clearTimeout(h);
+  }, [tour, tourCount, tourPending, tourWords, walking]);
+  const tourPoint = tour ? tourEx?.points?.[tour.i] : undefined;
+  const tourCallout = tourPoint?.calloutId ? capture.annotation.callouts.find((k) => k.id === tourPoint.calloutId) : undefined;
+  const shown: Step | null = walking
+    ? step
+    : tour && tourPoint
+      ? { id: `${tour.ex}:${tour.i}`, text: tourPoint.label, at: tourCallout?.at ?? tourPoint.at, polygon: tourCallout?.polygon ?? tourPoint.polygon }
+      : null;
+  const pointerTarget = shown?.at ? toView(shown.at, frame) : null;
+  const replayPoints = latestEx && latestPoints && !walking ? () => setTour({ ex: latestEx.id, i: 0 }) : undefined;
 
   // CI: render the share image once the annotation has landed.
   const exported = useRef(false);
@@ -324,7 +362,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
           settled={settled}
           thinking={thinking}
           walking={walking}
-          step={step}
+          highlight={shown}
           pen={lens.pen}
           focus={walking ? null : focus}
         />
@@ -332,7 +370,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
           placed={placed}
           pen={lens.pen}
           dim={walking}
-          focusId={menuFor?.id ?? renaming?.id ?? null}
+          focusId={menuFor?.id ?? renaming?.id ?? tourCallout?.id ?? null}
           onPress={(c) => onAsk(`Tell me about the ${c.label.toLowerCase()}`)}
           onLongPress={
             walking
@@ -344,7 +382,15 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
                 }
           }
         />
-        {walking ? <WalkPointer target={pointerTarget} index={stepIndex} pen={lens.pen} home={{ x: screen.width / 2, y: screen.height - CARD_PEEK }} /> : null}
+        {settled ? (
+          <WalkPointer
+            target={pointerTarget}
+            index={walking ? stepIndex : (tour?.i ?? 0)}
+            badge={walking}
+            pen={lens.pen}
+            home={{ x: screen.width / 2, y: screen.height - CARD_PEEK }}
+          />
+        ) : null}
       </Animated.View>
 
       {capture.media.kind === 'video' && capture.moments.length > 1 && settled && !walking ? (
@@ -467,6 +513,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
                 }}
                 onRetry={() => void analyze(capture.id, { walkthrough: capture.lens === 'guide' })}
                 onSuggest={onAsk}
+                onShow={replayPoints}
                 onLens={(l) => {
                   haptic.thud();
                   setFocus(null);

@@ -56,7 +56,7 @@ export function AnnotationOverlay({
   settled,
   thinking,
   walking,
-  step,
+  highlight,
   pen,
   focus,
 }: {
@@ -68,7 +68,8 @@ export function AnnotationOverlay({
   settled: boolean;
   thinking: boolean;
   walking: boolean;
-  step: Step | null;
+  /** The part being shown right now: a walkthrough step, or a part an answer names. */
+  highlight: Step | null;
   pen: string;
   /** Outline of a part the user just tapped, while its answer is on the way. */
   focus?: Pt[] | null;
@@ -96,7 +97,7 @@ export function AnnotationOverlay({
         {showMarks && font
           ? marks.map((r, i) => <Mark key={r.id} at={toView({ x: r.box.x + r.box.w / 2, y: r.box.y + r.box.h / 2 }, frame)} n={r.mark} pen={pen} font={font} delay={i * 70} />)
           : null}
-        {walking && step ? <StepHighlight key={step.id} step={step} frame={frame} pen={pen} /> : null}
+        {highlight ? <StepHighlight key={highlight.id} step={highlight} frame={frame} pen={pen} /> : null}
         {focus && focus.length > 2 ? <Marching key={focus.length + focus[0].x} d={outlinePath(focus, frame, 0.5)} pen={pen} /> : null}
       </Group>
       {placed.map((c, i) => (

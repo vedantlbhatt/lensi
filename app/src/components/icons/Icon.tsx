@@ -34,7 +34,8 @@ export type IconName =
   | 'eye'
   | 'chip'
   | 'download'
-  | 'pencil';
+  | 'pencil'
+  | 'pointer';
 
 export function Icon({
   name,
@@ -192,6 +193,8 @@ function glyph(name: IconName, p: P, color: string, fill?: string) {
       );
     case 'check':
       return <Path {...p} d="M5.2 12.6l4.3 4.3 9.3-9.6" />;
+    case 'pointer':
+      return <Path {...p} fill={fill ?? 'none'} d="M5.4 3.6l13.2 7.9c.7.4.6 1.5-.2 1.7l-5.3 1.3-2.4 5.1c-.3.7-1.4.7-1.7-.1L4.1 4.9c-.2-.9.6-1.6 1.3-1.3z" />;
     case 'pencil':
       return (
         <>

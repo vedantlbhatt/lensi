@@ -54,6 +54,7 @@ function emit(e: IntelligenceEvent) {
 
 export const LensiAR = {
   isSupported: false,
+  launchURL: null as string | null,
 
   addListener<K extends keyof LensiAREvents>(name: K, fn: LensiAREvents[K]) {
     (listeners[name] as Set<LensiAREvents[K]>).add(fn);
@@ -139,8 +140,14 @@ export const LensiAR = {
         at(380, { kind: 'answer', text: sc.facts[0] });
         at(300, { kind: 'callout', label: near.label, mark: m.mark });
       } else {
-        at(0, { kind: 'answer', text: sc.summary });
+        // Point at the part the question names, or at the two that matter most.
+        const q = req.question.toLowerCase();
+        const named = sc.callouts.find((c) => c.label.toLowerCase().split(/[\s-]+/).some((w) => w.length > 3 && q.includes(w)));
+        at(0, { kind: 'answer', text: named ? `That's the ${named.label.toLowerCase()}.` : sc.summary });
         at(380, { kind: 'answer', text: sc.facts[0] });
+        for (const c of named ? [named] : sc.callouts.slice(0, 2)) {
+          at(300, { kind: 'callout', label: c.label, at: { x: c.at[0], y: c.at[1] } });
+        }
       }
     } else {
       const sc = s.script;

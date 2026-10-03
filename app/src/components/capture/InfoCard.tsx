@@ -38,6 +38,7 @@ export function InfoCard({
   onWalk,
   onRetry,
   onSuggest,
+  onShow,
   onLens,
 }: {
   capture: Capture;
@@ -46,6 +47,8 @@ export function InfoCard({
   onWalk: () => void;
   onRetry: () => void;
   onSuggest: (q: string) => void;
+  /** Point at the parts the latest answer named, again. */
+  onShow?: () => void;
   /** Look again through another lens. */
   onLens: (l: Lens) => void;
 }) {
@@ -154,6 +157,16 @@ export function InfoCard({
               <Text style={[styles.chipText, { color: ink }]}>Walk me through</Text>
             </View>
           </PressScale>
+        ) : null}
+        {onShow ? (
+          <Animated.View entering={FadeInDown.springify().damping(18)}>
+            <PressScale onPress={onShow} accessibilityRole="button" accessibilityLabel="Show me where" scaleTo={0.93} haptic="medium">
+              <View style={[styles.chip, { borderColor: lens.pen }]}>
+                <Icon name="pointer" size={14} color={lens.pen} fill={lens.pen} stroke={1.4} />
+                <Text style={[styles.chipText, { color: lens.pen }]}>Show me</Text>
+              </View>
+            </PressScale>
+          </Animated.View>
         ) : null}
         {suggestions.map((s, i) => (
           <Animated.View key={s} entering={FadeInDown.delay(200 + i * 70).springify().damping(18)}>

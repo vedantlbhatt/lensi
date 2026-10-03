@@ -1,12 +1,12 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGlobalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DEMO_SCENES, isVirtual, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
+import { DEMO_SCENES, isVirtual, LensiAR, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
 import { BrainChip } from '../components/camera/BrainChip';
 import { CameraSurface, type CameraHandle } from '../components/camera/CameraSurface';
 import { CoachMark } from '../components/camera/CoachMark';
@@ -45,6 +45,19 @@ const TRACKING_HINTS: Record<string, string> = {
 };
 
 type Open = { id: string; origin: 'camera' | Rect };
+
+type ScriptParams = { demo?: string; lens?: string; ask?: string; memories?: string; export?: string };
+
+/** The query of a lensi:// URL, without leaning on URL.searchParams (not in every RN runtime). */
+function queryOf(url: string | null | undefined): ScriptParams {
+  const out: Record<string, string> = {};
+  const q = url?.split('?')[1]?.split('#')[0];
+  for (const pair of q ? q.split('&') : []) {
+    const [k, v = ''] = pair.split('=');
+    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' '));
+  }
+  return out;
+}
 
 /**
  * The app opens here: the camera, edge to edge. Tap the shutter for a photo,
@@ -190,7 +203,10 @@ export default function Camera() {
   }, [voice, takePhoto]);
 
   // Scripted runs (CI screenshots, the web preview): lensi:///?demo=cars&lens=guide&ask=…
-  const params = useGlobalSearchParams<{ demo?: string; lens?: string; ask?: string; memories?: string; export?: string }>();
+  // A deep link wins; otherwise the URL the launch environment carried (CI).
+  const linked = useGlobalSearchParams<ScriptParams>();
+  const launched = useMemo(() => queryOf(LensiAR.launchURL), []);
+  const params: ScriptParams = linked.demo || linked.memories ? linked : launched;
   useEffect(() => {
     if (params.export) devhooks.autoExport = true;
     if (params.memories) setMemories(true);

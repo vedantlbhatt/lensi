@@ -27,7 +27,20 @@ const H = 36;
  * next like something tossed, leans into the turn, taps when it lands, and
  * bobs while it waits. The tip is the exact target point.
  */
-export function WalkPointer({ target, index, pen, home }: { target: Pt | null; index: number; pen: string; home: Pt }) {
+export function WalkPointer({
+  target,
+  index,
+  pen,
+  home,
+  badge = true,
+}: {
+  target: Pt | null;
+  index: number;
+  pen: string;
+  home: Pt;
+  /** Show the step number (walkthroughs); answers point without one. */
+  badge?: boolean;
+}) {
   const from = useSharedValue<Pt>(home);
   const to = useSharedValue<Pt>(home);
   const ctrl = useSharedValue<Pt>(home);
@@ -42,29 +55,38 @@ export function WalkPointer({ target, index, pen, home }: { target: Pt | null; i
     bob.value = withRepeat(withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.sin) }), -1, true);
   }, [bob]);
 
+  // Keyed on the numbers, not the object: a re-render with the same target
+  // must not throw the pointer again.
+  const tx = target?.x ?? null;
+  const ty = target?.y ?? null;
+  const homeRef = useRef(home);
+  homeRef.current = home;
   useEffect(() => {
-    if (!target) {
+    if (tx === null || ty === null) {
       shown.value = withTiming(0, { duration: 200 });
+      // Next time, fly out from the card again.
+      last.current = homeRef.current;
       return;
     }
+    const goal = { x: tx, y: ty };
     shown.value = withSpring(1, { damping: 16, stiffness: 220 });
     const a = last.current;
     from.value = a;
-    to.value = target;
-    ctrl.value = arcControl(a, target, 0.32);
+    to.value = goal;
+    ctrl.value = arcControl(a, goal, 0.32);
     t.value = 0;
-    const d = Math.hypot(target.x - a.x, target.y - a.y);
+    const d = Math.hypot(goal.x - a.x, goal.y - a.y);
     const duration = Math.min(900, Math.max(420, d * 1.5));
     t.value = withTiming(1, { duration, easing: Easing.bezier(0.45, 0, 0.2, 1) });
     tap.value = withDelay(duration - 40, withSequence(withTiming(1, { duration: 110 }), withSpring(0, { damping: 9, stiffness: 300 })));
-    last.current = target;
-    const k = `${index}-${target.x.toFixed(1)}-${target.y.toFixed(1)}`;
+    last.current = goal;
+    const k = `${index}-${goal.x.toFixed(1)}-${goal.y.toFixed(1)}`;
     const h = setTimeout(() => {
       setLandedKey(k);
       haptic.tap();
     }, duration);
     return () => clearTimeout(h);
-  }, [target, index, from, to, ctrl, t, tap, shown]);
+  }, [tx, ty, index, from, to, ctrl, t, tap, shown]);
 
   const a = useAnimatedStyle(() => {
     const p = quadAt(from.value, ctrl.value, to.value, t.value);
@@ -103,9 +125,11 @@ export function WalkPointer({ target, index, pen, home }: { target: Pt | null; i
           />
           <Path d="M6.2 6.4l1.1 17.4" stroke="rgba(255,255,255,0.65)" strokeWidth={1.6} strokeLinecap="round" />
         </Svg>
-        <View style={[styles.badge, { borderColor: pen }]}>
-          <Text style={[styles.badgeText, { color: pen }]}>{index + 1}</Text>
-        </View>
+        {badge ? (
+          <View style={[styles.badge, { borderColor: pen }]}>
+            <Text style={[styles.badgeText, { color: pen }]}>{index + 1}</Text>
+          </View>
+        ) : null}
       </Animated.View>
     </View>
   );

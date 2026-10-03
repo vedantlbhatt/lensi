@@ -303,21 +303,21 @@ function patchExchange(id: string, exchangeId: string, fn: (x: Exchange) => Exch
 type Placement = { at: Pt; regionId?: string; polygon?: Region['polygon'] };
 
 /** Resolve where an engine's callout or step belongs, preferring real regions. */
-function place(c: Capture, mark?: number, at?: Pt): Placement | null {
+function place(c: Capture, mark?: number, at?: Pt): (Placement & { exact: boolean }) | null {
   const subject = c.subject;
   const isPart = (r: Region) => r.kind !== 'subject' && !!r.polygon && r.polygon.length > 2;
   if (mark) {
     const r = c.regions.find((x) => x.mark === mark);
-    if (r) return { at: anchorFor(r), regionId: r.id, polygon: isPart(r) ? r.polygon : undefined };
+    if (r) return { at: anchorFor(r), regionId: r.id, polygon: isPart(r) ? r.polygon : undefined, exact: true };
   }
   if (at) {
     const r = regionAt(at, c.regions);
     // Keep the engine's own point (it is usually more precise than a box center)
     // and borrow the region's outline only when the region is a small part.
     const small = r && subject ? regionArea(r) < regionArea(subject) * 0.5 : false;
-    return { at, regionId: r?.id, polygon: r && isPart(r) && small ? r.polygon : undefined };
+    return { at, regionId: r?.id, polygon: r && isPart(r) && small ? r.polygon : undefined, exact: true };
   }
-  if (subject) return { at: anchorFor(subject), regionId: subject.id };
+  if (subject) return { at: anchorFor(subject), regionId: subject.id, exact: false };
   return null;
 }
 
@@ -349,18 +349,32 @@ function apply(id: string, e: EngineEvent, exchangeId: string | null) {
       if (exchangeId) return patchExchange(id, exchangeId, (x) => ({ ...x, answer: [...x.answer, e.text] }));
       return patchCapture(id, (x) => ({ ...x, error: e.text }));
     case 'callout': {
-      if (c.annotation.callouts.length >= MAX_CALLOUTS) return;
-      const p = place(c, e.mark, e.at);
-      if (!p) return;
+      const found = place(c, e.mark, e.at);
+      if (!found) return;
+      const { exact, ...p } = found;
       // Two labels on the same spot read as noise; keep the first.
-      if (c.annotation.callouts.some((k) => dist(k.at, p.at) < 0.035)) return;
-      const callout = { id: uid(), label: e.label, detail: e.detail, ...p };
-      patchCapture(id, (x) => ({ ...x, annotation: { ...x.annotation, callouts: [...x.annotation.callouts, callout] } }));
-      if (!callout.polygon) refine(id, 'callout', callout.id, callout.at);
+      const near = c.annotation.callouts.find((k) => dist(k.at, p.at) < 0.035);
+      let calloutId = near?.id;
+      if (!near && c.annotation.callouts.length < MAX_CALLOUTS) {
+        const callout = { id: uid(), label: e.label, detail: e.detail, ...p };
+        patchCapture(id, (x) => ({ ...x, annotation: { ...x.annotation, callouts: [...x.annotation.callouts, callout] } }));
+        if (!callout.polygon) refine(id, 'callout', callout.id, callout.at);
+        calloutId = callout.id;
+      }
+      // An answer that names a part points at it, whether or not it earned a new label.
+      if (exchangeId && exact) {
+        const point = { at: near?.at ?? p.at, label: near?.label ?? e.label, calloutId, polygon: near?.polygon ?? p.polygon };
+        patchExchange(id, exchangeId, (x) =>
+          (x.points?.length ?? 0) >= 4 || x.points?.some((q) => dist(q.at, point.at) < 0.035)
+            ? x
+            : { ...x, points: [...(x.points ?? []), point] },
+        );
+      }
       return;
     }
     case 'step': {
-      const p = place(c, e.mark, e.at);
+      const found = place(c, e.mark, e.at);
+      const p = found ? { at: found.at, regionId: found.regionId, polygon: found.polygon } : null;
       const step: Step = { id: uid(), text: e.text, ...(p ?? {}) };
       if (exchangeId) {
         patchExchange(id, exchangeId, (x) => ({ ...x, steps: [...(x.steps ?? []), step] }));
