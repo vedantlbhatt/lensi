@@ -1,5 +1,5 @@
 import { LensiAR } from '../../modules/lensi-ar/src';
-import { pickEngine } from './engines';
+import { pickEngine, visionEngine } from './engines';
 import { boundsOf, dist, polygonArea } from './geometry';
 import { normalizeStill, videoMoments, type Picked } from './media';
 import { captureDir, keep } from './persist';
@@ -127,22 +127,26 @@ export async function analyze(id: string, opts: AnalyzeOpts) {
   // A spoken question that isn't a how-to gets an answer thread of its own.
   const exchangeId = question && !opts.walkthrough ? startExchange(id, question, false) : null;
 
+  const req = {
+    imageUri: c.media.stillUri,
+    width: c.media.width,
+    height: c.media.height,
+    lens: c.lens,
+    regions: eyes.regions,
+    hint: eyes.hint,
+    question,
+    walkthrough: opts.walkthrough,
+  };
   try {
-    await engine.run(
-      {
-        imageUri: c.media.stillUri,
-        width: c.media.width,
-        height: c.media.height,
-        lens: c.lens,
-        regions: eyes.regions,
-        hint: eyes.hint,
-        question,
-        walkthrough: opts.walkthrough,
-      },
-      (e) => apply(id, e, exchangeId),
-      controller.signal,
-    );
+    await engine.run(req, (e) => apply(id, e, exchangeId), controller.signal);
     if (controller.signal.aborted) return;
+    // The model gave nothing to draw (a refusal, a full context): show what
+    // the eyes found rather than a bare photo. Its message stays on the card.
+    const after = getCapture(id);
+    if (engine.id !== 'vision' && !exchangeId && !opts.walkthrough && after && !after.annotation.title && !after.annotation.callouts.length) {
+      await visionEngine.run({ ...req, question: undefined }, (e) => apply(id, e, null), controller.signal);
+      if (controller.signal.aborted) return;
+    }
     patchCapture(id, (cur) => ({
       ...cur,
       status: cur.status === 'error' ? 'error' : 'ready',
