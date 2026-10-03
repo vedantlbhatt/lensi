@@ -58,6 +58,12 @@ test('an answer returns to where the guide was, finished included', () => {
   assert.equal(s.note?.text, 'A 1-1/2 inch trap.');
 });
 
+test('a question during a check takes over, then the step is live again', () => {
+  const s = run([...sink, { type: 'checking' }, { type: 'answering' }, { type: 'note', note: { text: 'Hand tight.', tone: 'info' } }]);
+  assert.equal(s.status, 'active');
+  assert.equal(s.note?.text, 'Hand tight.');
+});
+
 test('with no model, the eyes still tag parts and the guide is usable', () => {
   const s = run([
     { type: 'plan', task: 'Check the tyre pressure' },

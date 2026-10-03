@@ -143,6 +143,14 @@ export default function Camera() {
     }, 1500);
     return () => clearTimeout(t);
   }, [guideOn, voice, voice.listening, voice.transcript, guideHandle]);
+  // A mic left open by mistake: stop after 15 s and use whatever was heard.
+  useEffect(() => {
+    if (!guideOn || !voice.listening) return;
+    const t = setTimeout(() => {
+      void voice.stop().then((q) => q && guideHandle(q));
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [guideOn, voice, voice.listening, guideHandle]);
 
   // Re-checked whenever the camera is back in front: a model that just failed
   // is resting, a server may have come up.

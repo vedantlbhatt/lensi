@@ -118,6 +118,8 @@ export function guideReducer(s: GuideState, a: GuideAction): GuideState {
         note: { text: a.text, tone: a.done === true ? 'done' : a.done === false ? 'warn' : 'info' },
       };
     case 'answering':
+      // A question cuts a running check short; the guide comes back to the step.
+      if (s.status === 'checking') return { ...s, status: 'answering', resume: 'active' };
       return s.status === 'active' || s.status === 'finished' ? { ...s, status: 'answering', resume: s.status } : s;
     case 'note':
       return s.status === 'answering' ? { ...s, note: a.note, status: s.resume ?? 'active', resume: undefined } : { ...s, note: a.note };
