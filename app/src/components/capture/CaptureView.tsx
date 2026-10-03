@@ -79,9 +79,21 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   const insets = useSafeAreaInsets();
   const settings = useSettings();
   const lens = lensInfo(capture.lens);
-  const stage = useMemo(
+  const baseStage = useMemo(
     () => stageFor(capture.media, screen, { top: insets.top, bottom: insets.bottom }),
     [capture.media, screen, insets.top, insets.bottom],
+  );
+  // A video's keyframes (or a capture's photos) go under the print when it leaves
+  // room there, as a wide video does, so they never cover it; labels stay above them.
+  const stripBelow =
+    capture.moments.length > 1 &&
+    baseStage.labelBounds.y + baseStage.labelBounds.h - (baseStage.frame.y + baseStage.frame.h) >= STRIP_ROOM;
+  const stage = useMemo(
+    () =>
+      stripBelow
+        ? { ...baseStage, labelBounds: { ...baseStage.labelBounds, h: baseStage.frame.y + baseStage.frame.h + 6 - baseStage.labelBounds.y } }
+        : baseStage,
+    [baseStage, stripBelow],
   );
   const { frame } = stage;
 
@@ -513,7 +525,14 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
       </Animated.View>
 
       {capture.moments.length > 1 && settled && !walking ? (
-        <Animated.View style={[styles.moments, { left: frame.x + 10, top: frame.y + frame.h - 66 }, chrome]}>
+        <Animated.View
+          style={[
+            styles.moments,
+            stripBelow ? { left: 0, right: 0, top: frame.y + frame.h + 14, alignItems: 'center' } : { left: frame.x + 10, top: frame.y + frame.h - 66 },
+            styles.passThrough,
+            chrome,
+          ]}
+        >
           <MomentStrip
             moments={capture.moments}
             active={capture.media.stillUri}
@@ -667,6 +686,9 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   );
 }
 
+/** Height a strip of moments needs under the print: thumbnails plus breathing room. */
+const STRIP_ROOM = 80;
+
 /** What the ask bar suggests you ask, per lens. */
 const ASK_HINT: Record<Capture['lens'], string> = {
   identify: 'Ask about this, or how to…',
@@ -767,5 +789,6 @@ const styles = StyleSheet.create({
   ask: { marginTop: 'auto', paddingTop: 14 },
   videoBadge: { position: 'absolute', right: 12, bottom: 12 },
   moments: { position: 'absolute' },
+  passThrough: { pointerEvents: 'box-none' },
   playBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: paper, alignItems: 'center', justifyContent: 'center' },
 });
