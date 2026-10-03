@@ -279,6 +279,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
             {walking && steps.length ? (
               <StepPlayer
                 steps={steps}
+                question={stepsKey === 'capture' ? capture.prompt : capture.thread.find((x) => x.id === stepsKey)?.question}
                 index={Math.min(stepIndex, steps.length - 1)}
                 pending={stepsPending}
                 pen={lens.pen}

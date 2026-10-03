@@ -18,6 +18,7 @@ import { Icon } from '../icons/Icon';
  */
 export function StepPlayer({
   steps,
+  question,
   index,
   pending,
   pen,
@@ -27,6 +28,8 @@ export function StepPlayer({
   onExit,
 }: {
   steps: Step[];
+  /** What was asked, shown as a quiet header so the steps have context. */
+  question?: string | null;
   index: number;
   pending: boolean;
   pen: string;
@@ -58,6 +61,12 @@ export function StepPlayer({
         </PressScale>
       </View>
 
+      {question ? (
+        <Text style={styles.question} numberOfLines={1}>
+          {question}
+        </Text>
+      ) : null}
+
       <Segments n={Math.max(steps.length, 1)} index={index} pen={pen} />
 
       <View style={styles.body}>
@@ -70,22 +79,23 @@ export function StepPlayer({
             <Icon name="left" size={22} />
           </View>
         </PressScale>
-        <PressScale
-          onPress={() => (last && !pending ? onExit() : onIndex(Math.min(steps.length - 1, index + 1)))}
-          disabled={last && pending}
-          accessibilityRole="button"
-          accessibilityLabel={last && !pending ? 'Finish' : 'Next step'}
-          scaleTo={0.94}
-          haptic="medium"
-          style={{ flex: 1 }}
-        >
-          <View style={[styles.next, { backgroundColor: pen }, last && pending && { opacity: 0.5 }]}>
-            <Animated.Text key={last && !pending ? 'done' : 'next'} entering={FadeIn.duration(180)} style={styles.nextText}>
-              {last && !pending ? 'Done' : 'Next'}
-            </Animated.Text>
-            <Icon name={last && !pending ? 'check' : 'right'} size={20} color={ink} stroke={2.3} />
-          </View>
-        </PressScale>
+        <View style={styles.nextSlot}>
+          <PressScale
+            onPress={() => (last && !pending ? onExit() : onIndex(Math.min(steps.length - 1, index + 1)))}
+            disabled={last && pending}
+            accessibilityRole="button"
+            accessibilityLabel={last && !pending ? 'Finish' : 'Next step'}
+            scaleTo={0.94}
+            haptic="medium"
+          >
+            <View style={[styles.next, { backgroundColor: pen }, last && pending && { opacity: 0.5 }]}>
+              <Animated.Text key={last && !pending ? 'done' : 'next'} entering={FadeIn.duration(180)} style={styles.nextText}>
+                {last && !pending ? 'Done' : 'Next'}
+              </Animated.Text>
+              <Icon name={last && !pending ? 'check' : 'right'} size={20} color={ink} stroke={2.3} />
+            </View>
+          </PressScale>
+        </View>
       </View>
     </View>
   );
@@ -122,11 +132,13 @@ const styles = StyleSheet.create({
   of: { color: faint, fontFamily: fonts.mono, fontSize: 15 },
   writing: { color: mist, fontFamily: fonts.mono, fontSize: 11, letterSpacing: 0.6 },
   iconBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(244,241,234,0.07)' },
+  question: { color: mist, fontFamily: fonts.serifItalic, fontSize: 19, lineHeight: 22, marginTop: -4 },
   segments: { flexDirection: 'row', gap: 4, height: 4 },
   segment: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: 'rgba(244,241,234,0.12)' },
   body: { minHeight: 58, justifyContent: 'center' },
   text: { color: paper, fontFamily: fonts.displayBold, fontSize: 21, lineHeight: 26, letterSpacing: -0.4 },
   controls: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  nextSlot: { flex: 1 },
   prev: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(244,241,234,0.08)' },
   next: { height: 52, borderRadius: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   nextText: { color: ink, fontFamily: fonts.display, fontSize: 18, letterSpacing: -0.3 },

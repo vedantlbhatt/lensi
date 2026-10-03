@@ -6,7 +6,9 @@
   "scripts": {
     "start": "tsx --env-file-if-exists=.env src/server.ts",
     "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/__tests__/*.test.ts",
+    "mock": "LENSI_MOCK=1 tsx src/server.ts"
   },
   "license": "ISC",
   "type": "module",

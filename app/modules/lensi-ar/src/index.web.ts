@@ -101,7 +101,8 @@ export const LensiAR = {
       at(500, { kind: 'summary', text: 'The web preview only knows its demo scenes.' });
     } else if (req.walkthrough || req.question) {
       const sc = s.script;
-      if (req.question && !req.walkthrough) at(0, { kind: 'answer', text: sc.summary });
+      at(0, { kind: 'title', text: sc.title });
+      if (req.question && !req.walkthrough) at(200, { kind: 'answer', text: sc.summary });
       sc.steps.forEach((st, i) => at(i === 0 ? 300 : 420, { kind: 'step', text: st.text, at: st.at && { x: st.at[0], y: st.at[1] } }));
     } else {
       const sc = s.script;

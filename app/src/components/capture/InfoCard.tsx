@@ -63,6 +63,8 @@ export function InfoCard({
       <View style={styles.titleSlot}>
         {a.title ? (
           <BlurText key={a.title} text={a.title} style={styles.title} step={60} duration={700} />
+        ) : !thinking ? (
+          <Text style={styles.title}>{hint ? hint.charAt(0).toUpperCase() + hint.slice(1) : 'Untitled'}</Text>
         ) : (
           <Animated.View entering={FadeIn} style={styles.waiting}>
             <ShinyText text={hint ? `Looking at the ${hint}` : 'Looking closely'} style={styles.waitingText} dim={0.35} />
