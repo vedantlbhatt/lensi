@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
 import type { GuidePart, GuideState, GuideStep } from '../../lib/guide';
@@ -54,6 +54,8 @@ export function GuidePanel({
   onStop: () => void;
 }) {
   const [typed, setTyped] = useState('');
+  // Narrow phones (under 390 pt): Check drops its word, so Next keeps room for its own.
+  const compact = useWindowDimensions().width < 390;
   const submit = () => {
     const t = typed.trim();
     if (!t) return;
@@ -157,12 +159,12 @@ export function GuidePanel({
         {!idle && !working && !talking && step && !finished ? (
           <>
             <PressScale onPress={onCheck} accessibilityRole="button" accessibilityLabel="Check this step" scaleTo={0.92} disabled={busy}>
-              <View style={[styles.pill, busy && styles.off]}>
-                <Icon name="eye" size={17} color={paper} />
-                <Text style={styles.pillText}>Check</Text>
+              <View style={[compact ? styles.round : styles.pill, busy && styles.off]}>
+                <Icon name="eye" size={compact ? 20 : 17} color={paper} />
+                {compact ? null : <Text style={styles.pillText}>Check</Text>}
               </View>
             </PressScale>
-            <PressScale onPress={onNext} accessibilityRole="button" accessibilityLabel="Next step" scaleTo={0.92} haptic="medium">
+            <PressScale onPress={onNext} accessibilityRole="button" accessibilityLabel="Next step" scaleTo={0.92} haptic="medium" containerStyle={styles.grow}>
               <View style={[styles.pill, styles.primary, { backgroundColor: pen }]}>
                 <Text style={[styles.pillText, { color: ink }]}>{state.index >= state.steps.length - 1 ? 'Done' : 'Next'}</Text>
                 <Icon name={state.index >= state.steps.length - 1 ? 'check' : 'right'} size={17} color={ink} />
@@ -171,7 +173,7 @@ export function GuidePanel({
           </>
         ) : null}
         {finished && !talking ? (
-          <PressScale onPress={onStop} accessibilityRole="button" accessibilityLabel="Start another job" scaleTo={0.92}>
+          <PressScale onPress={onStop} accessibilityRole="button" accessibilityLabel="Start another job" scaleTo={0.92} containerStyle={styles.grow}>
             <View style={[styles.pill, styles.primary, { backgroundColor: pen }]}>
               <Text style={[styles.pillText, { color: ink }]}>Another job</Text>
             </View>
@@ -288,7 +290,7 @@ const styles = StyleSheet.create({
   chips: { gap: 8, paddingHorizontal: 18 },
   chip: { height: 36, paddingHorizontal: 14, borderRadius: 18, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)' },
   chipText: { color: paper, ...face.semibold, fontSize: 14 },
-  controls: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   round: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)' },
   mic: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
   // Hands free while the app is talking: still on, not listening this second.
@@ -303,7 +305,9 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: 'rgba(255,255,255,0.1)',
   },
-  primary: { flexGrow: 1, minWidth: 110 },
+  primary: { paddingHorizontal: 16 },
+  // The primary button takes what's left of the row.
+  grow: { flexGrow: 1, flexShrink: 1, minWidth: 90 },
   pillText: { color: paper, ...face.bold, fontSize: 17 },
   off: { opacity: 0.35 },
   iconBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
