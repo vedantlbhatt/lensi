@@ -115,7 +115,7 @@ for v in "${STOCK[@]}"; do
   n=$((n + 1))
 done
 
-scenario 11-memories 9 "lensi:///?memories=1"
+scenario 11-memories 16 "lensi:///?memories=1"
 
 # Render the share image inside the app and pull it out of the container. This run
 # keeps the default brain, so it also exercises Apple Intelligence failing in the VM.
