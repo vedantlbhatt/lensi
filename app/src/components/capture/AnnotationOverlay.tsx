@@ -114,6 +114,9 @@ export function AnnotationOverlay({
 const styles = StyleSheet.create({ passthrough: { pointerEvents: 'none' } });
 
 const DRAW = Easing.bezier(0.16, 1, 0.3, 1);
+// Made once: an easing built during render is a new function every time, which
+// re-runs the effect that starts the animation.
+const LEADER = Easing.out(Easing.cubic);
 
 function useEnter(delay: number, duration = 900, easing: EasingFunction | EasingFunctionFactory = DRAW) {
   const t = useSharedValue(0);
@@ -213,7 +216,7 @@ function Mark({ at, n, pen, font, delay }: { at: Pt; n: number; pen: string; fon
 
 function Leader({ from, to, delay, dim }: { from: Pt; to: Pt; delay: number; dim: boolean }) {
   const path = useMemo(() => svgPath(leaderPath(from, to)), [from, to]);
-  const draw = useEnter(delay + 140, 420, Easing.out(Easing.cubic));
+  const draw = useEnter(delay + 140, 420, LEADER);
   const dimmer = useDim(dim, 0.12);
   return (
     <Group opacity={dimmer}>
