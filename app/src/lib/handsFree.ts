@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { useSpeaking } from './narrate';
@@ -20,6 +20,8 @@ export function useHandsFree(voice: Voice, active: boolean) {
   const [on, setOn] = useState(false);
   const speaking = useSpeaking();
   const live = on && active;
+  const liveRef = useRef(live);
+  liveRef.current = live;
   const { listening, start, stop, isListening } = voice;
 
   useEffect(() => {
@@ -31,7 +33,10 @@ export function useHandsFree(voice: Voice, active: boolean) {
     if (listening) return;
     const t = setTimeout(() => {
       void start().then((ok) => {
-        if (!ok) setOn(false);
+        // No mic (permission, hardware): hands free can't work, so stop trying.
+        if (ok === false) setOn(false);
+        // The job ended (or it was switched off) while the mic was starting: close it again.
+        else if (ok && !liveRef.current) void stop();
       });
     }, REARM_MS);
     return () => clearTimeout(t);
