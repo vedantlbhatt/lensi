@@ -121,7 +121,8 @@ jobs:
         run: npx expo prebuild --platform ios --no-install
       - name: Pods
         working-directory: app/ios
-        run: pod install
+        # Pods download large prebuilt binaries; one dropped connection shouldn't cost the run.
+        run: pod install || { echo "pod install failed; retrying once"; sleep 15; pod install; }
       - name: Build (Release, Simulator)
         working-directory: app
         run: |
