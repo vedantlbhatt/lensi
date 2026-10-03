@@ -2,7 +2,7 @@ import { Image } from 'expo-image';
 import * as Speech from 'expo-speech';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -20,6 +20,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { devhooks } from '../../lib/devhooks';
 import { fromView, toView } from '../../lib/geometry';
 import { haptic } from '../../lib/haptics';
+import { say } from '../../lib/narrate';
 import { analyze, ask, askAbout, cancel, isHowTo } from '../../lib/pipeline';
 import { setSettings, useSettings } from '../../lib/settings';
 import { getCapture, removeCapture, useCapture } from '../../lib/store';
@@ -170,9 +171,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   const step = walking ? (steps[Math.min(stepIndex, steps.length - 1)] ?? null) : null;
   useEffect(() => {
     if (!walking || !step || !settings.narrate) return;
-    Speech.stop()
-      .catch(() => {})
-      .finally(() => Speech.speak(step.text, { rate: Platform.OS === 'ios' ? 0.52 : 1, pitch: 1.02 }));
+    void say(step.text);
   }, [walking, step, settings.narrate]);
   useEffect(() => () => void Speech.stop().catch(() => {}), []);
 
@@ -247,9 +246,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
     for (const x of capture.thread) {
       if (!spoken.current.has(x.id) || said.current.has(x.id) || x.pending || !x.answer.length) continue;
       said.current.add(x.id);
-      Speech.stop()
-        .catch(() => {})
-        .finally(() => Speech.speak(x.answer.join(' '), { rate: Platform.OS === 'ios' ? 0.52 : 1 }));
+      void say(x.answer.join(' '));
     }
   }, [capture.thread, settings.narrate]);
 
