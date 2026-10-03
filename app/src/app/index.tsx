@@ -15,6 +15,7 @@ import { CoachMark } from '../components/camera/CoachMark';
 import { DropMenu, type DropChoice } from '../components/camera/DropMenu';
 import { Flash, type FlashRef } from '../components/camera/Flash';
 import { FocusLabel } from '../components/camera/FocusLabel';
+import { GuidePanel } from '../components/guide/GuidePanel';
 import { LensCarousel } from '../components/camera/LensCarousel';
 import { ListeningOverlay } from '../components/camera/ListeningOverlay';
 import { MemoriesButton, MEMORIES_SIZE } from '../components/camera/MemoriesButton';
@@ -27,6 +28,7 @@ import { SettingsSheet } from '../components/ui/SettingsSheet';
 import { toast, ToastHost } from '../components/ui/Toast';
 import { devhooks } from '../lib/devhooks';
 import { pickEngine } from '../lib/engines';
+import { useGuide } from '../lib/guideSession';
 import { useLivePins } from '../lib/live';
 import { assetPhoto, pasteFromClipboard, pickedFromFile, pickFromFiles, pickFromLibrary, type Picked } from '../lib/media';
 import { pointOf, queryOf, type ScriptParams } from '../lib/links';
@@ -34,6 +36,7 @@ import { ingest } from '../lib/pipeline';
 import { getSettings, setSettings, useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
 import type { EngineId } from '../lib/types';
+import { hush } from '../lib/narrate';
 import { useVoice } from '../lib/voice';
 import { springs } from '../theme/motion';
 import { LENSES, lensInfo, type Lens } from '../theme/tokens';
@@ -100,6 +103,46 @@ export default function Camera() {
   const pen = lensInfo(lens).pen;
   const voice = useVoice();
   const livePins = useLivePins(camera, lens);
+
+  // The live guide is the Guide lens: tags pinned on the parts, one step at a time.
+  const guideLens = lens === 'guide';
+  const guideOn = guideLens && !open && !memories && !blocked;
+  const guide = useGuide(camera, { enabled: guideOn });
+  const guideHandle = guide.handle;
+  // Leaving the Guide lens ends the job; a capture or Memories on top only pauses it.
+  useEffect(() => {
+    if (!guideLens) guide.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guideLens]);
+  // A different virtual scene: the tags belonged to the last one.
+  const guideStop = guide.stop;
+  const lastScene = useRef<string | null>(null);
+  const onScene = useCallback(
+    (s: DemoScene) => {
+      setScene(s);
+      if (lastScene.current && lastScene.current !== s.key) guideStop();
+      lastScene.current = s.key;
+    },
+    [guideStop],
+  );
+  // Hands are busy: tap to talk, and a pause sends it.
+  const guideMic = useCallback(async () => {
+    if (voice.isListening()) {
+      const q = await voice.stop();
+      if (q) guideHandle(q);
+      return;
+    }
+    hush();
+    setTouched(true);
+    await voice.start();
+  }, [voice, guideHandle]);
+  useEffect(() => {
+    if (!guideOn || !voice.listening || !voice.transcript) return;
+    const t = setTimeout(() => {
+      void voice.stop().then((q) => q && guideHandle(q));
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [guideOn, voice, voice.listening, voice.transcript, guideHandle]);
 
   // Re-checked whenever the camera is back in front: a model that just failed
   // is resting, a server may have come up.
@@ -220,7 +263,7 @@ export default function Camera() {
   // A deep link wins; otherwise the URL the launch environment carried (CI).
   const linked = useGlobalSearchParams<ScriptParams>();
   const launched = useMemo(() => queryOf(LensiAR.launchURL), []);
-  const params: ScriptParams = linked.demo || linked.memories || linked.file ? linked : launched;
+  const params: ScriptParams = linked.demo || linked.memories || linked.file || linked.guide || linked.scene ? linked : launched;
   useEffect(() => {
     if (params.export) devhooks.autoExport = true;
     if (params.tap) devhooks.autoTap = pointOf(params.tap);
@@ -228,6 +271,13 @@ export default function Camera() {
     if (params.memories) setMemories(true);
     if (params.brain === 'auto' || params.brain === 'apple' || params.brain === 'cloud' || params.brain === 'vision') {
       setSettings({ brain: params.brain });
+    }
+    if (params.guide) {
+      // Give the camera a moment to come up, then start the job as if it were said.
+      setLens('guide');
+      const task = params.guide;
+      const h = setTimeout(() => guideHandle(task), 2200);
+      return () => clearTimeout(h);
     }
     const scene = DEMO_SCENES.find((s) => s.key === params.demo);
     const file = Platform.OS !== 'web' && params.file ? new File(Paths.document, params.file) : null;
@@ -254,7 +304,8 @@ export default function Camera() {
     return () => {
       alive = false;
     };
-  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide]);
 
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera
   // and the demo scene on the virtual one.
@@ -278,8 +329,9 @@ export default function Camera() {
 
   const chrome = useSharedValue(1);
   useEffect(() => {
-    chrome.value = withTiming(open || memories ? 0 : voice.listening ? 0.35 : 1, { duration: 220 });
-  }, [open, memories, voice.listening, chrome]);
+    // The guide keeps its panel lit while listening: that's where the words appear.
+    chrome.value = withTiming(open || memories ? 0 : voice.listening && !guideLens ? 0.35 : 1, { duration: 220 });
+  }, [open, memories, voice.listening, guideLens, chrome]);
   const chromeStyle = useAnimatedStyle(() => ({ opacity: chrome.value }));
   const lift = useSharedValue(0);
   useEffect(() => {
@@ -305,8 +357,14 @@ export default function Camera() {
             onFocusChange={setFocus}
             onTracking={setTracking}
             onSelect={livePins.onSelect}
-            onPinTap={livePins.onPinTap}
-            onScene={setScene}
+            onPinTap={live ? livePins.onPinTap : (id) => {
+              const p = guide.state.parts.find((x) => x.id === id);
+              if (p) toast(p.label);
+            }}
+            onScene={onScene}
+            onGuideChange={guide.onChange}
+            guidePins={guideLens ? { parts: guide.state.parts, focus: guide.part?.id ?? null } : undefined}
+            sceneKey={params.scene}
           />
         </View>
       </GestureDetector>
@@ -339,7 +397,7 @@ export default function Camera() {
           />
         </View>
 
-        {!touched && captures.length === 0 && !voice.listening && !blocked ? <CoachMark pen={pen} top={height * 0.36} /> : null}
+        {!guideLens && !touched && captures.length === 0 && !voice.listening && !blocked ? <CoachMark pen={pen} top={height * 0.36} /> : null}
 
         {hint && !isVirtual ? (
           <Animated.View entering={FadeIn} exiting={FadeOut} style={[styles.hintWrap, { top: insets.top + 60 }]} pointerEvents="none">
@@ -347,6 +405,33 @@ export default function Camera() {
           </Animated.View>
         ) : null}
 
+        {guideLens ? (
+          <View style={[styles.bottom, { paddingBottom: insets.bottom + 10 }]} pointerEvents="box-none">
+            {guide.state.status === 'idle' && !voice.listening ? (
+              <>
+                <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : null} pen={pen} />
+                <LensCarousel lens={lens} onChange={setLens} />
+              </>
+            ) : null}
+            <GuidePanel
+              state={guide.state}
+              step={guide.step}
+              part={guide.part}
+              watching={guide.watching}
+              pen={pen}
+              listening={voice.listening}
+              transcript={voice.transcript}
+              level={voice.level}
+              onMic={() => void guideMic()}
+              onSubmit={guideHandle}
+              onNext={guide.next}
+              onBack={guide.back}
+              onCheck={() => void guide.check()}
+              onRepeat={guide.repeat}
+              onStop={guide.stop}
+            />
+          </View>
+        ) : (
         <Animated.View style={[styles.bottom, { paddingBottom: insets.bottom + 18 }, bottomStyle]} pointerEvents="box-none">
           <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : live ? 'Live' : null} pen={pen} />
           <LensCarousel lens={lens} onChange={setLens} />
@@ -356,9 +441,10 @@ export default function Camera() {
             <MicButton pen={pen} listening={voice.listening} level={voice.level} onHoldStart={onMicStart} onHoldEnd={() => void onMicEnd()} onTap={() => toast('Hold the mic and ask out loud')} />
           </View>
         </Animated.View>
+        )}
       </Animated.View>
 
-      {voice.listening ? <ListeningOverlay transcript={voice.transcript} pen={pen} top={insets.top + 120} /> : null}
+      {voice.listening && !guideLens ? <ListeningOverlay transcript={voice.transcript} pen={pen} top={insets.top + 120} /> : null}
 
       <Flash ref={flash} />
 

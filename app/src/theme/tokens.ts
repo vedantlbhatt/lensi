@@ -25,8 +25,8 @@ export type LensInfo = {
 };
 
 export const LENSES: LensInfo[] = [
-  { key: 'identify', name: 'Identify', verb: 'What is this?', pen: '#E4FF4F', onPen: ink },
   { key: 'guide', name: 'Guide', verb: 'Walk me through it', pen: '#FF9B3D', onPen: ink },
+  { key: 'identify', name: 'Identify', verb: 'What is this?', pen: '#E4FF4F', onPen: ink },
   { key: 'fix', name: 'Fix', verb: "Why isn't it working?", pen: '#FF5D5D', onPen: ink },
   { key: 'shop', name: 'Shop', verb: 'Is it worth it?', pen: '#5CF2A6', onPen: ink },
   { key: 'safe', name: 'Safe', verb: 'Anything risky here?', pen: '#FF8BD1', onPen: ink },

@@ -5,12 +5,15 @@ import {
   isVirtual,
   LensiARView,
   type DemoScene,
+  type GuideChangeEvent,
+  type GuideFrame,
   type LensiARViewRef,
   type SelectEvent,
   type TrackingEvent,
 } from '../../../modules/lensi-ar/src';
+import type { GuidePart } from '../../lib/guide';
 import type { Picked } from '../../lib/media';
-import { VirtualCamera } from './VirtualCamera';
+import { VirtualCamera, type VirtualHandle } from './VirtualCamera';
 
 /** One camera API whether we have ARKit or the virtual stand-in. */
 export type CameraHandle = {
@@ -23,7 +26,22 @@ export type CameraHandle = {
   nextScene?(dir: 1 | -1): void;
   /** The native view, for live pins. Null on the virtual camera. */
   native?: LensiARViewRef | null;
+  /**
+   * Live guide. On ARKit the tags live in the world (native); on the virtual
+   * camera they are drawn over the scene from `guidePins` instead, and these
+   * calls only capture the frame.
+   */
+  guide: {
+    capture(): Promise<GuideFrame | null>;
+    pin(frameId: string, part: GuidePart): Promise<void>;
+    focus(id: string | null): Promise<void>;
+    watch(id: string | null): Promise<void>;
+    clear(): Promise<void>;
+  };
 };
+
+/** Tags the virtual camera draws for the live guide (the native one pins its own). */
+export type VirtualGuidePins = { parts: GuidePart[]; focus: string | null };
 
 export const CameraSurface = forwardRef<
   CameraHandle,
@@ -37,10 +55,14 @@ export const CameraSurface = forwardRef<
     onSelect?: (e: SelectEvent) => void;
     onPinTap?: (id: string) => void;
     onScene?: (s: DemoScene) => void;
+    onGuideChange?: (e: GuideChangeEvent) => void;
+    guidePins?: VirtualGuidePins;
+    /** Virtual camera only: which demo scene to show. */
+    sceneKey?: string;
   }
 >(function CameraSurface(props, ref) {
   const native = useRef<LensiARViewRef>(null);
-  const virtual = useRef<CameraHandle>(null);
+  const virtual = useRef<VirtualHandle>(null);
 
   useImperativeHandle(
     ref,
@@ -53,6 +75,16 @@ export const CameraSurface = forwardRef<
           setTorch: () => Promise.resolve(false),
           nextScene: (dir: 1 | -1) => virtual.current?.nextScene?.(dir),
           native: null,
+          guide: {
+            capture: async () => {
+              const p = await virtual.current?.takePhoto();
+              return p ? { frameId: 'virtual', uri: p.uri, width: p.width, height: p.height } : null;
+            },
+            pin: async () => {},
+            focus: async () => {},
+            watch: async () => {},
+            clear: async () => {},
+          },
         };
       }
       return {
@@ -84,13 +116,28 @@ export const CameraSurface = forwardRef<
         get native() {
           return native.current;
         },
+        guide: {
+          capture: async () => (await native.current?.guideCapture()) ?? null,
+          pin: async (frameId: string, part: GuidePart) => {
+            await native.current?.guidePin(frameId, part.id, part.at.x, part.at.y, part.label);
+          },
+          focus: async (id: string | null) => {
+            await native.current?.guideFocus(id);
+          },
+          watch: async (id: string | null) => {
+            await native.current?.guideWatch(id);
+          },
+          clear: async () => {
+            await native.current?.guideClear();
+          },
+        },
       };
     },
     [],
   );
 
   if (isVirtual) {
-    return <VirtualCamera ref={virtual} pen={props.pen} brackets={props.brackets && !props.paused} onScene={props.onScene} />;
+    return <VirtualCamera ref={virtual} pen={props.pen} brackets={props.brackets && !props.paused} onScene={props.onScene} guidePins={props.guidePins} sceneKey={props.sceneKey} />;
   }
   return (
     <LensiARView
@@ -104,6 +151,7 @@ export const CameraSurface = forwardRef<
       onTrackingChange={(e) => props.onTracking?.(e.nativeEvent)}
       onSelect={(e) => props.onSelect?.(e.nativeEvent)}
       onPinTap={(e) => props.onPinTap?.(e.nativeEvent.id)}
+      onGuideChange={(e) => props.onGuideChange?.(e.nativeEvent)}
     />
   );
 });

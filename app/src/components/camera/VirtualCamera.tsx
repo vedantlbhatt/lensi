@@ -14,10 +14,15 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { DEMO_SCENES, setDemoQuestion, type DemoScene } from '../../../modules/lensi-ar/src';
-import { boxToView, fitRect } from '../../lib/geometry';
+import { boxToView, fitRect, toView, type Fit } from '../../lib/geometry';
+import type { GuidePart } from '../../lib/guide';
 import { assetPhoto, type Picked } from '../../lib/media';
 import { Grain } from '../../motion/Grain';
-import type { CameraHandle } from './CameraSurface';
+import { face } from '../../theme/type';
+import { labelWidth } from '../capture/layout';
+import type { CameraHandle, VirtualGuidePins } from './CameraSurface';
+
+export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene'>;
 
 /**
  * Stand-in camera for the Simulator and the web preview: the demo scenes,
@@ -25,12 +30,17 @@ import type { CameraHandle } from './CameraSurface';
  * subject. Swipe sideways for the next scene.
  */
 export const VirtualCamera = forwardRef<
-  CameraHandle,
-  { pen: string; brackets: boolean; onScene?: (s: DemoScene) => void }
->(function VirtualCamera({ pen, brackets, onScene }, ref) {
+  VirtualHandle,
+  { pen: string; brackets: boolean; onScene?: (s: DemoScene) => void; guidePins?: VirtualGuidePins; sceneKey?: string }
+>(function VirtualCamera({ pen, brackets, onScene, guidePins, sceneKey }, ref) {
   const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const scene = DEMO_SCENES[index];
+  // Scripted runs pick the scene (lensi:///?scene=truck).
+  useEffect(() => {
+    const i = DEMO_SCENES.findIndex((s) => s.key === sceneKey);
+    if (i >= 0) setIndex(i);
+  }, [sceneKey]);
 
   useEffect(() => {
     onScene?.(scene);
@@ -77,12 +87,37 @@ export const VirtualCamera = forwardRef<
     <View style={StyleSheet.absoluteFill} collapsable={false}>
       <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
         <Image source={scene.asset} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
+        {/* Inside the drifting layer, so the tags ride the scene like pins on a real camera. */}
+        {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}
       </Animated.View>
       <Grain opacity={0.05} />
-      {brackets ? <Brackets key={`b-${scene.key}`} x={b.x} y={b.y} w={b.w} h={b.h} pen={pen} /> : null}
+      {brackets && !guidePins?.parts.length ? <Brackets key={`b-${scene.key}`} x={b.x} y={b.y} w={b.w} h={b.h} pen={pen} /> : null}
     </View>
   );
 });
+
+/** A live-guide tag on the virtual scene: white, or on the lens colour when its step is current. */
+function GuideTag({ part, fit, pen, focus, screenW }: { part: GuidePart; fit: Fit; pen: string; focus: string | null; screenW: number }) {
+  const at = toView(part.at, fit);
+  // A part near the edge keeps its whole tag on screen.
+  const half = labelWidth(part.label) / 2 + 10;
+  at.x = Math.min(screenW - half, Math.max(half, at.x));
+  const focused = focus === part.id;
+  const dimmed = focus !== null && !focused;
+  return (
+    <Animated.View
+      entering={FadeIn.duration(260)}
+      style={[styles.tagSlot, { left: at.x - 90, top: at.y - 13 }, dimmed && styles.dimmed]}
+      pointerEvents="none"
+    >
+      <View style={[styles.tag, focused && { backgroundColor: pen }]}>
+        <Animated.Text style={styles.tagText} numberOfLines={1}>
+          {part.label}
+        </Animated.Text>
+      </View>
+    </Animated.View>
+  );
+}
 
 /** Corner brackets that settle onto the subject, then breathe. */
 function Brackets({ x, y, w, h, pen }: { x: number; y: number; w: number; h: number; pen: string }) {
@@ -144,6 +179,21 @@ function Corner({
 }
 
 const styles = StyleSheet.create({
+  tagSlot: { position: 'absolute', width: 180, height: 26, alignItems: 'center', justifyContent: 'center' },
+  dimmed: { opacity: 0.55 },
+  tag: {
+    height: 26,
+    paddingHorizontal: 9,
+    borderRadius: 7,
+    borderCurve: 'continuous',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  tagText: { color: '#000000', ...face.semibold, fontSize: 13, letterSpacing: -0.08 },
   corner: { position: 'absolute', left: 0, top: 0, width: 0, height: 0 },
   bar: {
     position: 'absolute',

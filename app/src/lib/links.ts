@@ -13,6 +13,10 @@ export type ScriptParams = {
   tap?: string;
   /** Video: once the first moment is read, switch to this keyframe (0-based) and read it too. */
   moment?: string;
+  /** Live guide: start a job with this task, as if it had been said (CI films the guide). */
+  guide?: string;
+  /** Virtual camera: show this demo scene (cars, truck, board, …). */
+  scene?: string;
 };
 
 /** `"0.3,0.33"` as a point on the photo, or null when it isn't one. */

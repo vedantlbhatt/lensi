@@ -19,7 +19,7 @@ export type Settings = {
   lens: Lens;
 };
 
-const DEFAULTS: Settings = { brain: 'auto', narrate: true, haptics: true, liveBrackets: true, serverURL: '', lens: 'identify' };
+const DEFAULTS: Settings = { brain: 'auto', narrate: true, haptics: true, liveBrackets: true, serverURL: '', lens: 'guide' };
 
 let state: Settings = DEFAULTS;
 let loaded = false;

@@ -358,8 +358,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       guard let pin = pins[id] else { continue }
       guard let (p, dist) = project(pin.world) else { pin.setHidden(true); continue }
       pin.setHidden(false)
-      // The tag sits on the thing itself: no dot, no leader line.
-      pin.label.center = p
+      // The tag sits on the thing itself: no dot, no leader line. A part near
+      // the edge keeps its whole tag on screen.
+      let half = pin.label.bounds.width / 2 + 8
+      pin.label.center = CGPoint(x: min(max(p.x, half), bounds.width - half), y: p.y)
 
       if let outline = pin.outline {
         let s = CGFloat(pin.outlineDistance / max(dist, 0.05))

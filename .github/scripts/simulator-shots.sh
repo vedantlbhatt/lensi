@@ -119,6 +119,10 @@ for v in "${STOCK[@]}"; do
   n=$((n + 1))
 done
 
+# The live guide, the app's default: say the job, get tags on the parts and steps.
+# Default brain: Apple Intelligence fails in this VM, so the eyes tag the parts.
+scenario 10-live-guide 40 "lensi:///?scene=truck&guide=How%20do%20I%20check%20the%20tyre%20pressure%3F"
+
 scenario 11-memories 16 "lensi:///?memories=1"
 
 # Render the share image inside the app and pull it out of the container. This run
