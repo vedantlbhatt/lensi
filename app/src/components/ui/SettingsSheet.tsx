@@ -84,6 +84,14 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
           style={styles.input}
           selectionColor={pen}
         />
+
+        <Text style={styles.section}>MADE WITH</Text>
+        <Text style={styles.credits}>
+          Apple Foundation Models · Vision · ARKit. MobileSAM (Apache-2.0) for part outlines, YOLO11n (AGPL-3.0) for
+          live detection. Type: Bricolage Grotesque, Funnel Sans, Fragment Mono, Instrument Serif (OFL). Motion ideas
+          from React Bits, rebuilt for React Native. Demo photos from the Segment Anything and OpenCV samples
+          (Apache-2.0).
+        </Text>
       </Animated.View>
     </View>
   );
@@ -139,6 +147,7 @@ const styles = StyleSheet.create({
   statusDetail: { flex: 1, color: faint, fontFamily: fonts.mono, fontSize: 10.5, letterSpacing: 0.4 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 46 },
   rowText: { color: paper, fontFamily: fonts.text, fontSize: 16 },
+  credits: { color: faint, fontFamily: fonts.text, fontSize: 12.5, lineHeight: 17 },
   input: {
     height: 46,
     borderRadius: 14,
