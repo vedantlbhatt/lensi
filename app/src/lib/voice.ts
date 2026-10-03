@@ -13,6 +13,8 @@ export function useVoice() {
   const [error, setError] = useState<string | null>(null);
   const latest = useRef('');
   const active = useRef(false);
+  /** The caller still wants to listen (false once the finger lifts). */
+  const wanted = useRef(false);
   const level = useSharedValue(0);
 
   useEffect(() => {
@@ -34,6 +36,7 @@ export function useVoice() {
     setError(null);
     latest.current = '';
     setTranscript('');
+    wanted.current = true;
     let ok = false;
     try {
       ok = await LensiAR.speechRequestPermission();
@@ -44,6 +47,9 @@ export function useVoice() {
       setError('Allow microphone and speech recognition in Settings to ask out loud.');
       return false;
     }
+    // A permission alert may have taken the whole gesture: if the finger is
+    // already up, don't start listening to nobody.
+    if (!wanted.current) return false;
     active.current = true;
     setListening(true);
     try {
@@ -58,6 +64,8 @@ export function useVoice() {
   }, []);
 
   const stop = useCallback(async (): Promise<string> => {
+    wanted.current = false;
+    if (!active.current) return '';
     try {
       await LensiAR.speechStop();
     } catch {}

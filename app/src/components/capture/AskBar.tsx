@@ -43,8 +43,9 @@ export function AskBar({
       void voice.start();
     })
     .onFinalize(async () => {
-      if (!voice.isListening()) return;
+      const wasListening = voice.isListening();
       const said = await voice.stop();
+      if (!wasListening) return;
       if (said) {
         onAsk(said, true);
         setQ('');

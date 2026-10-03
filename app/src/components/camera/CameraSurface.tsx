@@ -15,7 +15,7 @@ import { VirtualCamera } from './VirtualCamera';
 /** One camera API whether we have ARKit or the virtual stand-in. */
 export type CameraHandle = {
   takePhoto(): Promise<Picked | null>;
-  /** Resolves false when this camera can't record. */
+  /** Resolves false when this camera can't record; rejects with a reason when it could but didn't. */
   startRecording(): Promise<boolean>;
   stopRecording(): Promise<Picked | null>;
   setTorch(on: boolean): Promise<boolean>;
@@ -60,14 +60,10 @@ export const CameraSurface = forwardRef<
           const p = await native.current?.takePhoto();
           return p ? { kind: 'image', uri: p.uri, width: p.width, height: p.height, source: 'camera' } : null;
         },
+        // Rejects with a readable reason (e.g. microphone permission pending).
         startRecording: async () => {
-          try {
-            await native.current?.startRecording();
-            return true;
-          } catch (e) {
-            console.warn('[lensi] recording failed to start', e);
-            return false;
-          }
+          await native.current?.startRecording();
+          return true;
         },
         stopRecording: async () => {
           try {

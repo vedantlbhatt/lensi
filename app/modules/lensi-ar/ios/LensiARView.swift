@@ -546,25 +546,32 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       done(LensiError.unavailable("The camera isn't ready yet."))
       return
     }
+    let withAudio: Bool
+    switch AVAudioApplication.shared.recordPermission {
+    case .undetermined:
+      // Never start recording behind a permission alert: the finger has
+      // usually left the shutter by the time it's answered.
+      AVAudioApplication.requestRecordPermission { _ in }
+      done(LensiError.unavailable("Allow the microphone, then hold the shutter again."))
+      return
+    case .granted:
+      withAudio = true
+    default:
+      withAudio = false
+    }
     let width = CVPixelBufferGetWidth(frame.capturedImage)
     let height = CVPixelBufferGetHeight(frame.capturedImage)
-    AVAudioApplication.requestRecordPermission { [weak self] granted in
-      DispatchQueue.main.async {
-        guard let self else { return }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("lensi-\(UUID().uuidString).mov")
-        do {
-          let r = try Recorder(url: url, sensorWidth: width, sensorHeight: height, withAudio: granted)
-          self.recorder = r
-          if granted, let config = self.configuration {
-            // Ask the session for microphone buffers only while recording.
-            config.providesAudioData = true
-            self.sceneView.session.run(config)
-          }
-          done(nil)
-        } catch {
-          done(error)
-        }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("lensi-\(UUID().uuidString).mov")
+    do {
+      recorder = try Recorder(url: url, sensorWidth: width, sensorHeight: height, withAudio: withAudio)
+      if withAudio, let config = configuration {
+        // Ask the session for microphone buffers only while recording.
+        config.providesAudioData = true
+        sceneView.session.run(config)
       }
+      done(nil)
+    } catch {
+      done(error)
     }
   }
 

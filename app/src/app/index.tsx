@@ -136,9 +136,14 @@ export default function Camera() {
   );
 
   const recordStart = useCallback(async () => {
-    const ok = (await camera.current?.startRecording()) ?? false;
-    if (!ok) toast(isVirtual ? 'Video needs the iPhone camera' : "Couldn't start recording");
-    return ok;
+    try {
+      const ok = (await camera.current?.startRecording()) ?? false;
+      if (!ok) toast(isVirtual ? 'Video needs the iPhone camera' : "Couldn't start recording");
+      return ok;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't start recording");
+      return false;
+    }
   }, []);
 
   const recordStop = useCallback(async () => {
@@ -173,8 +178,10 @@ export default function Camera() {
     void voice.start();
   }, [voice]);
   const onMicEnd = useCallback(async () => {
-    if (!voice.isListening()) return;
+    const wasListening = voice.isListening();
+    // Always stop: it also cancels a start still waiting on a permission alert.
     const q = await voice.stop();
+    if (!wasListening) return;
     if (!q) {
       toast("Didn't catch that. Hold the mic while you talk.");
       return;
