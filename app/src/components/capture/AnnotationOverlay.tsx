@@ -2,6 +2,7 @@ import {
   BlurMask,
   Canvas,
   Circle,
+  DashPathEffect,
   FillType,
   Group,
   Path,
@@ -14,7 +15,7 @@ import {
   type SkPath,
 } from '@shopify/react-native-skia';
 import { useEffect, useMemo } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import {
   Easing,
   useDerivedValue,
@@ -57,6 +58,7 @@ export function AnnotationOverlay({
   walking,
   step,
   pen,
+  focus,
 }: {
   frame: Fit;
   subject: Region | null;
@@ -68,6 +70,8 @@ export function AnnotationOverlay({
   walking: boolean;
   step: Step | null;
   pen: string;
+  /** Outline of a part the user just tapped, while its answer is on the way. */
+  focus?: Pt[] | null;
 }) {
   const font = useFont(MONO, 10);
   const clip = useMemo(() => rrect(rect(frame.x, frame.y, frame.w, frame.h), FRAME_RADIUS, FRAME_RADIUS), [frame]);
@@ -79,7 +83,8 @@ export function AnnotationOverlay({
   const showMarks = settled && thinking && placed.length === 0;
 
   return (
-    <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
+    <View style={[StyleSheet.absoluteFill, styles.passthrough]}>
+    <Canvas style={StyleSheet.absoluteFill}>
       <Group clip={clip}>
         {settled && subjectD ? <Spotlight d={subjectD} frame={frame} strong={walking} /> : null}
         {placed.map((c, i) =>
@@ -92,6 +97,7 @@ export function AnnotationOverlay({
           ? marks.map((r, i) => <Mark key={r.id} at={toView({ x: r.box.x + r.box.w / 2, y: r.box.y + r.box.h / 2 }, frame)} n={r.mark} pen={pen} font={font} delay={i * 70} />)
           : null}
         {walking && step ? <StepHighlight key={step.id} step={step} frame={frame} pen={pen} /> : null}
+        {focus && focus.length > 2 ? <Marching key={focus.length + focus[0].x} d={outlinePath(focus, frame, 0.5)} pen={pen} /> : null}
       </Group>
       {placed.map((c, i) => (
         <Leader key={`l-${c.id}`} from={c.slot.anchor} to={c.slot.attach} delay={i * 110} dim={walking} />
@@ -100,8 +106,11 @@ export function AnnotationOverlay({
         <Dot key={`d-${c.id}`} at={c.slot.anchor} pen={pen} delay={i * 110} dim={walking} />
       ))}
     </Canvas>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({ passthrough: { pointerEvents: 'none' } });
 
 const DRAW = Easing.bezier(0.16, 1, 0.3, 1);
 
@@ -232,6 +241,26 @@ function Dot({ at, pen, delay, dim }: { at: Pt; pen: string; delay: number; dim:
         <Circle cx={at.x} cy={at.y} r={5.4} color="#FFFFFF" />
         <Circle cx={at.x} cy={at.y} r={3.6} color={pen} />
       </Group>
+    </Group>
+  );
+}
+
+/** Marching ants around a tapped part: "this one", while the model answers. */
+function Marching({ d, pen }: { d: string; pen: string }) {
+  const path = useMemo(() => svgPath(d), [d]);
+  const draw = useEnter(0, 520);
+  const phase = useSharedValue(0);
+  useEffect(() => {
+    phase.value = withRepeat(withTiming(-22, { duration: 900, easing: Easing.linear }), -1, false);
+  }, [phase]);
+  const fill = useDerivedValue(() => draw.value * 0.9);
+  return (
+    <Group>
+      <Path path={path} color={alpha(pen, 0.14)} opacity={fill} />
+      <Path path={path} style="stroke" strokeWidth={2.4} color="rgba(0,0,0,0.45)" end={draw} strokeJoin="round" />
+      <Path path={path} style="stroke" strokeWidth={2} color={pen} end={draw} strokeJoin="round" strokeCap="round">
+        <DashPathEffect intervals={[7, 4]} phase={phase} />
+      </Path>
     </Group>
   );
 }

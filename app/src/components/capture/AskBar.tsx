@@ -22,7 +22,7 @@ export function AskBar({
 }: {
   pen: string;
   busy: boolean;
-  onAsk: (q: string) => void;
+  onAsk: (q: string, byVoice?: boolean) => void;
   onFocus?: () => void;
   placeholder?: string;
 }) {
@@ -46,7 +46,7 @@ export function AskBar({
       if (!voice.isListening()) return;
       const said = await voice.stop();
       if (said) {
-        onAsk(said);
+        onAsk(said, true);
         setQ('');
       } else {
         toast("Didn't catch that.");

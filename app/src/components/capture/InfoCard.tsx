@@ -50,6 +50,8 @@ export function InfoCard({
   const thinking = capture.status === 'analyzing';
   const hint = capture.subject?.text ?? null;
   const suggestions = useMemo(() => suggest(capture), [capture]);
+  // The newest exchange, shown in place of the summary while the card is down.
+  const latest = capture.thread.length ? capture.thread[capture.thread.length - 1] : null;
 
   return (
     <View style={styles.wrap}>
@@ -77,7 +79,22 @@ export function InfoCard({
         )}
       </View>
 
-      {a.summary ? (
+      {!expanded && latest ? (
+        <Animated.View key={latest.id} entering={FadeInDown.duration(320)} style={styles.latest}>
+          <Text style={styles.latestQ} numberOfLines={1}>
+            {latest.question}
+          </Text>
+          {latest.answer.length ? (
+            <Animated.Text key={latest.answer.length} entering={FadeIn.duration(260)} style={styles.summary} numberOfLines={2}>
+              {latest.answer.join(' ')}
+            </Animated.Text>
+          ) : latest.steps?.length ? (
+            <Text style={styles.summary}>{latest.steps.length} steps, playing above.</Text>
+          ) : (
+            <ShinyText text="Thinking…" style={styles.summary} />
+          )}
+        </Animated.View>
+      ) : a.summary ? (
         <Animated.Text entering={FadeInDown.duration(380).delay(120)} style={styles.summary} numberOfLines={expanded ? undefined : 2}>
           {a.summary}
         </Animated.Text>
@@ -191,6 +208,8 @@ const styles = StyleSheet.create({
   waiting: { height: 34, justifyContent: 'center' },
   waitingText: { color: paper, fontFamily: fonts.serifItalic, fontSize: 28, letterSpacing: -0.3 },
   summary: { color: mist, fontFamily: fonts.text, fontSize: 15.5, lineHeight: 21 },
+  latest: { gap: 2 },
+  latestQ: { color: paper, fontFamily: fonts.serifItalic, fontSize: 19, lineHeight: 22 },
   skeletons: { gap: 8, paddingVertical: 4 },
   skeleton: { height: 12, borderRadius: 6, backgroundColor: 'rgba(244,241,234,0.1)' },
   errorRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },

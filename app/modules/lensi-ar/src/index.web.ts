@@ -85,9 +85,17 @@ export const LensiAR = {
   async segment(uri: string, x: number, y: number): Promise<Segment | null> {
     const s = sceneForUri(uri);
     if (!s) return null;
-    const p = poly(s);
-    if (!inside({ x, y }, p)) return null;
-    return { polygon: p, box: box(s.outline.box), score: 0.9, engine: 'demo' };
+    await new Promise((r) => setTimeout(r, 160));
+    // Precomputed MobileSAM outline nearest the point, if one is close enough.
+    const near = s.parts
+      .map((p) => ({ p, d: Math.hypot(p.at[0] - x, p.at[1] - y) }))
+      .sort((a, b) => a.d - b.d)[0];
+    if (!near || near.d > 0.1) return null;
+    const polygon = near.p.polygon.map(([px, py]) => ({ x: px, y: py }));
+    const xs = polygon.map((q) => q.x);
+    const ys = polygon.map((q) => q.y);
+    const b = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    return { polygon, box: b, score: 0.9, engine: 'demo' };
   },
 
   async intelligenceStatus(): Promise<IntelligenceStatus> {
@@ -95,7 +103,12 @@ export const LensiAR = {
   },
 
   async intelligenceStart(requestId: string, request: string): Promise<void> {
-    const req = JSON.parse(request) as { imageUri: string; question?: string; walkthrough?: boolean };
+    const req = JSON.parse(request) as {
+      imageUri: string;
+      question?: string;
+      walkthrough?: boolean;
+      marks?: { mark: number; kind: string; box: { x: number; y: number; w: number; h: number } }[];
+    };
     const s = sceneForUri(req.imageUri);
     const list: ReturnType<typeof setTimeout>[] = [];
     timers.set(requestId, list);
@@ -107,11 +120,28 @@ export const LensiAR = {
     if (!s) {
       at(0, { kind: 'title', text: 'Something new' });
       at(500, { kind: 'summary', text: 'The web preview only knows its demo scenes.' });
-    } else if (req.walkthrough || req.question) {
+    } else if (req.walkthrough) {
       const sc = s.script;
       at(0, { kind: 'title', text: sc.title });
-      if (req.question && !req.walkthrough) at(200, { kind: 'answer', text: sc.summary });
       sc.steps.forEach((st, i) => at(i === 0 ? 300 : 420, { kind: 'step', text: st.text, at: st.at && { x: st.at[0], y: st.at[1] } }));
+    } else if (req.question) {
+      // "What's this?" about a tapped mark: name the scripted part nearest to it.
+      const sc = s.script;
+      const tapped = /mark (\d+)/.exec(req.question)?.[1];
+      const m = req.marks?.find((x) => String(x.mark) === tapped);
+      if (m) {
+        const cx = m.box.x + m.box.w / 2;
+        const cy = m.box.y + m.box.h / 2;
+        const near = [...sc.callouts].sort(
+          (a, b) => Math.hypot(a.at[0] - cx, a.at[1] - cy) - Math.hypot(b.at[0] - cx, b.at[1] - cy),
+        )[0];
+        at(0, { kind: 'answer', text: `That's the ${near.label.toLowerCase()}.` });
+        at(380, { kind: 'answer', text: sc.facts[0] });
+        at(300, { kind: 'callout', label: near.label, mark: m.mark });
+      } else {
+        at(0, { kind: 'answer', text: sc.summary });
+        at(380, { kind: 'answer', text: sc.facts[0] });
+      }
     } else {
       const sc = s.script;
       at(0, { kind: 'title', text: sc.title });

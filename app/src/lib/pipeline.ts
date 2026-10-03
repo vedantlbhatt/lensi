@@ -1,6 +1,6 @@
 import { LensiAR } from '../../modules/lensi-ar/src';
 import { pickEngine } from './engines';
-import { dist, polygonArea } from './geometry';
+import { boundsOf, dist, polygonArea } from './geometry';
 import { normalizeStill, videoMoments, type Picked } from './media';
 import { captureDir, keep } from './persist';
 import { anchorFor, buildRegions, regionAt, regionArea, type AnalysisLike } from './regions';
@@ -154,17 +154,21 @@ function startExchange(id: string, question: string, walkthrough: boolean): stri
   return ex.id;
 }
 
-/** A follow-up question about a capture. How-to questions become walkthroughs. */
-export async function ask(id: string, question: string, opts: { walkthrough?: boolean } = {}) {
+/**
+ * A follow-up question about a capture. How-to questions become walkthroughs.
+ * `display` is what the thread shows when the model needs a fuller prompt.
+ */
+export async function ask(id: string, question: string, opts: { walkthrough?: boolean; display?: string } = {}) {
   const c = getCapture(id);
   if (!c) return;
   const walkthrough = opts.walkthrough ?? isHowTo(question);
-  const exchangeId = startExchange(id, question, walkthrough);
+  const exchangeId = startExchange(id, opts.display ?? question, walkthrough);
   const controller = new AbortController();
   controllers.get(`${id}:ask`)?.abort();
   controllers.set(`${id}:ask`, controller);
 
   const engine = await pickEngine(getSettings().brain);
+  const current = getCapture(id) ?? c;
   const history = c.thread
     .filter((x) => !x.pending)
     .map((x) => ({ question: x.question, answer: [...x.answer, ...(x.steps ?? []).map((s, i) => `${i + 1}. ${s.text}`)].join(' ') }));
@@ -175,7 +179,7 @@ export async function ask(id: string, question: string, opts: { walkthrough?: bo
         width: c.media.width,
         height: c.media.height,
         lens: c.lens,
-        regions: c.regions,
+        regions: current.regions,
         hint: c.annotation.title ?? c.subject?.text ?? null,
         question,
         history,
@@ -192,6 +196,30 @@ export async function ask(id: string, question: string, opts: { walkthrough?: bo
     patchExchange(id, exchangeId, (x) => ({ ...x, pending: false }));
     if (controllers.get(`${id}:ask`) === controller) controllers.delete(`${id}:ask`);
   }
+}
+
+/**
+ * "What's this?" for a tapped point: the segmenter outlines the part under
+ * the finger, it joins the capture as a new numbered mark, and the model is
+ * asked about that mark. Returns the outline for immediate feedback.
+ */
+export async function askAbout(id: string, at: Pt): Promise<Pt[] | null> {
+  const c = getCapture(id);
+  if (!c) return null;
+  let polygon: Pt[] | undefined;
+  try {
+    const seg = await LensiAR.segment(c.media.stillUri, at.x, at.y);
+    if (seg && seg.polygon.length > 2) polygon = seg.polygon;
+  } catch {}
+  const mark = Math.max(0, ...c.regions.map((r) => r.mark)) + 1;
+  const box = polygon ? boundsOf(polygon) : { x: Math.max(0, at.x - 0.04), y: Math.max(0, at.y - 0.04), w: 0.08, h: 0.08 };
+  const region: Region = { id: `r${mark}`, mark, kind: 'part', box, polygon };
+  patchCapture(id, (x) => ({ ...x, regions: [...x.regions, region] }));
+  void ask(id, `The user tapped the part at mark ${mark}. What is it, and what is it for? Label it.`, {
+    walkthrough: false,
+    display: "What's this?",
+  });
+  return polygon ?? null;
 }
 
 export function cancel(id: string) {

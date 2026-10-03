@@ -18,12 +18,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { devhooks } from '../../lib/devhooks';
-import { toView } from '../../lib/geometry';
+import { fromView, toView } from '../../lib/geometry';
 import { haptic } from '../../lib/haptics';
-import { analyze, ask, cancel, isHowTo } from '../../lib/pipeline';
+import { analyze, ask, askAbout, cancel, isHowTo } from '../../lib/pipeline';
 import { setSettings, useSettings } from '../../lib/settings';
-import { removeCapture, useCapture } from '../../lib/store';
-import type { Capture } from '../../lib/types';
+import { getCapture, removeCapture, useCapture } from '../../lib/store';
+import type { Capture, Pt } from '../../lib/types';
+import { Sparks, type SparksRef } from '../../motion/Sparks';
 import { PressScale } from '../../motion/PressScale';
 import { ShinyText } from '../../motion/ShinyText';
 import { springs } from '../../theme/motion';
@@ -194,6 +195,35 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
 
   // ---- card ------------------------------------------------------------------------
   const [expanded, setExpanded] = useState(false);
+
+  // ---- tap the print: "what's this?" ------------------------------------------------
+  const sparks = useRef<SparksRef>(null);
+  const [focus, setFocus] = useState<Pt[] | null>(null);
+  const focusAsked = useRef<number>(0);
+  const tapPrint = Gesture.Tap()
+    .maxDuration(250)
+    .runOnJS(true)
+    .onEnd((e, ok) => {
+      if (!ok || !settled) return;
+      const at = fromView({ x: frame.x + e.x, y: frame.y + e.y }, frame);
+      if (at.x < 0 || at.y < 0 || at.x > 1 || at.y > 1) return;
+      sparks.current?.burst(frame.x + e.x, frame.y + e.y, lens.pen);
+      haptic.tap();
+      setFocus(null);
+      setExpanded(false);
+      focusAsked.current = capture.thread.length;
+      void askAbout(capture.id, at).then(setFocus);
+    });
+  // Let the marching ants go once the answer to that tap has landed.
+  useEffect(() => {
+    if (!focus) return;
+    const ex = capture.thread[focusAsked.current];
+    if (ex && !ex.pending) {
+      const t = setTimeout(() => setFocus(null), 1600);
+      return () => clearTimeout(t);
+    }
+  }, [focus, capture.thread]);
+
   const keyboard = useAnimatedKeyboard();
   const cardStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -Math.max(0, keyboard.height.value - insets.bottom) }],
@@ -206,9 +236,33 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
       else if (e.translationY > 30 || e.velocityY > 500) setExpanded(false);
     });
 
-  const onAsk = (q: string) => {
-    setExpanded(true);
+  // Answers to spoken questions are spoken back, heyclicky style.
+  const spoken = useRef(new Set<string>());
+  const said = useRef(new Set<string>());
+  useEffect(() => {
+    if (capture.source === 'voice' && capture.thread[0]) spoken.current.add(capture.thread[0].id);
+  }, [capture.source, capture.thread]);
+  useEffect(() => {
+    if (!settings.narrate) return;
+    for (const x of capture.thread) {
+      if (!spoken.current.has(x.id) || said.current.has(x.id) || x.pending || !x.answer.length) continue;
+      said.current.add(x.id);
+      Speech.stop()
+        .catch(() => {})
+        .finally(() => Speech.speak(x.answer.join(' '), { rate: Platform.OS === 'ios' ? 0.52 : 1 }));
+    }
+  }, [capture.thread, settings.narrate]);
+
+  const onAsk = (q: string, byVoice = false) => {
+    const before = new Set(capture.thread.map((x) => x.id));
     void ask(capture.id, q);
+    if (byVoice) {
+      // The exchange id is created synchronously inside ask(); find it next tick.
+      setTimeout(() => {
+        const fresh = getCapture(capture.id)?.thread.find((x) => !before.has(x.id));
+        if (fresh) spoken.current.add(fresh.id);
+      }, 0);
+    }
     if (isHowTo(q)) toast('Building a walkthrough…');
   };
 
@@ -219,7 +273,7 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
       <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdrop]} />
 
       {/* The print */}
-      <GestureDetector gesture={dismiss}>
+      <GestureDetector gesture={Gesture.Race(dismiss, tapPrint)}>
         <Animated.View
           style={[styles.print, { left: frame.x, top: frame.y, width: frame.w, height: frame.h }, frameStyle]}
           accessibilityLabel={capture.annotation.title ?? 'Capture'}
@@ -240,10 +294,13 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
           walking={walking}
           step={step}
           pen={lens.pen}
+          focus={walking ? null : focus}
         />
         <CalloutLabels placed={placed} pen={lens.pen} dim={walking} onPress={(c) => onAsk(`Tell me about the ${c.label.toLowerCase()}`)} />
         {walking ? <WalkPointer target={pointerTarget} index={stepIndex} pen={lens.pen} home={{ x: screen.width / 2, y: screen.height - CARD_PEEK }} /> : null}
       </Animated.View>
+
+      <Sparks ref={sparks} color={lens.pen} />
 
       {/* Top bar */}
       <Animated.View style={[styles.top, { top: insets.top + 6 }, chrome]} pointerEvents="box-none">
