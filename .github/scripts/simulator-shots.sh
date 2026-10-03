@@ -26,7 +26,6 @@ xcrun simctl status_bar "$DEV" override --time "9:41" --batteryState charged --b
 xcrun simctl install "$DEV" "$APP"
 
 shot() { sleep "$2"; xcrun simctl io "$DEV" screenshot --type=png "$OUT/$1.png" >/dev/null 2>&1 && echo "shot $1"; }
-running() { xcrun simctl spawn "$DEV" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE"; }
 # Every launch and liveness check, with times and PIDs, to line up with device.log.
 tl() { echo "$(date '+%H:%M:%S') $*" | tee -a "$OUT/timeline.txt"; }
 # launch [lensi-url]: a cold start, optionally carrying a scripted run. The app's
@@ -45,92 +44,78 @@ launch() {
     out=$(xcrun simctl launch "${io[@]}" "$DEV" "$BUNDLE" 2>&1)
   fi
   tl "launch #$RUN ${1:-camera} -> $out"
+  # "com.vedantbhatt.lensi: 12345". Simulator apps are host processes, so the PID can be
+  # checked directly; launchctl inside the Simulator answered "not running" for apps that
+  # were plainly on screen while a recording was going.
+  PID=${out##*: }
 }
-alive() { if running; then tl "alive after $1"; else tl "NOT RUNNING after $1"; echo "NOT RUNNING after $1" >> "$OUT/problems.txt"; fi; }
+PID=""
+alive() {
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then tl "alive after $1 (pid $PID)"
+  else tl "NOT RUNNING after $1 (pid $PID)"; echo "NOT RUNNING after $1" >> "$OUT/problems.txt"; fi
+}
 
 # Grant what the app may ask for so no system alert covers the screenshots.
 xcrun simctl privacy "$DEV" grant all "$BUNDLE" >/dev/null 2>&1 || true
 
-# Screen recordings, one mp4 per scenario (the morning demos).
+# Screen recordings, one mp4 per scenario (the morning demos). HEVC: h264 at the
+# Simulator's full resolution came to ~350 MB a run.
 REC=""
-rec() { xcrun simctl io "$DEV" recordVideo --codec=h264 --force "$OUT/demo-$1.mp4" >/dev/null 2>&1 & REC=$!; sleep 1; }
+rec() { xcrun simctl io "$DEV" recordVideo --codec=hevc --force "$OUT/demo-$1.mp4" >/dev/null 2>&1 & REC=$!; sleep 1; }
 unrec() { [ -n "$REC" ] && kill -INT "$REC" 2>/dev/null; wait "$REC" 2>/dev/null || true; REC=""; }
 
-rec camera
-launch
-shot 01-camera 14
-alive camera
-shot 02-camera-settled 3
-unrec
+# One scenario = one cold launch, filmed. A screenshot taken while recording costs
+# 10-20 s in this VM, so each scenario takes a single one, at the end.
+scenario() { # scenario <name> <seconds> [lensi-url]
+  rec "$1"
+  launch "${3:-}"
+  sleep "$2"
+  shot "$1" 0
+  alive "$1"
+  unrec
+}
+
+# A cold start takes ~6 s in CI's VM (JS bundle, fonts). Demo runs use the eyes-only
+# brain: this VM can't run Apple Intelligence.
+scenario 01-camera 12
 
 # Stock footage for the video pipeline: Intel IoT Devkit sample videos (CC BY 4.0),
-# dropped into the app's Documents and opened with lensi:///?file=…  The data
-# container is looked up after the first launch, when it certainly exists.
+# copied into the app's Documents and opened with lensi:///?file=…  The data container
+# is looked up after the first launch, when it certainly exists.
 DATA=$(xcrun simctl get_app_container "$DEV" "$BUNDLE" data 2>/dev/null || true)
 tl "data container: ${DATA:-none}"
-STOCK=(car-detection store-aisle-detection fruit-and-vegetable-detection)
+STOCK=(classroom bottle-detection worker-zone-detection store-aisle-detection)
 if [ -n "$DATA" ]; then
   mkdir -p "$DATA/Documents"
   for v in "${STOCK[@]}"; do
-    curl -fsSL --max-time 60 -o "$DATA/Documents/$v.mp4" "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/$v.mp4" \
+    curl -fsSL --max-time 90 -o "$DATA/Documents/$v.mp4" "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/$v.mp4" \
       && tl "stock $v $(du -h "$DATA/Documents/$v.mp4" | cut -f1)" || tl "stock $v unavailable"
   done
 fi
 
-# A cold start takes ~6 s in CI's VM (JS bundle, fonts), so the first shot waits.
-# Demo runs use the eyes-only brain: this VM can't run Apple Intelligence.
-rec cars
-launch "lensi:///?demo=cars&brain=vision"
-shot 03-capture-7s 7
-shot 04-capture-10s 3
-shot 05-capture-14s 4
-shot 06-capture-20s 6
-alive cars
-unrec
-
+scenario 02-cars 16 "lensi:///?demo=cars&brain=vision"
 # Tap-to-ask, scripted: once the labels are in, the app taps the headlamp itself.
 # SAM outlines the part under the point (marching ants) and the eyes say what they can.
-rec tap
-launch "lensi:///?demo=cars&brain=vision&tap=0.3,0.33"
-shot 15-tap-10s 10
-shot 16-tap-16s 6
-alive tap
-unrec
+scenario 03-tap 18 "lensi:///?demo=cars&brain=vision&tap=0.3,0.33"
+scenario 04-board 16 "lensi:///?demo=board&lens=learn&brain=vision"
+scenario 05-guide 16 "lensi:///?demo=truck&lens=guide&brain=vision&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F"
 
-rec board
-launch "lensi:///?demo=board&lens=learn&brain=vision"
-shot 07-board-9s 9
-shot 08-board-18s 9
-alive board
-unrec
-
-rec guide
-launch "lensi:///?demo=truck&lens=guide&brain=vision&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F"
-shot 09-guide-9s 9
-shot 10-guide-18s 9
-alive guide
-unrec
-
-# The video pipeline on real footage: three keyframes, the middle one read first by Vision,
-# YOLO and SAM; then the run switches to the first keyframe (moment=0) and reads that too.
-n=20
+# The video pipeline on real footage: three keyframes, the middle one read first by
+# Vision, YOLO and SAM; then the run switches to another keyframe and reads that too.
+n=6
 for v in "${STOCK[@]}"; do
   [ -n "$DATA" ] && [ -f "$DATA/Documents/$v.mp4" ] || continue
-  case "$v" in store-*) lens=shop ;; fruit-*) lens=learn ;; *) lens=identify ;; esac
-  rec "stock-$v"
-  launch "lensi:///?file=$v.mp4&lens=$lens&brain=vision&moment=0"
-  shot "$n-stock-$v-12s" 12
-  shot "$((n + 1))-stock-$v-28s" 16
-  alive "stock-$v"
-  unrec
-  n=$((n + 2))
+  case "$v" in
+    classroom) lens=learn; m=2 ;;
+    bottle-*) lens=identify; m=0 ;;
+    worker-*) lens=safe; m=0 ;;
+    *) lens=shop; m=2 ;;
+  esac
+  scenario "$(printf %02d $n)-stock-$v" 26 "lensi:///?file=$v.mp4&lens=$lens&brain=vision&moment=$m"
+  n=$((n + 1))
 done
 
-rec memories
-launch "lensi:///?memories=1"
-shot 11-memories 10
-alive memories
-unrec
+scenario 11-memories 9 "lensi:///?memories=1"
 
 # Render the share image inside the app and pull it out of the container. This run
 # keeps the default brain, so it also exercises Apple Intelligence failing in the VM.

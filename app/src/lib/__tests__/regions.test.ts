@@ -125,3 +125,37 @@ test('SAM part proposals become numbered parts, best first, without repeating ma
   assert.ok(parts.every((p) => (p.polygon?.length ?? 0) >= 3));
   assert.equal(regions[0].kind, 'subject');
 });
+
+test('scene words are skipped in the form the phone sends them (spaces, not underscores)', () => {
+  const { subject } = buildRegions({
+    subject: null,
+    instances: [],
+    text: [],
+    barcodes: [],
+    objects: [],
+    labels: [
+      { label: 'night sky', confidence: 0.5 },
+      { label: 'circuit board', confidence: 0.3 },
+    ],
+    salient: [{ x: 0.1, y: 0.1, w: 0.8, h: 0.8 }],
+  });
+  assert.equal(subject?.text, 'circuit board');
+});
+
+test('small detections cut off by the edge get no name (a car roof is not a bottle)', () => {
+  const { subject, regions } = buildRegions({
+    subject: null,
+    instances: [],
+    text: [],
+    barcodes: [],
+    objects: [
+      { label: 'bottle', confidence: 0.84, box: { x: 0.19, y: 0, w: 0.16, h: 0.21 } },
+      { label: 'sports ball', confidence: 0.58, box: { x: 0.43, y: 0.93, w: 0.2, h: 0.07 } },
+      { label: 'person', confidence: 0.7, box: { x: 0.0, y: 0.2, w: 0.3, h: 0.7 } },
+    ],
+    labels: [],
+    salient: [],
+  });
+  assert.equal(subject?.text, 'person');
+  assert.deepEqual(regions.map((r) => r.text).filter(Boolean), ['person']);
+});

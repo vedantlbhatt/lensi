@@ -35,8 +35,18 @@ const SCENE_WORDS = new Set([
 
 /** The classifier's best label that names a thing rather than a scene, readable. */
 export function thingLabel(labels: { label: string; confidence: number }[]): string | undefined {
-  const l = labels.find((x) => x.confidence >= 0.1 && !SCENE_WORDS.has(x.label.toLowerCase()));
+  // The native side sends identifiers with spaces ("night sky"); the list is in Vision's own form.
+  const l = labels.find((x) => x.confidence >= 0.1 && !SCENE_WORDS.has(x.label.toLowerCase().replace(/ /g, '_')));
   return l?.label.replace(/_/g, ' ');
+}
+
+/**
+ * A small box cut off by the photo's edge: the detector sees a sliver of
+ * something and guesses (a car's roof read as a "bottle"). Not worth a name.
+ */
+function sliver(b: Box): boolean {
+  const edge = b.x <= 0.01 || b.y <= 0.01 || b.x + b.w >= 0.99 || b.y + b.h >= 0.99;
+  return edge && b.w * b.h < 0.04;
 }
 
 const MAX_TEXT = 8;
@@ -58,10 +68,11 @@ export function buildRegions(a: AnalysisLike): { subject: Region | null; regions
   };
 
   const subjectSrc = a.subject ?? a.instances[0] ?? null;
-  const topObject = [...a.objects].sort((p, q) => q.confidence - p.confidence)[0];
+  const detected = a.objects.filter((o) => !sliver(o.box));
+  const topObject = [...detected].sort((p, q) => q.confidence - p.confidence)[0];
   if (subjectSrc) {
     // Name the subject after whichever detector box overlaps it most.
-    const named = a.objects
+    const named = detected
       .map((o) => ({ o, s: iou(o.box, subjectSrc.box) }))
       .filter((x) => x.s > 0.35)
       .sort((p, q) => q.s - p.s)[0]?.o;
@@ -83,12 +94,12 @@ export function buildRegions(a: AnalysisLike): { subject: Region | null; regions
   for (const inst of a.instances) {
     if (subject && iou(inst.box, subject.box) > 0.6) continue;
     if (area(inst.box) < 0.002) continue;
-    const named = a.objects.find((o) => iou(o.box, inst.box) > 0.4);
+    const named = detected.find((o) => iou(o.box, inst.box) > 0.4);
     add({ kind: 'object', box: inst.box, polygon: inst.polygon, text: named?.label });
   }
 
   // Detector objects that no instance covered.
-  const objects = [...a.objects].sort((p, q) => q.confidence - p.confidence).slice(0, MAX_OBJECTS);
+  const objects = [...detected].sort((p, q) => q.confidence - p.confidence).slice(0, MAX_OBJECTS);
   for (const o of objects) {
     if (regions.some((r) => iou(r.box, o.box) > 0.5)) continue;
     add({ kind: 'object', box: o.box, text: o.label, confidence: o.confidence });
