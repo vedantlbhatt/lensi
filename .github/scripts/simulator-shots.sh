@@ -53,9 +53,18 @@ REC=""
 rec() { xcrun simctl io "$DEV" recordVideo --codec=h264 --force "$OUT/demo-$1.mp4" >/dev/null 2>&1 & REC=$!; sleep 1; }
 unrec() { [ -n "$REC" ] && kill -INT "$REC" 2>/dev/null; wait "$REC" 2>/dev/null || true; REC=""; }
 
+rec camera
+launch
+shot 01-camera 14
+alive camera
+shot 02-camera-settled 3
+unrec
+
 # Stock footage for the video pipeline: Intel IoT Devkit sample videos (CC BY 4.0),
-# dropped into the app's Documents and opened with lensi:///?file=…
+# dropped into the app's Documents and opened with lensi:///?file=…  The data
+# container is looked up after the first launch, when it certainly exists.
 DATA=$(xcrun simctl get_app_container "$DEV" "$BUNDLE" data 2>/dev/null || true)
+tl "data container: ${DATA:-none}"
 STOCK=(car-detection store-aisle-detection fruit-and-vegetable-detection)
 if [ -n "$DATA" ]; then
   mkdir -p "$DATA/Documents"
@@ -64,13 +73,6 @@ if [ -n "$DATA" ]; then
       && tl "stock $v $(du -h "$DATA/Documents/$v.mp4" | cut -f1)" || tl "stock $v unavailable"
   done
 fi
-
-rec camera
-launch
-shot 01-camera 14
-alive camera
-shot 02-camera-settled 3
-unrec
 
 # A cold start takes ~6 s in CI's VM (JS bundle, fonts), so the first shot waits.
 # Demo runs use the eyes-only brain: this VM can't run Apple Intelligence.
