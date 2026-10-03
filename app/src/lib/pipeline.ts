@@ -8,6 +8,7 @@ import { getSettings } from './settings';
 import { addCapture, getCapture, patchCapture } from './store';
 import {
   emptyAnnotation,
+  type Callout,
   type Capture,
   type EngineEvent,
   type Exchange,
@@ -423,8 +424,13 @@ function apply(id: string, e: EngineEvent, exchangeId: string | null) {
       const found = place(c, e.mark, e.at);
       if (!found) return;
       const { exact, ...p } = found;
-      // Two labels on the same spot read as noise; keep the first.
-      const near = c.annotation.callouts.find((k) => dist(k.at, p.at) < 0.035);
+      // Two labels on the same spot, or on the same part, read as noise; keep the
+      // first. An answer naming a part that already has a label points at that one.
+      const sameName = (k: Callout) => k.label.trim().toLowerCase() === e.label.trim().toLowerCase();
+      const samePart = (k: Callout) => !!p.regionId && p.regionId !== c.subject?.id && k.regionId === p.regionId;
+      const near =
+        (exchangeId ? c.annotation.callouts.find(sameName) : undefined) ??
+        c.annotation.callouts.find((k) => dist(k.at, p.at) < 0.035 || samePart(k));
       let calloutId = near?.id;
       if (!near && c.annotation.callouts.length < MAX_CALLOUTS) {
         const callout = { id: uid(), label: e.label, detail: e.detail, ...p };

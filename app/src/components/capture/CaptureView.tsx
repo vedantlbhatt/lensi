@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import * as Speech from 'expo-speech';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, Linking, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActionSheetIOS, Keyboard, Linking, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -203,6 +203,9 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   }, [walking, step, settings.narrate]);
   useEffect(() => () => void Speech.stop().catch(() => {}), []);
 
+  // ---- card ------------------------------------------------------------------------
+  const [expanded, setExpanded] = useState(false);
+
   // ---- pointing while answering ---------------------------------------------------
   // heyclicky's trick, on a photo: when an answer names parts, the pointer
   // visits each one in turn, then gets out of the way.
@@ -213,6 +216,8 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   useEffect(() => {
     if (!latestEx || walking || !latestPoints || toured.current.has(latestEx.id)) return;
     toured.current.add(latestEx.id);
+    // The card comes down so the parts being pointed at aren't under it.
+    setExpanded(false);
     setTour({ ex: latestEx.id, i: 0 });
   }, [latestEx, latestPoints, walking]);
   const tourEx = tour ? capture.thread.find((x) => x.id === tour.ex) : undefined;
@@ -241,7 +246,13 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
       ? { id: `${tour.ex}:${tour.i}`, text: tourPoint.label, at: tourCallout?.at ?? tourPoint.at, polygon: tourCallout?.polygon ?? tourPoint.polygon }
       : null;
   const pointerTarget = shown?.at ? toView(shown.at, frame) : null;
-  const replayPoints = latestEx && latestPoints && !walking ? () => setTour({ ex: latestEx.id, i: 0 }) : undefined;
+  const replayPoints =
+    latestEx && latestPoints && !walking
+      ? () => {
+          setExpanded(false);
+          setTour({ ex: latestEx.id, i: 0 });
+        }
+      : undefined;
 
   // CI: render the share image once the annotation has landed.
   const exported = useRef(false);
@@ -257,9 +268,6 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
   }, [settled, capture, placed, stage]);
   const thinking = capture.status === 'analyzing';
   const anyPending = thinking || capture.thread.some((x) => x.pending);
-
-  // ---- card ------------------------------------------------------------------------
-  const [expanded, setExpanded] = useState(false);
 
   // ---- editing labels: hold one to rename or remove it ---------------------------------
   const [menuFor, setMenuFor] = useState<PlacedCallout | null>(null);
@@ -372,6 +380,10 @@ function Inner({ capture, origin, dismissTo, onClosed }: { capture: Capture; ori
 
   const onAsk = (q: string, byVoice = false) => {
     const before = new Set(capture.thread.map((x) => x.id));
+    // Back to the photo: the lowered card shows the new question and its answer
+    // as it streams, and the pointer has the whole print to work with.
+    Keyboard.dismiss();
+    setExpanded(false);
     void ask(capture.id, q);
     if (byVoice) {
       // The exchange id is created synchronously inside ask(); find it next tick.
