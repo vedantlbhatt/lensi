@@ -17,7 +17,7 @@ test('how-to questions become walkthroughs', () => {
 });
 
 test('everything else gets an answer', () => {
-  for (const q of ['What is it for?', 'How many people are there?', 'What does the sign say?', 'Is this safe for kids?', 'Which way is north?']) {
+  for (const q of ['What is it for?', 'How many people are there?', 'What does the sign say?', 'Is this safe for kids?', 'Which way is north?', 'Is this the right way up?']) {
     assert.equal(isHowTo(q), false, q);
   }
 });
