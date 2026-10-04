@@ -19,6 +19,15 @@ Data lives outside the repo: `~/lensi-data/DAVIS` (DAVIS-2017-trainval-480p).
 |---|---|---|
 | camera-first (SAM at a point, outline held until the next answer; oracle prompts) | 0.355 | 0.171 |
 | v1: optical flow + carried-forward SAM + candidate matching + sub-pixel contours | 0.492 | 0.045 |
+| v2: prompts from SAM's last raw answer (not the smoothed display), seeds don't drift | 0.498 | 0.043 |
+| oracle: SAM given the true box every frame, no delay (the model's ceiling) | 0.758 | 0.028 |
+
+Handheld camera over a still scene (\`--synthetic 60 --anchors 1\`, 8 scenes, guide tags anchored
+the way ARKit anchors them): camera-first 0.431 / 0.131 (5 scenes), v2 **0.655 / 0.020**.
+
+Where the rest goes (DAVIS, v2): the tracks' own prompt boxes overlap the true box 0.61; SAM's
+answer to them scores 0.66 (0.80 with the true box); what's on screen scores 0.53 while shown.
+Fast articulated motion (bmx, motocross, libby's dog behind a fence) is where tracks drift.
 
 ## What changed
 
@@ -28,8 +37,9 @@ Data lives outside the repo: `~/lensi-data/DAVIS` (DAVIS-2017-trainval-480p).
    Decoder kept in float32 (float16 changed which candidate wins). Verified against PyTorch:
    encoder cosine 0.998, decoder masks IoU 1.000 (`tools/sam/verify_edgesam.py`).
    **License: EdgeSAM weights are S-Lab License 1.0, non-commercial only.** Fine for a
-   personal/class build; a commercial release needs MobileSAM on the ANE (being worked on in
-   branch ane-mobilesam) or another permissive model.
+   personal/class build. For a commercial release, branch \`ane-mobilesam\` (58190f0) rewrites
+   MobileSAM's encoder in the Neural Engine's NCHW layout: 41 -> 28-31 ms, outputs unchanged
+   (verify_coreml passes). Swap those models in and everything else here still applies.
 2. **Outlines move with the object every frame** (`LiveSeg.swift`): pyramidal Lucas-Kanade
    optical flow (forward-backward checked) on ~48 textured points inside each outline, a robust
    similarity fit (RANSAC), applied to the outline. Runs on its own queue on a 480 px luma image.
@@ -46,3 +56,6 @@ Data lives outside the repo: `~/lensi-data/DAVIS` (DAVIS-2017-trainval-480p).
 
 ## Log
 
+- 22:34 v1 committed (2ff578a). Sweeps: gain 0.35-1.0, box pad 0.06-0.3, prompt styles, negative
+  points for neighbours, edge margin for flow points, 4 pyramid levels: all within noise or worse.
+  Prompting from the raw SAM answer helped (v2). Device locked all evening: no on-phone numbers yet.

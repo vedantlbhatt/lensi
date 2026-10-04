@@ -28,7 +28,9 @@ final class FlowFrame {
   var height: Int { levels[0].height }
 
   /// `pixels`: row-major 0...255 luminance.
-  init(width: Int, height: Int, pixels: [Float], levels count: Int = 3) {
+  static var defaultLevels = Int(ProcessInfo.processInfo.environment["LENSI_LEVELS"] ?? "") ?? 3
+
+  init(width: Int, height: Int, pixels: [Float], levels count: Int = FlowFrame.defaultLevels) {
     var levels: [Level] = []
     var w = width, h = height, px = pixels
     for i in 0..<count {
@@ -231,6 +233,8 @@ enum OpticalFlow {
     return out
   }
 
+  static var edgeMargin = CGFloat(Double(ProcessInfo.processInfo.environment["LENSI_MARGIN"] ?? "") ?? 0)
+
   /// Up to `count` well-textured points inside `polygon` (pixels), spread out.
   static func features(in frame: FlowFrame, polygon: [CGPoint], count: Int = 48) -> [CGPoint] {
     guard polygon.count >= 3 else { return [] }
@@ -245,6 +249,12 @@ enum OpticalFlow {
     path.closeSubpath()
     var scored: [(CGPoint, Float)] = []
     let r = 3
+    // Keep off the edge: points there are as likely to be background (and
+    // follow it) as object. The margin is a share of how thick the shape is.
+    let thickness = Poly.interiorPoint(polygon).map { p in
+      (0..<polygon.count).map { Poly.segmentDistance(p, polygon[$0], polygon[($0 + 1) % polygon.count]) }.min() ?? 0
+    } ?? 0
+    let margin = thickness * edgeMargin
     A.gx.withUnsafeBufferPointer { ax in
       A.gy.withUnsafeBufferPointer { ay in
         var y = Double(box.minY) + cell / 2
@@ -253,7 +263,8 @@ enum OpticalFlow {
           while x < Double(box.maxX) {
             let p = CGPoint(x: x, y: y)
             let xi = Int(x), yi = Int(y)
-            if xi > r + 1, yi > r + 1, xi < A.width - r - 2, yi < A.height - r - 2, path.contains(p) {
+            if xi > r + 1, yi > r + 1, xi < A.width - r - 2, yi < A.height - r - 2, path.contains(p),
+               margin <= 0 || (0..<polygon.count).allSatisfy({ Poly.segmentDistance(p, polygon[$0], polygon[($0 + 1) % polygon.count]) >= margin }) {
               var g11: Float = 0, g12: Float = 0, g22: Float = 0
               for dy in -r...r {
                 for dx in -r...r {
@@ -536,8 +547,12 @@ struct SegResult {
 final class LiveSegTracker {
   final class Track {
     let key: String
-    /// Pixels of the flow frames. Empty until SAM's first answer.
+    /// Pixels of the flow frames. Empty until SAM's first answer. What's drawn: SAM's
+    /// answers blended over time.
     var polygon: [CGPoint] = []
+    /// SAM's latest answer as it is, carried along with the object: what the next prompt
+    /// is made from, so the display's smoothing never feeds back into what SAM is asked.
+    var raw: [CGPoint] = []
     /// Seed prompt before the first answer (pixels).
     var seedPoint: CGPoint?
     var seedBox: CGRect?
@@ -571,12 +586,15 @@ final class LiveSegTracker {
   private(set) var size = CGSize(width: 1, height: 1)
 
   /// How much of a SAM answer is taken when it agrees with the track (IoU >= 0.75).
-  var gain: CGFloat = 0.5
+  var gain: CGFloat = CGFloat(Double(ProcessInfo.processInfo.environment["LENSI_GAIN"] ?? "") ?? 0.5)
   var maxMisses = 4
   /// How a settled track asks SAM: "box+point", "point" or "box".
   var promptStyle = ProcessInfo.processInfo.environment["LENSI_PROMPT"] ?? "box+point"
   /// Box prompts are the outline's bounds grown by this fraction of its size,
   /// so SAM can take back a part it dropped last time.
+  var negatives = (ProcessInfo.processInfo.environment["LENSI_NEG"] ?? "0") == "1"
+  var rawPrompts = (ProcessInfo.processInfo.environment["LENSI_RAW"] ?? "1") == "1"
+  var seedFlow = (ProcessInfo.processInfo.environment["LENSI_SEEDFLOW"] ?? "0") == "1"
   var boxPad: CGFloat = CGFloat(Double(ProcessInfo.processInfo.environment["LENSI_BOXPAD"] ?? "") ?? 0.1)
 
   init() {}
@@ -590,7 +608,10 @@ final class LiveSegTracker {
     t.seedBox = box.map { denorm($0) }
     t.preferPart = preferPart
     t.history[frameIndex] = .identity
-    if let previous {
+    // A seed box is mostly background, so its points would follow the
+    // background: before SAM's first answer the seed stays put (it arrives
+    // within a few frames). Opt-in for experiments.
+    if seedFlow, let previous {
       let region: [CGPoint]
       if let b = t.seedBox {
         region = [CGPoint(x: b.minX, y: b.minY), CGPoint(x: b.maxX, y: b.minY), CGPoint(x: b.maxX, y: b.maxY), CGPoint(x: b.minX, y: b.maxY)]
@@ -642,6 +663,7 @@ final class LiveSegTracker {
       t.history = t.history.filter { $0.key > frameIndex - 90 }
       if t.hasShape {
         t.polygon = t.polygon.map { $0.applying(m) }
+        t.raw = t.raw.map { $0.applying(m) }
         // Thin out: top the points back up from inside the outline.
         if t.features.count < 12 {
           t.features = OpticalFlow.features(in: frame, polygon: t.polygon)
@@ -672,14 +694,29 @@ final class LiveSegTracker {
     tracks.values.sorted { $0.key < $1.key }.compactMap { t -> SegJob? in
       guard !t.lost else { return nil }
       if t.hasShape {
-        let box = Poly.bounds(t.polygon)
+        let shape = rawPrompts && t.raw.count >= 3 ? t.raw : t.polygon
+        let box = Poly.bounds(shape)
         let b = norm(box.insetBy(dx: -boxPad * box.width, dy: -boxPad * box.height)).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard !b.isNull, b.width > 0.005, b.height > 0.005 else { return nil }
         let anchor = anchors[t.key].flatMap { a in a.x > 0 && a.x < 1 && a.y > 0 && a.y < 1 ? a : nil }
-        let inner = promptStyle == "box" ? nil : anchor ?? Poly.interiorPoint(t.polygon).map { norm($0) }
+        let inner = promptStyle == "box" ? nil : anchor ?? Poly.interiorPoint(shape).map { norm($0) }
         if promptStyle == "point", inner == nil { return nil }
-        return SegJob(key: t.key, frame: frameIndex, points: inner.map { [$0] } ?? [], labels: inner == nil ? [] : [1],
-                      box: promptStyle == "point" ? nil : b, prior: t.polygon.map { norm($0) }, preferPart: false)
+        var points = inner.map { [$0] } ?? []
+        var labels = inner == nil ? [] : [1]
+        if negatives {
+          // Neighbours inside this box: "not that one", so two tracks don't merge.
+          for o in tracks.values where o !== t && o.hasShape && !o.lost && points.count < 3 {
+            guard let q = Poly.interiorPoint(o.polygon).map({ norm($0) }), b.contains(q) else { continue }
+            let path = CGMutablePath()
+            path.addLines(between: shape)
+            path.closeSubpath()
+            if path.contains(denorm(q)) { continue }
+            points.append(q)
+            labels.append(0)
+          }
+        }
+        return SegJob(key: t.key, frame: frameIndex, points: points, labels: labels,
+                      box: promptStyle == "point" ? nil : b, prior: shape.map { norm($0) }, preferPart: false)
       }
       if let b = t.seedBox {
         return SegJob(key: t.key, frame: frameIndex, points: [], labels: [], box: norm(b), prior: nil, preferPart: false)
@@ -709,6 +746,7 @@ final class LiveSegTracker {
       let sam = Poly.resample(r.polygon.map { denorm($0).applying(carry) })
       if !t.hasShape {
         t.polygon = sam
+        t.raw = sam
       } else {
         let fresh = Poly.aligned(sam, to: t.polygon)
         let agreement = Poly.iou(t.polygon, fresh)
@@ -720,6 +758,7 @@ final class LiveSegTracker {
         }
         let g: CGFloat = agreement >= 0.75 ? gain : agreement >= 0.5 ? max(gain, 0.75) : 1
         t.polygon = Poly.blend(t.polygon, fresh, g)
+        t.raw = fresh
       }
       t.misses = 0
       t.answers += 1

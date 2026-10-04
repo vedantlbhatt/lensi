@@ -243,6 +243,8 @@ final class SAMSegmenter: @unchecked Sendable {
       ctx.fillPath()
     }
     let top = scores.max() ?? 0
+    let pick = ProcessInfo.processInfo.environment["LENSI_PICK"] ?? "prior"
+    let scoreWeight: Float = pick == "mix" ? 0.5 : pick == "mix1" ? 1 : 0
     var best: (k: Int, iou: Float)?
     for k in 0...3 where scores[k] >= top * 0.5 {
       var inter = 0, union = 0
@@ -255,7 +257,7 @@ final class SAMSegmenter: @unchecked Sendable {
           if a || b { union += 1 }
         }
       }
-      let iou = union > 0 ? Float(inter) / Float(union) : 0
+      let iou = (union > 0 ? Float(inter) / Float(union) : 0) + scoreWeight * scores[k]
       if iou > (best?.iou ?? 0) { best = (k, iou) }
     }
     return best?.k
