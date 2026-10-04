@@ -23,6 +23,7 @@ CAPTIONS = {
     "arkit": "ARKit alone: cut once, pinned in the world",
     "coast@8": "ARKit + SAM 7.5/s, coasting between cuts",
     "lensi@8": "The app: ARKit + SAM 7.5/s + point tracking",
+    "strict@8": "The app, strict: ARKit + SAM 7.5/s + point tracking",
 }
 
 
@@ -43,20 +44,21 @@ def main():
         "compare": ("fixed", writer(os.path.join(out_dir, f"{name}-compare.mp4"), w, h * 2, fps)),
         "arkit-compare": ("arkit", writer(os.path.join(out_dir, f"{name}-arkit-compare.mp4"), w, h * 2, fps)),
     }
-    app = runs["lensi@8"]
+    app_label = os.environ.get("PIN_APP", "lensi@8")
+    app = runs[app_label]
     for i, path in enumerate(frames):
         img = cv2.imread(path)
         if img is None:
             continue
         big = cv2.resize(img, (w * s, h * s), interpolation=cv2.INTER_CUBIC)
         big = outline(big, turn(app["outlines"][i]), PEN, 2.5 * s)
-        big = caption(big, [f"{CAPTIONS['lensi@8']}: the {data['thing']}"], size=13 * s)
+        big = caption(big, [f"{CAPTIONS[app_label]}: the {data['thing']}"], size=13 * s)
         single.write(big)
         for before, out in pairs.values():
             top = outline(img.copy(), turn(runs[before]["outlines"][i]), OLD, 2)
             top = caption(top, [CAPTIONS[before]], size=15)
             bottom = outline(img.copy(), turn(app["outlines"][i]), PEN, 2.5)
-            bottom = caption(bottom, [CAPTIONS["lensi@8"]], size=15)
+            bottom = caption(bottom, [CAPTIONS[app_label]], size=15)
             out.write(np.vstack([top, bottom]))
     single.release()
     for _, out in pairs.values():

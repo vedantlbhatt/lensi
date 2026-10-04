@@ -11,13 +11,16 @@
 //             thing's last motion say it is
 //   lensi@8   the app now: the same, carried on its own pixels between cuts (LiveFlow, the
 //             round trip through two cameras), drawn eased onto each cut
+//   strict@8  the same, SAM asked within a tighter box and only a close match taken
+//             (LiveTracker.Gate.strict)
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
-// frame's pose (J), and for lurch: how far the outline's middle jumps from one frame to the
-// next, next to the 3D box's own (which is all camera motion: the thing is still).
+// frame's pose (J); for how much of the outline is on the box at all (no SAM in that one: a
+// slide onto the floor shows); and for lurch: how far the outline's middle jumps from one
+// frame to the next, next to the 3D box's own (which is all camera motion: the thing is still).
 //
 //   swiftc -O -o pin tools/pin/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,LiveWorld,Analyzer,Detector}.swift
-//   LENSI_MODELS_DIR=<models> ./pin <scene dir> <out dir> <name> [frames, default 150]
+//   LENSI_MODELS_DIR=<models> ./pin <scene dir> <out dir> <name> [frames, default 120]
 //
 // <scene dir> holds an ARKitScenes raw scan: vga_wide/*.png (640x480, 30 fps),
 // vga_wide_intrinsics/*.pincam, lowres_wide.traj and <video>_3dod_annotation.json.
@@ -35,7 +38,7 @@ guard args.count >= 4 else {
 let sceneDir = URL(fileURLWithPath: args[1])
 let outDir = URL(fileURLWithPath: args[2])
 let name = args[3]
-let windowLength = args.count > 4 ? Int(args[4]) ?? 150 : 150
+let windowLength = args.count > 4 ? Int(args[4]) ?? 120 : 120
 try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
 // MARK: - The recording
@@ -167,7 +170,7 @@ func bounds(_ p: [CGPoint]) -> CGRect { LiveTracker.bounds(p) }
 func seen(_ box: Box, by camera: FrozenCamera?) -> CGRect? {
   guard let camera, let p = camera.upright(box.corners) else { return nil }
   let r = bounds(p)
-  guard r.minX > 0.02, r.minY > 0.02, r.maxX < 0.98, r.maxY < 0.98 else { return nil }
+  guard r.minX > 0.01, r.minY > 0.01, r.maxX < 0.99, r.maxY < 0.99 else { return nil }
   return r
 }
 
@@ -187,7 +190,7 @@ for start in stride(from: 0, to: pngs.count - windowLength, by: 15) {
   for (i, box) in boxes.enumerated() {
     var fits = true
     for f in start..<(start + windowLength) {
-      guard let r = seen(box, by: cameras[f]), r.width * r.height > 0.04, r.width * r.height < 0.4 else {
+      guard let r = seen(box, by: cameras[f]), r.width * r.height > 0.03, r.width * r.height < 0.5 else {
         fits = false
         break
       }
@@ -208,22 +211,23 @@ print(String(format: "%@: the %@, frames %ld-%ld (%.1f s); the camera travels %.
              name, thing.label, window.first!, window.last!, pngs[window.last!].t - pngs[window.first!].t,
              best.travel * 100, best.turn * 180 / .pi))
 
-// The pose convention, checked against the dataset's own projection (OpenCV axes, landscape
-// pixels): the app's FrozenCamera must put the box's corners on the same pixels.
+// The pose convention, checked against the dataset's own projection (OpenCV axes, sideways
+// pixels), at the frame of the stretch nearest a recorded pose (the rest are interpolated):
+// the app's FrozenCamera must put the box's corners on the same pixels.
 do {
-  let f = window[0]
-  guard let camera = cameras[f], let upright = camera.upright(thing.corners) else { exit(1) }
-  let lines = (try? String(contentsOf: sceneDir.appendingPathComponent("lowres_wide.traj"), encoding: .utf8)) ?? ""
-  // The recorded pose nearest this frame, read the dataset's way.
-  var nearest: [Double] = []
-  var gap = Double.greatestFiniteMagnitude
-  for line in lines.split(separator: "\n") {
-    let v = line.split(separator: " ").compactMap { Double($0) }
-    if v.count == 7, abs(v[0] - pngs[f].t) < gap { gap = abs(v[0] - pngs[f].t); nearest = v }
+  let lines = ((try? String(contentsOf: sceneDir.appendingPathComponent("lowres_wide.traj"), encoding: .utf8)) ?? "")
+    .split(separator: "\n").map { $0.split(separator: " ").compactMap { Double($0) } }.filter { $0.count == 7 }
+  var pick: (frame: Int, pose: [Double], gap: Double)?
+  for f in window {
+    for v in lines where abs(v[0] - pngs[f].t) < (pick?.gap ?? .greatestFiniteMagnitude) {
+      pick = (frame: f, pose: v, gap: abs(v[0] - pngs[f].t))
+    }
   }
-  let aa = simd_float3(Float(nearest[1]), Float(nearest[2]), Float(nearest[3]))
+  guard let pick, let camera = cameras[pick.frame], let upright = camera.upright(thing.corners) else { exit(1) }
+  let v = pick.pose
+  let aa = simd_float3(Float(v[1]), Float(v[2]), Float(v[3]))
   let rot = simd_float3x3(simd_quatf(angle: simd_length(aa), axis: simd_normalize(aa)))
-  let tr = simd_float3(Float(nearest[4]), Float(nearest[5]), Float(nearest[6]))
+  let tr = simd_float3(Float(v[4]), Float(v[5]), Float(v[6]))
   let k = camera.intrinsics
   var worst: Float = 0
   for (c, u) in zip(thing.corners, upright) {
@@ -233,8 +237,8 @@ do {
     let qx = Float(u.y) * Float(camera.resolution.width), qy = (1 - Float(u.x)) * Float(camera.resolution.height)
     worst = max(worst, hypot(px - qx, py - qy))
   }
-  print(String(format: "%@: pose check: FrozenCamera puts the box's corners within %.2f px of the dataset's own projection (nearest pose %.0f ms away)",
-               name, worst, gap * 1000))
+  print(String(format: "%@: pose check: FrozenCamera puts the box's corners within %.2f px of the dataset's own projection (frame %ld, %.1f ms from a recorded pose)",
+               name, worst, pick.frame, pick.gap * 1000))
 }
 
 // MARK: - Frames as the app sees them
@@ -298,6 +302,33 @@ func jerk(_ c: [CGPoint?]) -> Double {
 
 func mean(_ x: [Double]) -> Double { x.isEmpty ? -1 : x.reduce(0, +) / Double(x.count) }
 
+/// The convex hull of some points (monotone chain), counter-clockwise.
+func hull(_ points: [CGPoint]) -> [CGPoint] {
+  let p = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+  guard p.count > 2 else { return p }
+  func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
+  var lower: [CGPoint] = [], upper: [CGPoint] = []
+  for q in p {
+    while lower.count >= 2, cross(lower[lower.count - 2], lower[lower.count - 1], q) <= 0 { lower.removeLast() }
+    lower.append(q)
+  }
+  for q in p.reversed() {
+    while upper.count >= 2, cross(upper[upper.count - 2], upper[upper.count - 1], q) <= 0 { upper.removeLast() }
+    upper.append(q)
+  }
+  return Array(lower.dropLast() + upper.dropLast())
+}
+
+/// How much of `bits` lies inside `inside` (0...1; 1 when it's empty).
+func share(_ bits: [UInt8], inside: [UInt8]) -> Double {
+  var n = 0, hit = 0
+  for i in 0..<min(bits.count, inside.count) where bits[i] != 0 {
+    n += 1
+    if inside[i] != 0 { hit += 1 }
+  }
+  return n == 0 ? 1 : Double(hit) / Double(n)
+}
+
 // MARK: - The runs
 
 /// The app's first look at a guide part: SAM at the point where its pin lands, within the box
@@ -314,6 +345,10 @@ final class Run {
   let every: Int
   let flow: Bool
   let arkit: Bool
+  /// How SAM is asked (LiveTracker.prompt's box growth) and which cuts are taken.
+  let grow: CGFloat
+  let gate: LiveTracker.Gate
+  var onBox: [Double] = []
   var shape: LiveShape?
   var fixedPrompt: (point: CGPoint, box: CGRect)?
   var shown: [[CGPoint]] = []
@@ -321,11 +356,14 @@ final class Run {
   var middles: [CGPoint?] = []
   var cuts = 0, refused = 0, carried = 0
 
-  init(_ label: String, every: Int, flow: Bool = false, arkit: Bool = true) {
+  init(_ label: String, every: Int, flow: Bool = false, arkit: Bool = true,
+       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose) {
     self.label = label
     self.every = every
     self.flow = flow
     self.arkit = arkit
+    self.grow = grow
+    self.gate = gate
   }
 }
 
@@ -334,6 +372,7 @@ let runs = [
   Run("arkit", every: 0),
   Run("coast@8", every: 4),
   Run("lensi@8", every: 4, flow: true),
+  Run("strict@8", every: 4, flow: true, grow: 0.1, gate: .strict),
 ]
 
 var reference: [[CGPoint]] = []
@@ -363,6 +402,7 @@ for (k, f) in window.enumerated() {
   reference.append(truth)
   let w = Int(size.width), h = Int(size.height)
   let truthBits = raster(truth, w: w, h: h)
+  let boxBits = camera.upright(thing.corners).map { raster(hull($0), w: w, h: h) }
   boxMiddles.append(look == nil ? nil : camera.upright([thing.centre])?.first.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) })
 
   for run in runs {
@@ -388,7 +428,7 @@ for (k, f) in window.enumerated() {
         if let shape = run.shape, shape.misses < 2 {
           let now = shape.placed(at: t)
           if let p = camera.upright(now), p.contains(where: { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0) }),
-             let prompt = LiveTracker.prompt(for: p, scale: size) {
+             let prompt = LiveTracker.prompt(for: p, scale: size, grow: run.grow) {
             point = prompt.point
             box = prompt.box
             anchor = OutlineMath.centre(now)
@@ -406,7 +446,7 @@ for (k, f) in window.enumerated() {
           var world: [simd_float3]?
           if m.score >= (predicted == nil ? 0.6 : 0.5), m.polygon.count > 2 {
             let ring = OutlineMath.resample(m.polygon, scale: size)
-            if let predicted, !LiveTracker.accepts(ring, predicted: predicted) {
+            if let predicted, !LiveTracker.accepts(ring, predicted: predicted, gate: run.gate) {
               run.refused += 1
             } else {
               let plane = camera.withPlane(through: anchor)
@@ -440,6 +480,7 @@ for (k, f) in window.enumerated() {
     let bits = raster(outline, w: w, h: h)
     run.middles.append(middle(bits, w: w))
     if !truth.isEmpty { run.j.append(maskIoU(bits, truthBits)) }
+    if let boxBits, !outline.isEmpty { run.onBox.append(share(bits, inside: boxBits)) }
   }
   if let flowFrame { previous = (frame: flowFrame, camera: camera, t: t) }
 }
@@ -449,10 +490,10 @@ print(String(format: "%@: encode %.0f ms a frame; the 3D box's own lurch (all ca
              name, mean(encodeMs), truthJerk))
 var runsOut: [[String: Any]] = []
 for run in runs {
-  print(String(format: "  %@ J %.1f%%  lurch %.1f px  (%ld cuts, %ld refused, %ld carried)",
-               run.label.padding(toLength: 8, withPad: " ", startingAt: 0), mean(run.j) * 100, jerk(run.middles),
-               run.cuts, run.refused, run.carried))
-  runsOut.append(["label": run.label, "J": mean(run.j), "jerk": jerk(run.middles), "cuts": run.cuts, "refused": run.refused,
+  print(String(format: "  %@ J %.1f%%  on the box %.1f%%  lurch %.1f px  (%ld cuts, %ld refused, %ld carried)",
+               run.label.padding(toLength: 8, withPad: " ", startingAt: 0), mean(run.j) * 100, mean(run.onBox) * 100,
+               jerk(run.middles), run.cuts, run.refused, run.carried))
+  runsOut.append(["label": run.label, "J": mean(run.j), "onBox": mean(run.onBox), "jerk": jerk(run.middles), "cuts": run.cuts, "refused": run.refused,
                   "jPerFrame": run.j, "outlines": run.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } }])
 }
 let summary: [String: Any] = [

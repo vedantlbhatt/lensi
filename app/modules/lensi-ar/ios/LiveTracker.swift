@@ -22,7 +22,7 @@ enum LiveTracker {
   }
 
   /// The SAM prompt for a thing predicted to be at `predicted` (a closed outline).
-  static func prompt(for predicted: [CGPoint], scale: CGSize) -> Prompt? {
+  static func prompt(for predicted: [CGPoint], scale: CGSize, grow: CGFloat = LiveTracker.grow) -> Prompt? {
     guard predicted.count >= 3 else { return nil }
     let r = bounds(predicted)
     guard r.width > 0, r.height > 0 else { return nil }
@@ -31,13 +31,25 @@ enum LiveTracker {
     return Prompt(point: interiorPoint(predicted, scale: scale), box: box)
   }
 
+  /// How closely a cut must match where the thing should be to be taken as it.
+  struct Gate {
+    var minIoU: CGFloat
+    var areaRatio: ClosedRange<CGFloat>
+    /// Anything plausibly the same thing.
+    static let loose = Gate(minIoU: 0.25, areaRatio: 0.4...2.5)
+    /// Only a close match: a see-through or same-coloured neighbour (the floor seen through a
+    /// glass table top, the wooden floor under a wooden table) creeps in a little each cut
+    /// past the loose gate (tools/pin, on ARKit recordings).
+    static let strict = Gate(minIoU: 0.5, areaRatio: 0.6...1.67)
+  }
+
   /// Whether `cut` is the same thing as `predicted`: it overlaps it, and it's about the
   /// same size (it hasn't swallowed the background or shrunk to a speck).
-  static func accepts(_ cut: [CGPoint], predicted: [CGPoint]) -> Bool {
+  static func accepts(_ cut: [CGPoint], predicted: [CGPoint], gate: Gate = .loose) -> Bool {
     guard cut.count >= 3, predicted.count >= 3 else { return false }
     let a = area(cut), b = area(predicted)
-    guard b > 0, a / b > 0.4, a / b < 2.5 else { return false }
-    return iou(cut, predicted) > 0.25
+    guard b > 0, gate.areaRatio.contains(a / b) else { return false }
+    return iou(cut, predicted) > gate.minIoU
   }
 
   /// A point well inside the outline: of a grid over its box, the inside point farthest

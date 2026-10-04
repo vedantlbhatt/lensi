@@ -12,6 +12,8 @@
 //              followed frame to frame, their median motion, turn and scale)
 //   lensi@8    flow@8, and what's shown eased onto each new cut (three quarters of the way
 //              a frame, 30 ms) instead of jumping: what the phone draws
+//   strict@8   lensi@8 with SAM asked within a tighter box and only a close match taken
+//              (LiveTracker.Gate.strict; what tools/pin's ARKit recordings call for)
 //   coast@4, lensi@4: SAM on every sixth frame (a hot phone, a guide part waiting its turn)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -231,6 +233,9 @@ final class Runner {
   /// Ease what's shown this much of the way to the outline each frame, rather than jumping
   /// when SAM's cut lands (what's shown rides the flow too, so it doesn't lag the motion).
   let glide: CGFloat?
+  /// How SAM is asked (LiveTracker.prompt's box growth) and which cuts are taken.
+  let grow: CGFloat
+  let gate: LiveTracker.Gate
   /// Ease a small correction (edge noise) more than a big one (it's really somewhere else):
   /// the share taken each frame grows with how far off what's shown is, for its size.
   let adaptiveGlide: Bool
@@ -251,7 +256,8 @@ final class Runner {
   var centres: [CGPoint?] = []
 
   init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int, follow: Bool = false, adaptive: Bool = false,
-       moveOnly: Bool = false, flow: OpticalFlow? = nil, scaling: Bool = false, glide: CGFloat? = nil, adaptiveGlide: Bool = false) {
+       moveOnly: Bool = false, flow: OpticalFlow? = nil, scaling: Bool = false, glide: CGFloat? = nil, adaptiveGlide: Bool = false,
+       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose) {
     self.moveOnly = moveOnly
     self.label = label
     self.tracking = tracking
@@ -263,6 +269,8 @@ final class Runner {
     self.scaling = scaling
     self.glide = glide
     self.adaptiveGlide = adaptiveGlide
+    self.grow = grow
+    self.gate = gate
   }
 
   /// Where the outline is expected at frame f: the last one carried along by its motion
@@ -300,14 +308,14 @@ final class Runner {
       let prediction = predicted(at: f)
       var points = [seedPoint]
       var box: CGRect? = seedBox
-      if tracking, let prediction, let p = LiveTracker.prompt(for: prediction, scale: scale) {
+      if tracking, let prediction, let p = LiveTracker.prompt(for: prediction, scale: scale, grow: grow) {
         points = [p.point]
         box = p.box
       }
       let mask = try sam.segment(id: "frame", points: points, labels: [1], box: box)
       cuts += 1
       var cut = mask.polygon.count > 2 && mask.score >= 0.5 ? OutlineMath.resample(mask.polygon, scale: scale) : nil
-      if tracking, let c = cut, let prediction, !LiveTracker.accepts(c, predicted: prediction) {
+      if tracking, let c = cut, let prediction, !LiveTracker.accepts(c, predicted: prediction, gate: gate) {
         cut = nil
         refused += 1
       }
@@ -424,6 +432,8 @@ let runners = [
   Runner("coast@8", tracking: true, smoothing: .standard, every: 3, adaptive: true),
   Runner("flow@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true),
   Runner("lensi@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75),
+  Runner("strict@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75,
+         grow: 0.1, gate: .strict),
   Runner("coast@4", tracking: true, smoothing: .standard, every: 6, adaptive: true),
   Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true, glide: 0.75),
 ]

@@ -1,6 +1,7 @@
 """One reel from tools/track's comparison videos, with a title card before each clip.
 
-  reel.py <ci-track dir> <out.mp4> <label> [--before LABEL] [--speed S] [--loops N] clip:"Title|Subtitle" [clip:"..."]...
+  reel.py <ci-track dir> <out.mp4> <label> [--before LABEL] [--was TEXT] [--how TEXT] [--video SUFFIX]
+          [--speed S] [--loops N] clip:"Title|Subtitle" [clip:"..."]...
 
 <label> picks which run's videos (lensi@8 -> <clip>-compare.mp4, lensi@4 ->
 <clip>-lensi-at4-compare.mp4), and --before which one they're compared with (fixed, the
@@ -70,7 +71,7 @@ def run(*args):
 def main():
     src, out, label = sys.argv[1:4]
     rest = sys.argv[4:]
-    speed, loops, before = 1.0, 1, "fixed"
+    speed, loops, before, was_text, how_text, suffix = 1.0, 1, "fixed", None, None, None
     while rest and rest[0].startswith("--"):
         if rest[0] == "--speed":
             speed = float(rest[1])
@@ -78,6 +79,12 @@ def main():
             loops = int(rest[1])
         elif rest[0] == "--before":
             before = rest[1]
+        elif rest[0] == "--was":
+            was_text = rest[1]
+        elif rest[0] == "--how":
+            how_text = rest[1]
+        elif rest[0] == "--video":
+            suffix = rest[1]  # the comparison video is <clip><suffix>.mp4
         rest = rest[2:]
     tag = "" if label == "lensi@8" else "-" + label.replace("@", "-at")
     vs = "" if before == "fixed" else "-vs-" + before.replace("@", "-at")
@@ -86,6 +93,8 @@ def main():
            "coast@8": "SAM 8 times a second; in between, the outline coasts at its last speed"}.get(label, label)
     was = {"fixed": "SAM asked at the same spot every frame",
            "coast@8": "SAM 8 times a second, coasting between cuts: the last reel"}.get(before, before)
+    how = how_text or how
+    was = was_text or was
     tmp = tempfile.mkdtemp()
     parts = []
     for n, arg in enumerate(rest):
@@ -113,7 +122,7 @@ def main():
         run("ffmpeg", "-y", "-loop", "1", "-t", "2.8", "-i", png, "-vf", "fps=30,format=yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", c)
         v = os.path.join(tmp, f"v{n}.mp4")
-        run("ffmpeg", "-y", "-stream_loop", str(loops - 1), "-i", os.path.join(src, f"{clip}{tag}{vs}-compare.mp4"),
+        run("ffmpeg", "-y", "-stream_loop", str(loops - 1), "-i", os.path.join(src, f"{clip}{suffix}.mp4" if suffix else f"{clip}{tag}{vs}-compare.mp4"),
             "-vf", f"setpts={1 / speed:g}*PTS,scale={W}:{H},fps=30,format=yuv420p", "-an",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", v)
         parts += [c, v]
