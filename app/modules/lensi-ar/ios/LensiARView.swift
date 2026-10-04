@@ -12,7 +12,7 @@ import Vision
 /// mode a tap freezes the camera pose, crops the subject, emits it to JS and
 /// drops a world anchor so annotations stay on the object as the phone moves.
 /// The same session also takes full-resolution photos and records video.
-final class LensiARView: ExpoView, ARSessionDelegate {
+final class LensiARView: ExpoView, ARSessionDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
   let onSelect = EventDispatcher()
   let onFocusChange = EventDispatcher()
   let onTrackingChange = EventDispatcher()
@@ -78,6 +78,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var videoOutput: AVPlayerItemVideoOutput?
   private var videoSize = CGSize.zero
   private var videoEnd: NSObjectProtocol?
+
+  // 0.5x without ARKit: world tracking only offers the wide camera's formats on most phones,
+  // so below 1x ARKit pauses and the ultra-wide runs through AVFoundation, with the same live
+  // outlines and lock (world pins wait until 1x, when ARKit picks up where it was).
+  private lazy var ultraWideDevice: AVCaptureDevice? = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back)
+  private var capture: AVCaptureSession?
+  private var previewLayer: AVCaptureVideoPreviewLayer?
+  private let captureQueue = DispatchQueue(label: "lensi.ultrawide", qos: .userInitiated)
+  /// Main: the plain ultra-wide is what's on screen.
+  private var plainUltra = false
+  private var lastPlainBuffer: CVPixelBuffer?
   private let lockTag = PinLabel(text: "", color: .white, isCallout: true)
   /// samQueue: the lock's name is being looked up.
   private var identifying = false
@@ -206,6 +217,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     videoView.bounds = CGRect(origin: .zero, size: bounds.size)
     videoView.center = CGPoint(x: bounds.midX, y: bounds.midY)
     playerLayer?.frame = videoView.bounds
+    previewLayer?.frame = videoView.bounds
     pinLayer.frame = bounds
     boxLayer.frame = bounds
     focusLayer.frame = bounds
@@ -238,8 +250,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     running = true
     let config = configuration ?? makeConfiguration()
     configuration = config
-    sceneView.session.run(config)
-    onZoomRange(["min": ultraWideFormat != nil ? 0.5 : 1, "max": Double(Self.maxZoom), "zoom": Double(zoomFactor)])
+    if plainUltra, let capture {
+      captureQueue.async { capture.startRunning() }
+    } else {
+      sceneView.session.run(config)
+    }
+    onZoomRange(["min": ultraWideFormat != nil || ultraWideDevice != nil ? 0.5 : 1, "max": Double(Self.maxZoom), "zoom": Double(zoomFactor)])
     let link = CADisplayLink(target: self, selector: #selector(tick))
     link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
     link.add(to: .main, forMode: .common)
@@ -256,6 +272,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       player.pause()
       return
     }
+    if plainUltra, let capture { captureQueue.async { capture.stopRunning() } }
     sceneView.session.pause()
   }
 
@@ -301,7 +318,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   private func segmentLive(_ frame: ARFrame) {
-    guard liveSegments, samReady, !flowBusy, bounds.width > 0, let sam = SAMSegmenter.shared else { return }
+    guard !plainUltra, liveSegments, samReady, !flowBusy, bounds.width > 0, let sam = SAMSegmenter.shared else { return }
     let res = frame.camera.imageResolution
     let upright = CGSize(width: res.height, height: res.width)
     var seeds: [String: Seed] = [:]
@@ -418,17 +435,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     samQueue.async { [weak self] in
       guard let self else { return }
       let started = CACurrentMediaTime()
-      var results: [SegResult] = []
-      do {
-        let image = CIImage(cvPixelBuffer: buffer)
-        try sam.prepare(ciImage: rotate ? image.oriented(.right) : image, context: self.samContext, id: "live")
-        for job in jobs {
-          let mask = try sam.segment(id: "live", points: job.points, labels: job.labels, box: job.box,
-                                     preferPart: job.preferPart, prior: job.prior, level: job.level)
-          let ok = mask.score >= 0.5 && mask.polygon.count > 2
-          results.append(SegResult(key: job.key, frame: job.frame, polygon: ok ? mask.polygon : [], score: mask.score))
-        }
-      } catch {}
+      let image = CIImage(cvPixelBuffer: buffer)
+      var results = SegRunner.run(jobs, image: rotate ? image.oriented(.right) : image, sam: sam, context: self.samContext)
       let ms = (CACurrentMediaTime() - started) * 1000
       let checked = self.checkLock(results, buffer: buffer, rotate: rotate, verify: verifyLock)
       results = checked.results
@@ -497,10 +505,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// the reticle (the focused detection's box when there is one).
   func lockTarget(point: CGPoint?, rect: CGRect?) {
     guard bounds.width > 0 else { return }
-    let frame = sceneView.session.currentFrame
-    guard frame != nil || player != nil else { return }
+    let frame = plainUltra || player != nil ? nil : sceneView.session.currentFrame
+    guard frame != nil || player != nil || plainUltra else { return }
     let toUpright: (CGPoint) -> CGPoint = { v in
       if let frame { return self.viewToUpright(v, frame: frame) }
+      if self.plainUltra { return self.viewToPlain(self.unzoomed(v)) }
       return self.viewToVideo(self.unzoomed(v))
     }
     let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -719,7 +728,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   private func segmentVideo(_ buffer: CVPixelBuffer) {
+    segmentPlain(buffer, rotate: false)
+  }
+
+  /// Live outlines on a frame that isn't ARKit's (a video file, or the plain ultra-wide).
+  private func segmentPlain(_ buffer: CVPixelBuffer, rotate: Bool) {
     guard liveSegments, samReady, !flowBusy, bounds.width > 0, let sam = SAMSegmenter.shared else { return }
+    let ultra = plainUltra
     var seeds: [String: Seed] = [:]
     if var l = lock {
       if !l.seeded {
@@ -732,10 +747,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         seeds[Self.lockKey] = Seed(point: lockSearchTick % 24 < 6 ? (l.lastSeen ?? search) : search, soft: true)
       }
     } else {
-      seeds[Self.centreKey] = Seed(point: viewToVideo(unzoomed(CGPoint(x: bounds.midX, y: bounds.midY * 0.92))))
+      let reticle = unzoomed(CGPoint(x: bounds.midX, y: bounds.midY * 0.92))
+      seeds[Self.centreKey] = Seed(point: ultra ? viewToPlain(reticle) : viewToVideo(reticle))
     }
-    runFlow(buffer, rotate: false, seeds: seeds, softAnchors: [:], sam: sam) { [weak self] p in
-      self?.videoToView(p) ?? p
+    runFlow(buffer, rotate: rotate, seeds: seeds, softAnchors: [:], sam: sam) { [weak self] p in
+      guard let self else { return p }
+      return ultra ? self.plainToView(p) : self.videoToView(p)
     }
   }
 
@@ -743,19 +760,85 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   func setZoom(_ requested: Double) {
     guard requested.isFinite else { return }
-    let lowest: CGFloat = ultraWideFormat != nil || player != nil ? 0.5 : 1
+    let lowest: CGFloat = ultraWideFormat != nil || player != nil || ultraWideDevice != nil ? 0.5 : 1
     let z = min(max(CGFloat(requested), lowest), Self.maxZoom)
     zoomFactor = z
     let ultra = z < 1 && ultraWideFormat != nil && player == nil
     if ultra != onUltraWide { useUltraWide(ultra) }
+    let plain = z < 1 && ultraWideFormat == nil && player == nil && ultraWideDevice != nil
+    if plain != plainUltra { usePlainUltraWide(plain) }
     // The ultra-wide sees twice as wide: 0.5 is its whole picture, 0.7 a 1.4x crop.
-    zoom = ultra ? z / 0.5 : z
+    zoom = ultra || plain ? z / 0.5 : z
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     sceneView.transform = CGAffineTransform(scaleX: zoom, y: zoom)
     videoView.transform = CGAffineTransform(scaleX: zoom, y: zoom)
     CATransaction.commit()
     layoutPins()
+  }
+
+  /// Below 1x where ARKit has no ultra-wide format: pause ARKit, run the ultra-wide plainly.
+  private func usePlainUltraWide(_ on: Bool) {
+    plainUltra = on
+    flowQueue.async { self.segTracker.removeAll() }
+    if on {
+      if capture == nil { setUpPlainUltraWide() }
+      guard let capture else { plainUltra = false; return }
+      sceneView.session.pause()
+      sceneView.isHidden = true
+      videoView.isHidden = false
+      if videoView.superview == nil { insertSubview(videoView, aboveSubview: sceneView) }
+      captureQueue.async { capture.startRunning() }
+    } else {
+      if let capture { captureQueue.async { capture.stopRunning() } }
+      videoView.isHidden = player == nil
+      sceneView.isHidden = player != nil
+      lastPlainBuffer = nil
+      if running, player == nil, let config = configuration { sceneView.session.run(config) }
+    }
+  }
+
+  private func setUpPlainUltraWide() {
+    guard let device = ultraWideDevice, let input = try? AVCaptureDeviceInput(device: device) else { return }
+    let session = AVCaptureSession()
+    session.beginConfiguration()
+    session.sessionPreset = .hd1920x1080
+    guard session.canAddInput(input) else { return }
+    session.addInput(input)
+    let output = AVCaptureVideoDataOutput()
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
+    output.alwaysDiscardsLateVideoFrames = true
+    output.setSampleBufferDelegate(self, queue: captureQueue)
+    guard session.canAddOutput(output) else { return }
+    session.addOutput(output)
+    session.commitConfiguration()
+    let layer = AVCaptureVideoPreviewLayer(session: session)
+    layer.videoGravity = .resizeAspectFill
+    if let c = layer.connection, c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
+    layer.frame = videoView.bounds
+    videoView.layer.addSublayer(layer)
+    videoView.isUserInteractionEnabled = false
+    previewLayer = layer
+    capture = session
+  }
+
+  func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+    DispatchQueue.main.async {
+      guard self.plainUltra else { return }
+      self.lastPlainBuffer = buffer
+      self.segmentPlain(buffer, rotate: true)
+    }
+  }
+
+  /// Upright normalized point of the plain ultra-wide -> this view, before zoom.
+  private func plainToView(_ p: CGPoint) -> CGPoint {
+    previewLayer?.layerPointConverted(fromCaptureDevicePoint: CGPoint(x: p.y, y: 1 - p.x)) ?? p
+  }
+
+  private func viewToPlain(_ v: CGPoint) -> CGPoint {
+    guard let d = previewLayer?.captureDevicePointConverted(fromLayerPoint: v) else { return CGPoint(x: 0.5, y: 0.5) }
+    return CGPoint(x: 1 - d.y, y: d.x)
   }
 
   /// Swaps the camera under the same session; the world (and every pin) carries on.
@@ -974,6 +1057,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
+    // On the plain ultra-wide there's no world to place them in: they wait for 1x.
+    if plainUltra {
+      for pin in pins.values {
+        pin.setHidden(true)
+        pin.guideShape?.isHidden = true
+        pin.outline?.isHidden = true
+      }
+      return
+    }
     // Where a tag can be read: clear of the app's own panel and top bar.
     let visible = bounds.inset(by: pinInsets)
     for id in pinOrder {
@@ -1190,6 +1282,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// Full-resolution still (when the format allows it), written upright as JPEG.
   func takePhoto(_ done: @escaping (Result<[String: Any], Error>) -> Void) {
+    if plainUltra, let buffer = lastPlainBuffer {
+      visionQueue.async {
+        let result = self.writePhoto(buffer, maxSide: 3024)
+        DispatchQueue.main.async { done(result) }
+      }
+      return
+    }
     let session = sceneView.session
     // The JS shutter waits on this promise, so it must settle exactly once,
     // even if ARKit never calls back (a session paused mid-capture).
