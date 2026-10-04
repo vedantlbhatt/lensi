@@ -91,8 +91,19 @@ def load_mobile_sam(cache: str = DEFAULT_CACHE):
 
 
 # --------------------------------------------------------------------------------------------
-# Patches that keep the graph inside what Core ML (and float16) can do. Each one computes the
-# same function as the original; evaluate.py checks that against the unpatched model.
+# Patches that keep the graph inside what Core ML (and float16) can do, and fast on the Neural
+# Engine. Each one computes the same function as the original; evaluate.py checks that against
+# the unpatched model.
+#
+# Neural Engine layout. The ANE works on NCHW tensors with the last axis contiguous; linear layers
+# on channel-last [B, L, C] tokens and per-head permutes all turn into transposes there. The
+# unpatched TinyViT ran entirely on the ANE but spent ~30% of its estimated cost in transpose /
+# reshape. So the patched encoder keeps the feature map as [1, C, H, W] from the patch embedding
+# to the neck: LayerNorm over the channel axis, linear layers as 1x1 convolutions, and the window
+# attention partitions [1, C, H, W] into [windows, C, 1, tokens] (two plain transposes) so q, k, v
+# come out of one batched 1x1 conv already channel-major. Heads are separate slices (no head
+# permute), and the softmax is folded into the value matmul (see _window_attention). On an M3
+# that takes the encoder from ~41 ms to ~29 ms with CPU_AND_NE (tools/sam/README.md).
 
 # Power-of-two input scale for LayerNorms whose sum((x - mean)^2) leaves float16 range.
 # LayerNorm(x * s, eps * s^2) == LayerNorm(x, eps), and scaling by 2^-5 is exact in fp16/fp32.
@@ -104,96 +115,167 @@ def load_mobile_sam(cache: str = DEFAULT_CACHE):
 LN_PRESCALE = 1.0 / 32
 
 
-def _layer_norm(norm: nn.LayerNorm, x: torch.Tensor, prescale: float) -> torch.Tensor:
-    if prescale == 1.0:
-        return norm(x)
-    return F.layer_norm(x * prescale, norm.normalized_shape, norm.weight, norm.bias,
-                        norm.eps * prescale * prescale)
+def _channel_norm(x: torch.Tensor, channels: int, eps: float, prescale: float) -> torch.Tensor:
+    """(x - mean) / sqrt(var + eps) over axis 1 of NCHW x, without the affine part.
+
+    With a power-of-two channel count the means are 1x1 convolutions with weight 1/C (exact in
+    float16): on the ANE that is a matmul, ~4x cheaper than its layer_norm over axis 1, and as
+    accurate here. Other channel counts (160, 320) keep reduce_mean, which Core ML fuses into a
+    layer_norm op; a 1/C conv there measurably loses float16 precision. Largest single square
+    (x - mean)^2 over the evaluation canvases after prescaling: ~2e3, far inside float16.
+    """
+    if prescale != 1.0:
+        x = x * prescale
+        eps = eps * prescale * prescale
+    if channels & (channels - 1) == 0:
+        avg = torch.full((1, channels, 1, 1), 1.0 / channels, dtype=x.dtype)
+        xc = x - F.conv2d(x, avg)
+        var = F.conv2d(xc * xc, avg)
+    else:
+        xc = x - x.mean(1, keepdim=True)
+        var = (xc * xc).mean(1, keepdim=True)
+    return xc * torch.rsqrt(var + eps)
 
 
-def _tinyvit_attention(attn, x):
-    """TinyViT Attention.forward without its leading LayerNorm (the block applies it)."""
-    B, N, _ = x.shape
-    qkv = attn.qkv(x)
-    q, k, v = qkv.view(B, N, attn.num_heads, -1).split([attn.key_dim, attn.key_dim, attn.d], dim=3)
-    q = q.permute(0, 2, 1, 3)
-    k = k.permute(0, 2, 1, 3)
-    v = v.permute(0, 2, 1, 3)
-    logits = (q @ k.transpose(-2, -1)) * attn.scale + attn.ab
-    out = (logits.softmax(dim=-1) @ v).transpose(1, 2).reshape(B, N, attn.dh)
-    return attn.proj(out)
+def _window_attention(blk, x):
+    """TinyViT window attention on a normalised NCHW map [1, C, H, W]; returns [1, C, H, W].
+
+    Same function as the original, rearranged:
+    * The attention LayerNorm's affine and the q scale are folded into the qkv weights
+      (blk.attn.lensi_qkv_w/b, see _prepare_block), so padding is plain zeros: the original pads
+      with zero tokens and normalises them to exactly norm.bias, which is what a zero normalised
+      token turns into after the folded affine. (It also avoids the original's 0/0 in float16 on
+      those tokens if eps=1e-5 is flushed as a subnormal.)
+    * Each head's qkv block carries one extra output channel with weight 0 and bias 1, so v has
+      a row of ones: exp(logits - max) @ [v; 1] gives the softmax numerator and denominator in
+      one matmul, and the division runs on [d, tokens] instead of [tokens, tokens].
+    * Tokens inside a window keep the original row-major order, so the relative-position bias
+      attn.ab applies as is.
+    """
+    a = blk.attn
+    _, C, H, W = x.shape
+    ws = blk.window_size
+    pad_b, pad_r = (ws - H % ws) % ws, (ws - W % ws) % ws
+    if pad_b or pad_r:
+        x = F.pad(x, (0, pad_r, 0, pad_b))
+    pH, pW = H + pad_b, W + pad_r
+    nH, nW = pH // ws, pW // ws
+    nwin, T = nH * nW, ws * ws
+    heads, kd, d = a.num_heads, a.key_dim, a.d
+    # [1, C, pH, pW] -> [C, nH, nW, ws, ws] -> [nwin, C, 1, T]
+    x = x.reshape(C, nH, ws, nW, ws).permute(0, 1, 3, 2, 4).reshape(C, nwin, T)
+    x = x.transpose(0, 1).reshape(nwin, C, 1, T)
+    qkv = F.conv2d(x, a.lensi_qkv_w, a.lensi_qkv_b)  # [nwin, heads * (2kd + d + 1), 1, T]
+    per_head = 2 * kd + d + 1
+    outs = []
+    for h in range(heads):
+        o = h * per_head
+        q = qkv[:, o:o + kd, 0]  # [nwin, kd, T], already scaled
+        k = qkv[:, o + kd:o + 2 * kd, 0]
+        v1 = qkv[:, o + 2 * kd:o + per_head, 0]  # [nwin, d + 1, T], last row all ones
+        logits = torch.matmul(q.transpose(1, 2), k) + a.ab[h]  # [nwin, T(query), T(key)]
+        e = torch.exp(logits - logits.amax(-1, keepdim=True))
+        num = torch.matmul(v1, e.transpose(1, 2))  # [nwin, d + 1, T(query)]
+        outs.append(num[:, :d] / num[:, d:])
+    out = torch.cat(outs, 1).reshape(nwin, heads * d, 1, T)
+    out = F.conv2d(out, a.lensi_proj_w, a.proj.bias)  # [nwin, C, 1, T]
+    out = out.reshape(nwin, C, T).transpose(0, 1).reshape(C, nH, nW, ws, ws)
+    out = out.permute(0, 1, 3, 2, 4).reshape(1, C, pH, pW)
+    if pad_b or pad_r:
+        out = out[:, :, :H, :W]
+    return out
 
 
 def _tinyvit_block_forward(self, x):
-    """TinyViTBlock.forward, rearranged for Core ML. Two changes, same function:
-
-    1. Window partition/reverse on rank-5 tensors. The original views x as
-       (B, nH, ws, nW, ws, C), rank 6, and Core ML tops out at rank 5. Folding B into nH keeps
-       the memory order, so it is bit-identical.
-    2. The attention LayerNorm runs before window padding. The original pads with zero tokens
-       and normalises them inside Attention, which maps each one to exactly norm.bias; in float16
-       that result hinges on eps=1e-5 surviving as a subnormal (0/0 = NaN if it is flushed).
-       Here the real tokens are normalised and the padding is filled with norm.bias directly.
-    """
-    H, W = self.input_resolution
-    B, L, C = x.shape
-    assert L == H * W, "input feature has wrong size"
-    res_x = x
-    ws = self.window_size
+    """TinyViTBlock.forward on NCHW [1, C, H, W] (in and out), see the layout note above."""
     norm = self.attn.norm
-    x = _layer_norm(norm, x, getattr(self, "lensi_ln_prescale", 1.0))
-    if H == ws and W == ws:
-        x = _tinyvit_attention(self.attn, x)
-    else:
-        x = x.view(B, H, W, C)
-        pad_b = (ws - H % ws) % ws
-        pad_r = (ws - W % ws) % ws
-        padding = pad_b > 0 or pad_r > 0
-        if padding:
-            # Pad with norm.bias: shift so the zero fill lands on it. Avoids a large constant.
-            x = F.pad(x - norm.bias, (0, 0, 0, pad_r, 0, pad_b)) + norm.bias
-        pH, pW = H + pad_b, W + pad_r
-        nH, nW = pH // ws, pW // ws
-        x = x.reshape(B * nH, ws, nW, ws, C).transpose(1, 2).reshape(B * nH * nW, ws * ws, C)
-        x = _tinyvit_attention(self.attn, x)
-        x = x.reshape(B * nH, nW, ws, ws, C).transpose(1, 2).reshape(B, pH, pW, C)
-        if padding:
-            x = x[:, :H, :W].contiguous()
-        x = x.reshape(B, L, C)
-    x = res_x + self.drop_path(x)
-    x = x.transpose(1, 2).reshape(B, C, H, W)
+    x = x + _window_attention(self, _channel_norm(x, norm.normalized_shape[0], norm.eps,
+                                                  self.lensi_ln_prescale))
     x = self.local_conv(x)
-    x = x.view(B, C, L).transpose(1, 2)
-    x = x + self.drop_path(self.mlp(x))
-    return x
+    mlp = self.mlp
+    h = _channel_norm(x, mlp.norm.normalized_shape[0], mlp.norm.eps, 1.0)
+    h = F.gelu(F.conv2d(h, mlp.lensi_fc1_w, mlp.lensi_fc1_b))
+    return x + F.conv2d(h, mlp.lensi_fc2_w, mlp.fc2.bias)
+
+
+def _mbconv_forward(self, x):
+    """MBConv.forward without the in-place add (NCHW in and out, as before)."""
+    y = self.act2(self.conv2(self.act1(self.conv1(x))))
+    return self.act3(self.conv3(y) + x)
+
+
+def _patch_merging_forward(self, x):
+    """PatchMerging.forward, NCHW in and out (no flatten to tokens)."""
+    return self.conv3(self.act(self.conv2(self.act(self.conv1(x)))))
+
+
+def _tinyvit_forward(self, x):
+    """TinyViT.forward_features with every layer on NCHW; the neck takes the map directly."""
+    x = self.patch_embed(x)
+    for layer in self.layers:
+        for blk in layer.blocks:
+            x = blk(x)
+        if layer.downsample is not None:
+            x = layer.downsample(x)
+    return self.neck(x)
 
 
 def _layernorm2d_forward(self, x):
     """common.LayerNorm2d.forward on x * prescale with eps * prescale^2 (see LN_PRESCALE)."""
-    s = self.lensi_prescale
-    x = x * s
-    u = x.mean(1, keepdim=True)
-    var = (x - u).pow(2).mean(1, keepdim=True)
-    x = (x - u) / torch.sqrt(var + self.eps * s * s)
+    x = _channel_norm(x, self.lensi_channels, self.eps, self.lensi_prescale)
     return self.weight[:, None, None] * x + self.bias[:, None, None]
+
+
+@torch.no_grad()
+def _prepare_block(block, prescale: float) -> None:
+    """Folded 1x1-conv weights for _tinyvit_block_forward (float32, rounded once by Core ML)."""
+    a, mlp = block.attn, block.mlp
+    C = a.qkv.in_features
+    H, W = block.input_resolution
+    assert not (H == block.window_size and W == block.window_size), "single-window path unused"
+    # qkv rows are [head][q (key_dim), k (key_dim), v (d)]; scale q, fold the norm's affine.
+    w = a.qkv.weight.view(a.num_heads, -1, C).clone()
+    b = a.qkv.bias.view(a.num_heads, -1).clone()
+    w[:, :a.key_dim] *= a.scale
+    b[:, :a.key_dim] *= a.scale
+    b = b + w @ a.norm.bias
+    w = w * a.norm.weight
+    w = torch.cat([w, torch.zeros(a.num_heads, 1, C)], 1)  # the ones row of v
+    b = torch.cat([b, torch.ones(a.num_heads, 1)], 1)
+    a.register_buffer("lensi_qkv_w", w.reshape(-1, C, 1, 1).contiguous(), persistent=False)
+    a.register_buffer("lensi_qkv_b", b.reshape(-1).contiguous(), persistent=False)
+    a.register_buffer("lensi_proj_w", a.proj.weight[:, :, None, None].clone(), persistent=False)
+    w1 = mlp.fc1.weight
+    mlp.register_buffer("lensi_fc1_w", (w1 * mlp.norm.weight)[:, :, None, None].clone(), persistent=False)
+    mlp.register_buffer("lensi_fc1_b", (mlp.fc1.bias + w1 @ mlp.norm.bias).clone(), persistent=False)
+    mlp.register_buffer("lensi_fc2_w", mlp.fc2.weight[:, :, None, None].clone(), persistent=False)
+    block.lensi_ln_prescale = prescale
 
 
 def patch_for_coreml(sam):
     """Patches a (copied) Sam in place; returns it."""
     encoder = sam.image_encoder
+    encoder.forward = types.MethodType(_tinyvit_forward, encoder)
     blocks = 0
     for i, layer in enumerate(encoder.layers):
         for block in layer.blocks:
-            if type(block).__name__ != "TinyViTBlock":
+            name = type(block).__name__
+            if name == "MBConv":
+                block.forward = types.MethodType(_mbconv_forward, block)
                 continue
+            assert name == "TinyViTBlock", name
+            _prepare_block(block, LN_PRESCALE if i == 3 else 1.0)
             block.forward = types.MethodType(_tinyvit_block_forward, block)
-            block.lensi_ln_prescale = LN_PRESCALE if i == 3 else 1.0
             blocks += 1
+        if layer.downsample is not None:
+            assert type(layer.downsample).__name__ == "PatchMerging"
+            layer.downsample.forward = types.MethodType(_patch_merging_forward, layer.downsample)
     assert blocks == 10, f"expected 10 TinyViT blocks, patched {blocks}"
     for idx in (1, 3):
         ln = encoder.neck[idx]
         assert type(ln).__name__ == "LayerNorm2d", type(ln)
         ln.lensi_prescale = LN_PRESCALE
+        ln.lensi_channels = int(ln.weight.numel())
         ln.forward = types.MethodType(_layernorm2d_forward, ln)
     return sam
 
