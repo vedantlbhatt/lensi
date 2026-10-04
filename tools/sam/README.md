@@ -65,14 +65,27 @@ references.
   `|x - mean|` up to ~620, so `(x - mean)^2` overflows float16 (max 65504) and the embedding
   turns to garbage (mask IoU 0 in `mil_check.py`). `convert.py` evaluates those LayerNorms, and
   TinyViT layer 3's attention norms, on `x / 32` with `eps / 32^2`, which is the same function
-  without the overflow. It also normalises tokens before window padding so no zero-variance token
-  depends on a subnormal `eps`. After any change, run `evaluate.py --models` (or
+  without the overflow. It also normalises tokens before window padding (the padding is zeros
+  after the norm, its affine folded into qkv) so no zero-variance token depends on a subnormal
+  `eps`. After any change, run `evaluate.py --models` (or
   `mil_check.py`) and check "float16 hazards: none".
 - **Padding slots are masked.** SamPredictor gives the decoder one padding token without a box
   and none with one. With five fixed slots, ONNX-style padding would add up to four identical
   `not_a_point` tokens, and that changes masks a lot (IoU down to 0.22 in the report). The
   decoder keeps the first `-1` slot visible only when there is no box and hides every other one
   from attention, so it matches SamPredictor exactly. `--onnx-padding` turns this off.
+- **The encoder is laid out for the Neural Engine.** The unpatched TinyViT already compiled and
+  ran on the ANE, but slowly (~41 ms on an M3 with `CPU_AND_NE`): its channel-last tokens and
+  per-head permutes became transposes and reshapes, ~30% of the estimated cost. The patched
+  encoder keeps an NCHW map from the patch embedding to the neck: channel LayerNorms (1x1 conv
+  means where C is a power of two), linear layers as 1x1 convs with the norm affine and q scale
+  folded in, windows partitioned into `[windows, C, 1, tokens]`, one slice per head, and the
+  softmax folded into the value matmul (an all-ones row in v gives the denominator). Same
+  function; ~29 ms on the ANE (mean of 10), same probe error and IoUs in `verify_coreml.py`.
+  The GPU path got slower (~52 -> ~120 ms with `CPU_AND_GPU`), which matters only where there is
+  no ANE. The `ANECCompile() FAILED` line that `verify_coreml.py` prints comes from the
+  decoder (its `-1` padding mask; it compiles with `--onnx-padding`), which then runs off the
+  ANE in ~5 ms.
 - coremltools 9.0 was tested up to torch 2.7.0; newer torch may trace into ops it doesn't know.
 - Core ML can't predict on Linux. `mil_check.py` runs the converted programs as a stand-in.
   `verify_coreml.py` on a Mac is the real check, and the only one that exercises the

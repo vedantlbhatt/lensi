@@ -186,6 +186,13 @@ def run(prog, feeds: dict, fp16: bool = True, bounds: bool = False, report=None)
                   "tanh": np.tanh}[t]
             with np.errstate(over="ignore", invalid="ignore"):
                 res = [fn(f32("x"))]
+        elif t == "rsqrt":
+            # The encoder's channel norms: rsqrt(var + eps). Same hazard as layer_norm's eps.
+            x = f32("x") + float(_scalar(a.get("epsilon", 1e-12)))
+            if fp16 and (x < FP16_MIN_NORMAL).any():
+                flag("rsqrt input below fp16 normal range", op, x.min())
+            with np.errstate(divide="ignore", invalid="ignore"):
+                res = [1.0 / np.sqrt(x)]
         elif t == "reshape":
             res = [np.asarray(a["x"]).reshape(_ints(a["shape"]))]
         elif t == "transpose":
