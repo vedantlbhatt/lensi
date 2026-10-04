@@ -83,8 +83,10 @@ enum OutlineMath {
     var followStill: Float
     var followMoving: Float
 
-    /// What the app uses.
-    static let standard = Smoothing(quiet: 0.1, keepQuiet: 0.65, small: 0.25, keepSmall: 0.4, still: 0.15, followStill: 0.5, followMoving: 0.9)
+    /// What the app uses (through `steady`, which lets real change through).
+    static let standard = Smoothing(quiet: 0.1, keepQuiet: 0.65, small: 0.25, keepSmall: 0.4, still: 0.03, followStill: 0.6, followMoving: 1)
+    /// The first setting: steady, but it lags anything that bends or turns quickly.
+    static let strong = Smoothing(quiet: 0.1, keepQuiet: 0.65, small: 0.25, keepSmall: 0.4, still: 0.15, followStill: 0.5, followMoving: 0.9)
     /// Only the edge noise of a thing that holds its shape; motion and real shape change pass straight through.
     static let light = Smoothing(quiet: 0.05, keepQuiet: 0.5, small: 0.1, keepSmall: 0.25, still: 0.03, followStill: 0.6, followMoving: 1)
     static let minimal = Smoothing(quiet: 0.04, keepQuiet: 0.4, small: 0.04, keepSmall: 0, still: 0, followStill: 1, followMoving: 1)
@@ -104,5 +106,35 @@ enum OutlineMath {
     let follow: Float = jump < how.still ? how.followStill : how.followMoving
     let middle = co + (cn - co) * follow
     return zip(old, shape).map { o, n in middle + (o - co) * keep + n * (1 - keep) }
+  }
+
+  /// `smooth`, telling the thing's own change from edge noise by whether it keeps going the
+  /// same way. `previous` is the last change (per point, centred, in this outline's order):
+  /// when this one runs the same way (they correlate), the thing really is turning or bending
+  /// and the change passes straight through; when it doesn't (noise flickers back and forth),
+  /// it's damped as `how` says. Returns the outline and this change, for next time.
+  static func steady(_ old: [simd_float3]?, _ new: [simd_float3], previous: [simd_float3]?,
+                     _ how: Smoothing = .standard) -> (outline: [simd_float3], change: [simd_float3]?) {
+    guard let old, old.count == new.count, !new.isEmpty else { return (new, nil) }
+    let size = max(spread(old), 1e-6)
+    let co = centre(old), cn = centre(new)
+    let jump = simd_distance(co, cn) / size
+    guard jump < 1 else { return (new, nil) }
+    let (shape, gap) = align(new.map { $0 - cn }, to: old.map { $0 - co })
+    let change = zip(shape, old).map { $0 - ($1 - co) }
+    let relative = gap / size
+    var keep: Float = relative < how.quiet ? how.keepQuiet : relative < how.small ? how.keepSmall : 0
+    if let previous, previous.count == change.count, keep > 0 {
+      var dot: Float = 0, a: Float = 0, b: Float = 0
+      for i in 0..<change.count {
+        dot += simd_dot(change[i], previous[i])
+        a += simd_length_squared(change[i])
+        b += simd_length_squared(previous[i])
+      }
+      if a > 0, b > 0, dot / (a.squareRoot() * b.squareRoot()) > 0.3 { keep = 0 }
+    }
+    let follow: Float = jump < how.still ? how.followStill : how.followMoving
+    let middle = co + (cn - co) * follow
+    return (zip(old, shape).map { o, n in middle + (o - co) * keep + n * (1 - keep) }, change)
   }
 }

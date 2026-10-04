@@ -260,6 +260,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     var velocity = simd_float3.zero
     /// A guide tag rides with its part: where it sits from the outline's middle.
     var tagOffset: simd_float3?
+    /// Its last change of shape, so the next tells real turning or bending from edge noise.
+    var lastChange: [simd_float3]?
     let follows: Bool
 
     /// Where it is at `t`: its outline carried along by its own motion (at most 0.3 s ahead).
@@ -464,8 +466,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let key = prompt.key
       if let world = found[key] {
         if var shape = liveShapes[key], t - shape.seen < 2 {
-          // Blended into where it should be by now: a moving thing is followed, its edge settles.
-          let next = OutlineMath.smooth(shape.placed(at: t), world)
+          // Blended into where it should be by now: a moving thing is followed, and its edge
+          // settles unless it's really changing shape (tools/track measures this on real footage).
+          let steadied = OutlineMath.steady(shape.placed(at: t), world, previous: shape.lastChange)
+          let next = steadied.outline
+          shape.lastChange = steadied.change
           let dt = Float(t - shape.seen)
           if dt > 0.01 {
             let v = (OutlineMath.centre(next) - OutlineMath.centre(shape.world)) / dt

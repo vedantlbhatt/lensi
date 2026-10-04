@@ -152,10 +152,19 @@ func checkOutlineMath() -> Bool {
   expect(abs(OutlineMath.spread(circle) - 0.1) < 1e-4, "spread: \(OutlineMath.spread(circle))")
 
   // Nudged a hair: blended (moves only part way). Somewhere else: replaced outright.
-  let nudged = turned.map { $0 + simd_float3(0.004, 0, 0) }
+  // (2% of its size: jitter, so it only goes part way.)
+  let nudged = turned.map { $0 + simd_float3(0.002, 0, 0) }
   let blended = OutlineMath.smooth(circle, nudged)
   let moved = blended[0].x - circle[0].x
-  expect(moved > 0.0005 && moved < 0.0035, "smooth nudge moved \(moved)")
+  expect(moved > 0.0005 && moved < 0.0018, "smooth nudge moved \(moved)")
+  // A change that keeps going the same way passes straight through `steady`; one that
+  // flickers back is damped.
+  let grown = circle.map { simd_float3($0.x * 1.03, $0.y * 1.03, $0.z) }
+  let firstGrow = OutlineMath.steady(circle, grown, previous: nil)
+  let againGrow = OutlineMath.steady(firstGrow.outline, firstGrow.outline.map { simd_float3($0.x * 1.03, $0.y * 1.03, $0.z) }, previous: firstGrow.change)
+  expect(abs(OutlineMath.spread(againGrow.outline) - OutlineMath.spread(firstGrow.outline) * 1.03) < 0.0005, "steady lets a steady change through")
+  let shrinkBack = OutlineMath.steady(firstGrow.outline, circle, previous: firstGrow.change)
+  expect(OutlineMath.spread(shrinkBack.outline) > OutlineMath.spread(circle) + 0.0005, "steady damps a change that flickers back")
   let elsewhere = circle.map { $0 + simd_float3(0.3, 0, 0) }
   let replaced = OutlineMath.smooth(circle, elsewhere)
   expect(zip(replaced, elsewhere).allSatisfy { simd_distance($0, $1) < 1e-6 } || OutlineMath.align(replaced, to: elsewhere).gap < 1e-6,

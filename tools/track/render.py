@@ -79,8 +79,9 @@ def main():
     h, w = first.shape[:2]
     # Big enough to read on a phone.
     s = 2 if w < 1000 else 1
-    single = writer(os.path.join(out_dir, f"{name}.mp4"), w * s, h * s, fps)
-    pair = writer(os.path.join(out_dir, f"{name}-compare.mp4"), w, h * 2, fps)
+    tag = "" if now_label == "lensi@8" else "-" + now_label.replace("@", "-at")
+    single = writer(os.path.join(out_dir, f"{name}{tag}.mp4"), w * s, h * s, fps)
+    pair = writer(os.path.join(out_dir, f"{name}{tag}-compare.mp4"), w, h * 2, fps)
     def j(run, i):
         v = run["jPerFrame"]
         return f"  J {v[i] * 100:.0f}%" if i < len(v) else ""
@@ -95,11 +96,12 @@ def main():
         left = outline(img.copy(), unpack(fixed["outlines"][i]), OLD, 2)
         left = caption(left, [f"Before: SAM at a fixed spot{j(fixed, i)}"], size=15)
         right = outline(img.copy(), unpack(lensi["outlines"][i]), PEN, 2.5)
-        right = caption(right, [f"Now: tracked, SAM 8/s{j(lensi, i)}"], size=15)
+        how = "SAM 8/s + box tracker" if now_label == "vision@8" else "SAM 8/s"
+        right = caption(right, [f"Now: tracked, {how}{j(lensi, i)}"], size=15)
         pair.write(np.vstack([left, right]))
     single.release()
     pair.release()
-    print(f"{name}: wrote {name}.mp4 and {name}-compare.mp4 ({len(data['frameNames'])} frames)")
+    print(f"{name}: wrote {name}{tag}.mp4 and {name}{tag}-compare.mp4 ({len(data['frameNames'])} frames)")
 
 
 if __name__ == "__main__":

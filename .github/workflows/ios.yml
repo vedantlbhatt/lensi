@@ -96,7 +96,8 @@ jobs:
           for s in $SEQS; do
             [ -d "footage/DAVIS/JPEGImages/480p/$s" ] || continue
             LENSI_MODELS_DIR=models-all ./track "footage/DAVIS/JPEGImages/480p/$s" "footage/DAVIS/Annotations/480p/$s" out/track "$s" 2>&1 | tee -a out/track/summary.txt \
-              && python tools/track/render.py "footage/DAVIS/JPEGImages/480p/$s" "out/track/$s.json" out/track || echo "FAIL $s"
+              && python tools/track/render.py "footage/DAVIS/JPEGImages/480p/$s" "out/track/$s.json" out/track \
+              && python tools/track/render.py "footage/DAVIS/JPEGImages/480p/$s" "out/track/$s.json" out/track vision@8 || echo "FAIL $s"
           done
           # Two more from the same set: bolts going by on a conveyor belt (a real part on the move).
           for v in bolt-detection bolt-multi-size-detection; do
@@ -108,7 +109,8 @@ jobs:
             set -- $clip
             [ -d "footage/$1" ] || continue
             LENSI_MODELS_DIR=models-all ./track "footage/$1" - out/track "$1" "$2" 2>&1 | tee -a out/track/summary.txt \
-              && python tools/track/render.py "footage/$1" "out/track/$1.json" out/track || echo "FAIL $1"
+              && python tools/track/render.py "footage/$1" "out/track/$1.json" out/track \
+              && python tools/track/render.py "footage/$1" "out/track/$1.json" out/track vision@8 || echo "FAIL $1"
           done
       - name: Push tracking results to ci-track (without waiting for the app build)
         if: always()

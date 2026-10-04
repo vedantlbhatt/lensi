@@ -4,9 +4,11 @@
 //   fixed      SAM asked at the same spot every frame, where the thing was at the start
 //              (what a prompt pinned in place does when the thing moves)
 //   tracked    SAM asked where the thing should be now (LiveTracker), cuts as they come
-//   lensi      tracked, and blended (OutlineMath.smooth): what the phone draws
+//   lensi      tracked, and steadied (OutlineMath.steady): what the phone draws
 //   lensi@8    the same with SAM on every third frame (8 a second at 24 fps, about what a
 //              phone manages); in between, the outline is carried along by its own motion
+//   vision@8   the same, carried between SAM's frames by Vision's box tracker instead
+//   strong, light, tracked@8: other settings, measured next to it
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask)
 // and wobble (how much the outline's shape changes from one frame to the next, the mask's
@@ -18,6 +20,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import simd
+import Vision
 
 let args = CommandLine.arguments
 guard args.count >= 5 else {
@@ -145,12 +148,52 @@ func seed(from m: [UInt8], w: Int, h: Int) -> (CGRect, CGPoint)? {
   return (box, CGPoint(x: (Double(best.1) + 0.5) / Double(w), y: (Double(best.2) + 0.5) / Double(h)))
 }
 
+/// Vision's box tracker, run on every frame: between SAM's frames it says how the thing's box
+/// moved and grew, and the outline is carried along with it (instead of at constant speed).
+final class BoxFollower {
+  private var request: VNTrackObjectRequest?
+  private let handler = VNSequenceRequestHandler()
+  private(set) var box: CGRect?
+
+  /// Start (again) from `box` (0-1, top-left origin).
+  func reset(_ box: CGRect) {
+    let r = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(
+      boundingBox: CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)))
+    r.trackingLevel = .fast
+    request = r
+    self.box = box
+  }
+
+  /// The box in this frame, nil when Vision has lost it.
+  func track(_ image: CGImage) -> CGRect? {
+    guard let request else { return nil }
+    do {
+      try handler.perform([request], on: image)
+    } catch {
+      return nil
+    }
+    guard let o = request.results?.first as? VNDetectedObjectObservation, o.confidence > 0.3 else { return nil }
+    request.inputObservation = o
+    let b = o.boundingBox
+    box = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+    return box
+  }
+}
+
 /// One way of keeping an outline on the thing, run frame by frame.
 final class Runner {
   let label: String
   let tracking: Bool
   let smoothing: OutlineMath.Smoothing?
   let every: Int
+  /// Smooth with `OutlineMath.steady` (real change passes) rather than `smooth`.
+  let adaptive: Bool
+  var lastChange: [simd_float3]?
+  /// Carry the outline between SAM's frames with Vision's box tracker.
+  let follower: BoxFollower?
+  /// The outline as SAM last left it, and its box then (what the follower's box is compared to).
+  var anchorOutline: [CGPoint]?
+  var anchorBox: CGRect?
   var outline: [CGPoint]?
   var velocity = CGPoint.zero // per frame, 0-1 units
   var lastFrame = 0
@@ -161,16 +204,24 @@ final class Runner {
   var j: [Double] = []
   var wobble: [Double] = []
 
-  init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int) {
+  init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int, follow: Bool = false, adaptive: Bool = false) {
     self.label = label
     self.tracking = tracking
     self.smoothing = smoothing
     self.every = every
+    self.adaptive = adaptive
+    follower = follow ? BoxFollower() : nil
   }
 
-  /// Where the outline is expected at frame f: the last one carried along by its motion.
+  /// Where the outline is expected at frame f: the last one carried along by its motion
+  /// (by Vision's box tracker when there is one and it still has the thing).
   func predicted(at f: Int) -> [CGPoint]? {
     guard let outline else { return nil }
+    if let follower, let a = anchorBox, let b = follower.box, let from = anchorOutline, a.width > 0, a.height > 0 {
+      return from.map {
+        CGPoint(x: b.minX + ($0.x - a.minX) * b.width / a.width, y: b.minY + ($0.y - a.minY) * b.height / a.height)
+      }
+    }
     let k = CGFloat(f - lastFrame)
     return outline.map { CGPoint(x: $0.x + velocity.x * k, y: $0.y + velocity.y * k) }
   }
@@ -180,7 +231,9 @@ final class Runner {
   }
 
   /// Frame f: maybe ask SAM (on this runner's beat), then say what's shown.
-  func step(_ f: Int, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
+  func step(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
+    // The box tracker sees every frame, as it would on the phone.
+    if let follower, follower.box != nil, f > 0, follower.track(image) == nil { anchorBox = nil }
     if f % every == 0 {
       let prediction = predicted(at: f)
       var points = [seedPoint]
@@ -200,7 +253,14 @@ final class Runner {
         var next = c
         if let smoothing, let prediction {
           let px = { (p: CGPoint) in simd_float3(Float(p.x * scale.width), Float(p.y * scale.height), 0) }
-          let blended = OutlineMath.smooth(prediction.map(px), c.map(px), smoothing)
+          let blended: [simd_float3]
+          if adaptive {
+            let r = OutlineMath.steady(prediction.map(px), c.map(px), previous: lastChange, smoothing)
+            blended = r.outline
+            lastChange = r.change
+          } else {
+            blended = OutlineMath.smooth(prediction.map(px), c.map(px), smoothing)
+          }
           next = blended.map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
         }
         if let old = outline, f > lastFrame {
@@ -213,6 +273,12 @@ final class Runner {
         outline = next
         lastFrame = f
         misses = 0
+        if let follower {
+          let b = LiveTracker.bounds(next)
+          follower.reset(b)
+          anchorBox = b
+          anchorOutline = next
+        }
       } else {
         // Nothing usable: keep showing where it should be, and slow down.
         if let prediction { outline = prediction }
@@ -254,12 +320,12 @@ print("\(name): \(frames.count) frames \(W)x\(H), seed box \(seedBox), point \(s
 let runners = [
   Runner("fixed", tracking: false, smoothing: nil, every: 1),
   Runner("tracked", tracking: true, smoothing: nil, every: 1),
-  Runner("lensi", tracking: true, smoothing: .standard, every: 1),
+  Runner("strong", tracking: true, smoothing: .strong, every: 1),
   Runner("light", tracking: true, smoothing: .light, every: 1),
-  Runner("minimal", tracking: true, smoothing: .minimal, every: 1),
+  Runner("lensi", tracking: true, smoothing: .standard, every: 1, adaptive: true),
   Runner("tracked@8", tracking: true, smoothing: nil, every: 3),
-  Runner("lensi@8", tracking: true, smoothing: .standard, every: 3),
-  Runner("light@8", tracking: true, smoothing: .light, every: 3),
+  Runner("lensi@8", tracking: true, smoothing: .standard, every: 3, adaptive: true),
+  Runner("vision@8", tracking: true, smoothing: .standard, every: 3, follow: true, adaptive: true),
 ]
 var truthWobble: [Double] = []
 var prevTruth = truth0
@@ -274,7 +340,7 @@ for (f, url) in frames.enumerated() {
   encodeMs.append(Date().timeIntervalSince(t0) * 1000)
   let truth = f < masks.count ? groundTruth(masks[f]) : nil
   for r in runners {
-    let shown = try r.step(f, sam: sam, scale: scale, seedBox: seedBox, seedPoint: seedPoint) ?? []
+    let shown = try r.step(f, image: image, sam: sam, scale: scale, seedBox: seedBox, seedPoint: seedPoint) ?? []
     r.shown.append(shown)
     if let truth, truth.w == W {
       r.j.append(maskIoU(raster(shown, w: W, h: H), truth.bits))
