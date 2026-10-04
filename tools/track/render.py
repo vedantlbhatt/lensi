@@ -96,7 +96,7 @@ def main():
         left = outline(img.copy(), unpack(fixed["outlines"][i]), OLD, 2)
         left = caption(left, [f"Before: SAM at a fixed spot{j(fixed, i)}"], size=15)
         right = outline(img.copy(), unpack(lensi["outlines"][i]), PEN, 2.5)
-        how = "SAM 8/s + box tracker" if now_label == "vision@8" else "SAM 8/s"
+        how = {"vision@8": "SAM 8/s + box tracker", "visionT@8": "SAM 8/s + box tracker (moves only)"}.get(now_label, "SAM 8/s")
         right = caption(right, [f"Now: tracked, {how}{j(lensi, i)}"], size=15)
         pair.write(np.vstack([left, right]))
     single.release()

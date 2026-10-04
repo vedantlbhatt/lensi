@@ -191,6 +191,8 @@ final class Runner {
   var lastChange: [simd_float3]?
   /// Carry the outline between SAM's frames with Vision's box tracker.
   let follower: BoxFollower?
+  /// Only move it with the box (its size is noisy); otherwise move and scale.
+  let moveOnly: Bool
   /// The outline as SAM last left it, and its box then (what the follower's box is compared to).
   var anchorOutline: [CGPoint]?
   var anchorBox: CGRect?
@@ -204,7 +206,8 @@ final class Runner {
   var j: [Double] = []
   var wobble: [Double] = []
 
-  init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int, follow: Bool = false, adaptive: Bool = false) {
+  init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int, follow: Bool = false, adaptive: Bool = false, moveOnly: Bool = false) {
+    self.moveOnly = moveOnly
     self.label = label
     self.tracking = tracking
     self.smoothing = smoothing
@@ -218,6 +221,10 @@ final class Runner {
   func predicted(at f: Int) -> [CGPoint]? {
     guard let outline else { return nil }
     if let follower, let a = anchorBox, let b = follower.box, let from = anchorOutline, a.width > 0, a.height > 0 {
+      if moveOnly {
+        let dx = b.midX - a.midX, dy = b.midY - a.midY
+        return from.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
+      }
       return from.map {
         CGPoint(x: b.minX + ($0.x - a.minX) * b.width / a.width, y: b.minY + ($0.y - a.minY) * b.height / a.height)
       }
@@ -326,6 +333,7 @@ let runners = [
   Runner("tracked@8", tracking: true, smoothing: nil, every: 3),
   Runner("lensi@8", tracking: true, smoothing: .standard, every: 3, adaptive: true),
   Runner("vision@8", tracking: true, smoothing: .standard, every: 3, follow: true, adaptive: true),
+  Runner("visionT@8", tracking: true, smoothing: .standard, every: 3, follow: true, adaptive: true, moveOnly: true),
 ]
 var truthWobble: [Double] = []
 var prevTruth = truth0
