@@ -24,13 +24,14 @@ heyclicky for your camera. Lensi opens straight into a live guide: prop the phon
 
 | Step | Where | Notes |
 |---|---|---|
-| Live detection brackets | YOLO11n on the Neural Engine, about 15 fps | Live mode only |
+| Live outlines | MobileSAM on the camera feed itself, as often as the phone keeps up (encoder on the Neural Engine, one decoder pass per prompt; frames go in straight from ARKit's buffer on the GPU). Prompts: each guide tag's part where its pin lands now (plus the box of the plan's outline seen from here), else the object under the reticle. Each shape is laid in the world and redrawn every display frame, and new cuts of the same shape are blended in, so it stays on the part while the phone moves | Replaces the old corner brackets; `[lensi] live SAM …` logs its cost |
+| Live detection | YOLO11n on the Neural Engine, about 15 fps: tracks objects for the focus label and gives SAM a box | Not in the Guide lens |
 | The eyes | Vision: foreground instance outlines, OCR, barcodes, classification, saliency, plus YOLO on the still | About 0.5–1.5 s |
 | Part outlines | MobileSAM (Meta's Segment Anything, mobile variant) on Core ML. A grid of point prompts over the subject proposes parts (knobs, ports, handles) that become numbered marks for the model (never drawn for you); taps and labels are point-prompted | Falls back to Vision instances |
 | The brain | Apple Intelligence (Foundation Models). On iOS 27 the photo goes in with numbered marks drawn on it, and the model answers by mark number | Claude (via `server/`) or vision-only as fallbacks |
 | The ears | On-device speech recognition | |
 | Live guide tags | The plan is made on one frame whose camera pose is frozen; each part's point is raycast into the world (or given the median depth of tracked feature points near the ray) and pinned there | ARKit, re-projected every frame |
-| Live guide outline | The part's SAM shape in the plan's frame, laid on a plane through its pin that faces the camera that took the frame | ARKit, re-projected every frame |
+| Live guide outline | Live SAM re-cuts each tag's part from where the phone is now (above); until it has, the part's SAM shape from the plan's frame, laid on a plane through its pin that faces the camera that took the frame | ARKit, re-projected every frame |
 | Change watch | Twice a second, while the phone is steady and the part is in view, a Vision feature print of a ~15 cm crop around it is compared with how it looked; a difference that holds for ~1.5 s triggers a check (at most every 12 s per step) | Thresholds still to be tuned on a device |
 
 The model never invents coordinates. It points by **mark number** (set-of-marks prompting), so every label lands on something the phone actually found. Claude can also point by coordinate, and its points are snapped to the nearest region and refined with SAM.
