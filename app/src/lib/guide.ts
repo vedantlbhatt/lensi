@@ -36,6 +36,14 @@ export type GuideState = {
   note: GuideNote | null;
   /** Where to return once an answer is in. */
   resume?: GuideStatus;
+  /**
+   * The plan is still arriving (steps stream in after the first): the step that came last
+   * isn't necessarily the last one, so moving on from it waits for the next instead of
+   * finishing the job.
+   */
+  streaming?: boolean;
+  /** "Next" was asked for on the last step to have arrived: take the next one when it does. */
+  pendingNext?: boolean;
 };
 
 export const initialGuide: GuideState = {
@@ -118,7 +126,7 @@ export function shortLabel(label: string): string {
 export function guideReducer(s: GuideState, a: GuideAction): GuideState {
   switch (a.type) {
     case 'plan':
-      return { ...initialGuide, status: 'planning', task: a.task.trim() };
+      return { ...initialGuide, status: 'planning', task: a.task.trim(), streaming: true };
     case 'title':
       return s.title ? s : { ...s, title: a.text };
     case 'step': {
@@ -126,7 +134,9 @@ export function guideReducer(s: GuideState, a: GuideAction): GuideState {
       const step: GuideStep = { text: a.text.trim(), ...(placed.id ? { partId: placed.id } : {}) };
       if (!step.text) return s;
       // The first step is shown as soon as it arrives; the rest stream in behind it.
-      return { ...s, parts: placed.parts, steps: [...s.steps, step], status: s.status === 'planning' ? 'active' : s.status };
+      const next = { ...s, parts: placed.parts, steps: [...s.steps, step], status: s.status === 'planning' ? 'active' : s.status };
+      // Someone already said "next" on the step before this one: here it is.
+      return s.pendingNext ? { ...next, index: s.steps.length, pendingNext: false, note: null } : next;
     }
     case 'part': {
       const placed = addPart(s.parts, a.label, a.at, a.mark, a.outline, a.frame);
@@ -138,22 +148,30 @@ export function guideReducer(s: GuideState, a: GuideAction): GuideState {
     case 'outline':
       if (a.outline.length < 3) return s;
       return { ...s, parts: s.parts.map((p) => (p.id === a.id && !p.outline ? { ...p, outline: simplify(a.outline) } : p)) };
-    case 'planned':
+    case 'planned': {
+      const done = { ...s, streaming: false, pendingNext: false };
+      // "Next" on what turned out to be the last step: that's the end of the job.
+      if (s.pendingNext) return { ...done, status: 'finished', note: { text: 'That was the last step.', tone: 'done' } };
       // Steps may have been under way for a while; only a plan still waiting changes state.
-      if (s.status !== 'planning') return s;
-      return { ...s, status: s.steps.length || s.parts.length ? 'active' : 'idle' };
+      if (s.status !== 'planning') return done;
+      return { ...done, status: s.steps.length || s.parts.length ? 'active' : 'idle' };
+    }
     case 'go': {
       if (!s.steps.length) return s;
       const index = Math.max(0, Math.min(s.steps.length - 1, a.index));
-      return { ...s, index, status: 'active', note: null };
+      return { ...s, index, status: 'active', note: null, pendingNext: false };
     }
     case 'next':
       if (!s.steps.length) return s;
-      if (s.index >= s.steps.length - 1) return { ...s, status: 'finished', note: { text: 'That was the last step.', tone: 'done' } };
+      if (s.index >= s.steps.length - 1) {
+        // More are on the way: wait for the next one rather than ending the job.
+        if (s.streaming) return { ...s, pendingNext: true, note: { text: 'The next step is on its way.', tone: 'info' } };
+        return { ...s, status: 'finished', note: { text: 'That was the last step.', tone: 'done' } };
+      }
       return { ...s, index: s.index + 1, status: 'active', note: null };
     case 'back':
       if (!s.steps.length) return s;
-      return { ...s, index: Math.max(0, s.index - 1), status: 'active', note: null };
+      return { ...s, index: Math.max(0, s.index - 1), status: 'active', note: null, pendingNext: false };
     case 'checking':
       return s.status === 'active' ? { ...s, status: 'checking' } : s;
     case 'checked':

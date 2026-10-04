@@ -256,10 +256,14 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
 
   // Moving on means nothing until there's a plan, and must not cancel the one being made.
   const next = useCallback(() => {
-    if (latest.current.status === 'idle' || latest.current.status === 'planning') return;
+    const s = latest.current;
+    if (s.status === 'idle' || s.status === 'planning') return;
     cancelWork();
+    // On the last step to have arrived while the plan streams in: it waits for the next.
+    // Said aloud too, since hands free nobody is looking at the panel.
+    if (s.streaming && s.index >= s.steps.length - 1) speak('The next step is on its way.');
     dispatch({ type: 'next' });
-  }, [cancelWork]);
+  }, [cancelWork, speak]);
   const back = useCallback(() => {
     if (latest.current.status === 'idle' || latest.current.status === 'planning') return;
     cancelWork();

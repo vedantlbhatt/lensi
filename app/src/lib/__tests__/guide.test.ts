@@ -174,3 +174,45 @@ test('a plan streams in: the first step is up at once and moving on survives the
   assert.equal(s.index, 1);
   assert.equal(s.steps.length, 3);
 });
+
+test('moving on from the last step to have arrived waits for the next one while the plan streams in', () => {
+  let s = guideReducer(initialGuide, { type: 'plan', task: 'Check the tyre pressure' });
+  s = guideReducer(s, { type: 'step', text: 'Open the driver door and read the sticker.' });
+  assert.equal(s.streaming, true);
+  // "Next" (or Done, or a check that passed) on step 1 before step 2 has arrived.
+  s = guideReducer(s, { type: 'next' });
+  assert.equal(s.status, 'active');
+  assert.equal(s.index, 0);
+  assert.equal(s.pendingNext, true);
+  assert.equal(s.note?.text, 'The next step is on its way.');
+  // It arrives: the guide is on it at once.
+  s = guideReducer(s, { type: 'step', text: 'Unscrew the valve cap on the front tyre.' });
+  assert.equal(s.index, 1);
+  assert.equal(s.pendingNext, false);
+  assert.equal(s.note, null);
+  s = guideReducer(s, { type: 'step', text: 'Press the gauge onto the valve.' });
+  assert.equal(s.index, 1);
+  s = guideReducer(s, { type: 'planned' });
+  assert.equal(s.streaming, false);
+  // Now the last step really is the last.
+  s = run([{ type: 'next' }, { type: 'next' }], s);
+  assert.equal(s.status, 'finished');
+});
+
+test('"next" on what turns out to be the last step finishes the job once the plan is in', () => {
+  let s = run([
+    { type: 'plan', task: 'Reset the breaker' },
+    { type: 'step', text: 'Flip the tripped breaker fully off, then on.' },
+    { type: 'next' },
+  ]);
+  assert.equal(s.status, 'active');
+  s = guideReducer(s, { type: 'planned' });
+  assert.equal(s.status, 'finished');
+  assert.equal(s.note?.text, 'That was the last step.');
+  // Going back cancels a pending "next".
+  let t = run([{ type: 'plan', task: 'x' }, { type: 'step', text: 'One.' }, { type: 'step', text: 'Two.' }, { type: 'next' }, { type: 'next' }, { type: 'back' }]);
+  assert.equal(t.pendingNext, false);
+  t = guideReducer(t, { type: 'step', text: 'Three.' });
+  assert.equal(t.index, 0);
+});
+

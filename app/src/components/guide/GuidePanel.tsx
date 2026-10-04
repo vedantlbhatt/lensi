@@ -64,6 +64,8 @@ export function GuidePanel({
   };
   const idle = state.status === 'idle';
   const working = state.status === 'planning';
+  // The last step there is, not just the last to have arrived while the plan streams in.
+  const lastStep = state.index >= state.steps.length - 1 && !state.streaming;
   const finished = state.status === 'finished';
   const busy = state.status === 'checking' || state.status === 'answering';
   // Tapped to talk: the panel is all ears. Hands free, the step stays put and what's heard shows under it.
@@ -104,7 +106,14 @@ export function GuidePanel({
         <Animated.View key={`step-${state.index}-${finished}`} entering={FadeIn.duration(120)} style={styles.block}>
           <View style={styles.head}>
             <Text style={styles.kicker} numberOfLines={1}>
-              {finished ? 'All done' : step ? `Step ${state.index + 1} of ${state.steps.length}` : 'What the phone found'}
+              {finished
+                ? 'All done'
+                : step
+                  ? // While the plan is still arriving, the count isn't known yet.
+                    state.streaming
+                    ? `Step ${state.index + 1}`
+                    : `Step ${state.index + 1} of ${state.steps.length}`
+                  : 'What the phone found'}
               {state.title ? ` · ${state.title}` : ''}
             </Text>
             <View style={styles.headButtons}>
@@ -166,8 +175,8 @@ export function GuidePanel({
             </PressScale>
             <PressScale onPress={onNext} accessibilityRole="button" accessibilityLabel="Next step" scaleTo={0.92} haptic="medium" containerStyle={styles.grow}>
               <View style={[styles.pill, styles.primary, { backgroundColor: pen }]}>
-                <Text style={[styles.pillText, { color: ink }]}>{state.index >= state.steps.length - 1 ? 'Done' : 'Next'}</Text>
-                <Icon name={state.index >= state.steps.length - 1 ? 'check' : 'right'} size={17} color={ink} />
+                <Text style={[styles.pillText, { color: ink }]}>{lastStep ? 'Done' : 'Next'}</Text>
+                <Icon name={lastStep ? 'check' : 'right'} size={17} color={ink} />
               </View>
             </PressScale>
           </>
