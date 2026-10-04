@@ -19,6 +19,8 @@ export type ScriptParams = {
   scene?: string;
   /** Web preview: what the fake recogniser hears after the scene's question, lines split by `|` (films hands-free). */
   talk?: string;
+  /** Take over-the-air updates in the Simulator too, and say which one is running (CI proves the path). */
+  ota?: string;
   /** Turn the zoom dial to this zoom and leave it up, e.g. `2.7` (CI films the dial). */
   zoom?: string;
   /** Land a finger on the strip at the first of these (0–1 across it, comma-separated), slide through the rest and hold on the last: it pins that thing (CI films slide-to-pin). */

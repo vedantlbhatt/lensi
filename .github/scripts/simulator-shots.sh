@@ -129,6 +129,10 @@ scenario 10-live-guide 40 "lensi:///?scene=truck&guide=How%20do%20I%20check%20th
 scenario 10c-slide-to-pin 16 "lensi:///?scene=cars&scrub=0.05,0.35,0.6"
 # The zoom dial: turned to 2.7x and left up, so the shot shows the dial itself.
 scenario 10d-zoom-dial 12 "lensi:///?scene=truck&zoom=2.7"
+# Over the air, the whole path: this build fetches the JavaScript ota.yml published for its
+# runtime from GitHub, restarts into it, and says which update it's running (the toast; the
+# device log has AppDelegate's "starting from update").
+scenario 10e-over-the-air 45 "lensi:///?scene=cars&ota=1"
 
 # The same job with steps: the Lensi server in mock mode answers it with a scripted
 # plan (no model, no key), so the real app's panel, tags and outline can be filmed.

@@ -41,7 +41,7 @@ import { getSettings, setSettings, useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
 import type { EngineId } from '../lib/types';
 import { hush } from '../lib/narrate';
-import { applyUpdate, applyWhenAway, checkForUpdate, confirmLaunch, otaEnabled } from '../lib/ota';
+import { applyUpdate, applyWhenAway, checkForUpdate, confirmLaunch, forceOTA, otaEnabled, RUNNING_UPDATE } from '../lib/ota';
 import { useVoice } from '../lib/voice';
 import { springs } from '../theme/motion';
 import { LENSES, lensInfo, type Lens } from '../theme/tokens';
@@ -327,6 +327,14 @@ export default function Camera() {
   const params: ScriptParams = linked.demo || linked.memories || linked.file || linked.guide || linked.scene ? linked : launched;
   useEffect(() => {
     if (params.export) devhooks.autoExport = true;
+    if (params.ota) {
+      forceOTA();
+      // Once restarted into an update, say which (CI's screenshot and log show it).
+      if (RUNNING_UPDATE !== 'dev') {
+        console.log(`[lensi] running update ${RUNNING_UPDATE}`);
+        setTimeout(() => toast(`Running update ${RUNNING_UPDATE.slice(0, 7)}`), 1500);
+      }
+    }
     if (params.tap) devhooks.autoTap = pointOf(params.tap);
     if (params.moment && /^\d+$/.test(params.moment)) devhooks.autoMoment = Number(params.moment);
     if (params.memories) setMemories(true);

@@ -27,11 +27,12 @@ func lensiUpdateBundleURL() -> URL? {
   let bundle = current.appendingPathComponent("main.jsbundle")
   let mark = ota.appendingPathComponent("launching")
   guard fm.fileExists(atPath: bundle.path) else { return nil }
-  var runtime: String?
+  var update: [String: Any] = [:]
   if let data = try? Data(contentsOf: current.appendingPathComponent("update.json")),
-     let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-    runtime = update["runtime"] as? String
+     let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+    update = json
   }
+  let runtime = update["runtime"] as? String
   let mine = Bundle.main.object(forInfoDictionaryKey: "LensiRuntime") as? String
   if fm.fileExists(atPath: mark.path) || mine == nil || runtime != mine {
     // The last launch from it never got going, or it's for other native code: set it aside
@@ -44,6 +45,7 @@ func lensiUpdateBundleURL() -> URL? {
     return nil
   }
   fm.createFile(atPath: mark.path, contents: Data())
+  NSLog("[lensi] over the air: starting from update %@", String(describing: update["id"] ?? "?"))
   return bundle
 }
 `;

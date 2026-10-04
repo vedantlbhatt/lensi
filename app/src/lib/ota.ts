@@ -43,9 +43,15 @@ function readUpdate(d: Directory): Update | null {
   }
 }
 
-/** Over the air only where it can run: a release build on an iPhone. */
+let forced = false;
+/** A scripted run (CI's `ota=1`) takes updates in the Simulator too, to prove the whole path. */
+export function forceOTA() {
+  forced = true;
+}
+
+/** Over the air only where it can run: a release build on an iPhone (or a scripted Simulator run). */
 export function otaEnabled(): boolean {
-  return !__DEV__ && Platform.OS === 'ios' && !isVirtual && !!LensiAR.runtime && LensiAR.runtime !== 'none';
+  return !__DEV__ && Platform.OS === 'ios' && (forced || !isVirtual) && !!LensiAR.runtime && LensiAR.runtime !== 'none';
 }
 
 /** This JavaScript is running: AppDelegate's mark goes, so it isn't set aside next launch. */
