@@ -5,7 +5,9 @@
 #
 #   bash tools/track/ci.sh [run label to render as well as lensi@8]...
 #
-# Writes out/track: <clip>.json (scores, outlines), <clip>[-<label>]{,-compare}.mp4, summary.txt.
+# Writes out/track: <clip>.json (scores, outlines), <clip>[-<label>]{,-compare}.mp4 (the run
+# under SAM at a fixed spot), <clip>-vs-coast-at8-compare.mp4 (the app under the app before
+# LiveFlow) and summary.txt.
 set -o pipefail
 mkdir -p out/track footage
 # DAVIS 2017 (CC BY-NC 4.0): real videos with the moving object drawn by hand in every frame.
@@ -37,6 +39,8 @@ clip() {
   for label in lensi@8 "${LABELS[@]}"; do
     python tools/track/render.py "$1" "out/track/$3.json" out/track "$label" || echo "FAIL $3 $label"
   done
+  # The app now next to the app before LiveFlow.
+  python tools/track/render.py "$1" "out/track/$3.json" out/track lensi@8 coast@8 || echo "FAIL $3 vs coast@8"
 }
 LABELS=("$@")
 for s in $SEQS; do

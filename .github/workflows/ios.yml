@@ -75,7 +75,7 @@ jobs:
           key: davis-2017-480p-tracking-v1
       - name: Live SAM on real footage (tracked, scored against hand-drawn masks)
         if: always()
-        run: bash tools/track/ci.sh flowS@8 flowG@8 flowS@4
+        run: bash tools/track/ci.sh lensi@4
       - name: Push tracking results to ci-track (without waiting for the app build)
         if: always()
         env:

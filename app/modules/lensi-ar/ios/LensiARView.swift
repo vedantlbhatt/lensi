@@ -279,7 +279,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// second): a SAM cut that lands after the flow has moved on is brought along the same way.
     var moves: [(t: CFTimeInterval, by: simd_float3)] = []
     /// What the last display frame drew, and when: what's drawn eases onto where the outline
-    /// is (in about 60 ms) instead of jumping when a cut lands.
+    /// is (in about 30 ms) instead of jumping when a cut lands.
     var drawn: [simd_float3]?
     var drawnAt: CFTimeInterval = 0
 
@@ -630,7 +630,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let v = simd_length(shape.velocity) >= 0.02 ? shape.velocity : .zero
         let carried = last.map { $0 + v * dt }
         if simd_distance(OutlineMath.centre(carried), OutlineMath.centre(target)) < OutlineMath.spread(target) {
-          let k = 1 - exp(-dt / 0.06)
+          let k = 1 - exp(-dt / 0.03)
           let lined = OutlineMath.align(target, to: carried).points
           drawn = zip(carried, lined).map { $0 + ($1 - $0) * k }
         }

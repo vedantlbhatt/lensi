@@ -1,6 +1,6 @@
 """Draws tools/track's outlines on the real frames, the way the phone draws them.
 
-  render.py <frames dir> <name>.json <out dir> [run label, default lensi@8]
+  render.py <frames dir> <name>.json <out dir> [run label, default lensi@8] [before label, default fixed]
 
 Writes <name>.mp4 (the phone's outline, SAM 8 times a second, on every frame) and
 <name>-compare.mp4 (top: SAM asked at a fixed spot every frame; bottom: the phone's
@@ -75,7 +75,9 @@ def main():
     data = json.load(open(json_path))
     name = data["name"]
     runs = {r["label"]: r for r in data["runs"]}
-    lensi, fixed = runs[now_label], runs["fixed"]
+    # What it's compared with (top): SAM at a fixed spot, unless told otherwise.
+    before_label = sys.argv[5] if len(sys.argv) > 5 else "fixed"
+    lensi, fixed = runs[now_label], runs[before_label]
     unpack = lambda flat: [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
     fps = 24
     first = cv2.imread(os.path.join(frames_dir, data["frameNames"][0]))
@@ -83,8 +85,9 @@ def main():
     # Big enough to read on a phone.
     s = 2 if w < 1000 else 1
     tag = "" if now_label == "lensi@8" else "-" + now_label.replace("@", "-at")
+    vs = "" if before_label == "fixed" else "-vs-" + before_label.replace("@", "-at")
     single = writer(os.path.join(out_dir, f"{name}{tag}.mp4"), w * s, h * s, fps)
-    pair = writer(os.path.join(out_dir, f"{name}{tag}-compare.mp4"), w, h * 2, fps)
+    pair = writer(os.path.join(out_dir, f"{name}{tag}{vs}-compare.mp4"), w, h * 2, fps)
     def j(run, i):
         v = run["jPerFrame"]
         return f"  J {v[i] * 100:.0f}%" if i < len(v) else ""
@@ -97,18 +100,17 @@ def main():
         big = caption(big, [f"Live SAM, tracked: {name}{j(lensi, i) if scores else ''}"], size=13 * s)
         single.write(big)
         left = outline(img.copy(), unpack(fixed["outlines"][i]), OLD, 2)
-        left = caption(left, [f"Before: SAM at a fixed spot{j(fixed, i) if scores else ''}"], size=15)
+        was = {"fixed": "SAM at a fixed spot", "coast@8": "SAM 8/s, coasting between cuts",
+               "coast@4": "SAM 4/s, coasting between cuts"}.get(before_label, before_label)
+        left = caption(left, [f"Before: {was}{j(fixed, i) if scores else ''}"], size=15)
         right = outline(img.copy(), unpack(lensi["outlines"][i]), PEN, 2.5)
-        how = {"vision@8": "SAM 8/s + box tracker", "visionT@8": "SAM 8/s + box tracker (moves only)",
-               "flow@8": "SAM 8/s + point tracking", "flowS@8": "SAM 8/s + point tracking",
-               "flowG@8": "SAM 8/s + point tracking", "flowF@8": "SAM 8/s + point tracking",
-               "flowA@8": "SAM 8/s + point tracking", "lensi@4": "SAM 4/s",
-               "flowS@4": "SAM 4/s + point tracking"}.get(now_label, "SAM 8/s")
+        how = {"lensi@8": "SAM 8/s + point tracking", "flow@8": "SAM 8/s + point tracking, not eased",
+               "lensi@4": "SAM 4/s + point tracking", "lensi": "SAM every frame"}.get(now_label, now_label)
         right = caption(right, [f"Now: {how}{j(lensi, i) if scores else ''}"], size=15)
         pair.write(np.vstack([left, right]))
     single.release()
     pair.release()
-    print(f"{name}: wrote {name}{tag}.mp4 and {name}{tag}-compare.mp4 ({len(data['frameNames'])} frames)")
+    print(f"{name}: wrote {name}{tag}.mp4 and {name}{tag}{vs}-compare.mp4 ({len(data['frameNames'])} frames)")
 
 
 if __name__ == "__main__":

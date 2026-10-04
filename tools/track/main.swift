@@ -4,16 +4,15 @@
 //   fixed      SAM asked at the same spot every frame, where the thing was at the start
 //              (what a prompt pinned in place does when the thing moves)
 //   tracked    SAM asked where the thing should be now (LiveTracker), cuts as they come
-//   lensi      tracked, and steadied (OutlineMath.steady): what the phone draws
-//   lensi@8    the same with SAM on every third frame (8 a second at 24 fps, about what a
-//              phone manages); in between, the outline is carried along by its own motion
-//   visionT@8  the same, moved between SAM's frames by Vision's box tracker instead
-//   flow@8     the same, carried between SAM's frames by its own pixels (LiveFlow: points
-//              inside it followed frame to frame, their median motion); flowS@8 also turns
-//              and scales with them, and flowG@8 also eases what's shown onto each new cut
-//              (half the way each frame: 60 ms); flowF@8 three quarters (30 ms); flowA@8
-//              half, and more the further off it is
-//   lensi@4, flowS@4: SAM on every sixth frame (a hot phone, a guide part waiting its turn)
+//   lensi      tracked and steadied (OutlineMath.steady), SAM on every frame
+//   coast@8    the same with SAM on every third frame (8 a second at 24 fps, about what a
+//              phone manages); in between, the outline coasts at its last cut's speed
+//              (what the app did before LiveFlow)
+//   flow@8     in between, carried on its own pixels instead (LiveFlow: points inside it
+//              followed frame to frame, their median motion, turn and scale)
+//   lensi@8    flow@8, and what's shown eased onto each new cut (three quarters of the way
+//              a frame, 30 ms) instead of jumping: what the phone draws
+//   coast@4, lensi@4: SAM on every sixth frame (a hot phone, a guide part waiting its turn)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
 // wobble (how much the outline's shape changes from one frame to the next) and jerk (how much
@@ -422,15 +421,11 @@ let runners = [
   Runner("fixed", tracking: false, smoothing: nil, every: 1),
   Runner("tracked", tracking: true, smoothing: nil, every: 1),
   Runner("lensi", tracking: true, smoothing: .standard, every: 1, adaptive: true),
-  Runner("lensi@8", tracking: true, smoothing: .standard, every: 3, adaptive: true),
-  Runner("visionT@8", tracking: true, smoothing: .standard, every: 3, follow: true, adaptive: true, moveOnly: true),
-  Runner("flow@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow),
-  Runner("flowS@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true),
-  Runner("flowG@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.5),
-  Runner("flowF@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75),
-  Runner("flowA@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.5, adaptiveGlide: true),
-  Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true),
-  Runner("flowS@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true),
+  Runner("coast@8", tracking: true, smoothing: .standard, every: 3, adaptive: true),
+  Runner("flow@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true),
+  Runner("lensi@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75),
+  Runner("coast@4", tracking: true, smoothing: .standard, every: 6, adaptive: true),
+  Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true, glide: 0.75),
 ]
 var truthWobble: [Double] = []
 var truthCentres: [CGPoint?] = []
