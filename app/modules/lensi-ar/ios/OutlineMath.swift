@@ -64,15 +64,28 @@ enum OutlineMath {
     return (sum / Float(points.count)).squareRoot()
   }
 
-  /// The outline to show next: `new` blended into `old` when it's the same shape (a little
-  /// moved, a little different at the edges), `new` alone when it isn't.
+  static func centre(_ points: [simd_float3]) -> simd_float3 {
+    points.isEmpty ? .zero : points.reduce(simd_float3.zero, +) / Float(points.count)
+  }
+
+  /// The outline to show next. Where it is and what shape it is are settled separately, so a
+  /// thing that moves is followed without lag while its edge noise is damped:
+  /// - Position follows the new cut: most of the way when it has clearly moved, half way
+  ///   when it's only jitter. A jump of more than its own size is something else: replaced.
+  /// - Shape (both outlines centred on their middles and lined up) is blended: mostly the
+  ///   old one when they barely differ (that's the shimmer), mostly the new one when they
+  ///   clearly do, the new one outright when it's a different shape.
   static func smooth(_ old: [simd_float3]?, _ new: [simd_float3]) -> [simd_float3] {
     guard let old, old.count == new.count, !new.isEmpty else { return new }
-    let (aligned, gap) = align(new, to: old)
-    let relative = gap / max(spread(old), 1e-4)
-    guard relative < 0.45 else { return aligned }
-    // Barely different: mostly keep what's there (that's the shimmer). Clearly moved: follow.
-    let t: Float = relative < 0.1 ? 0.35 : relative < 0.25 ? 0.6 : 0.85
-    return zip(old, aligned).map { $0 + ($1 - $0) * t }
+    let size = max(spread(old), 1e-6)
+    let co = centre(old), cn = centre(new)
+    let jump = simd_distance(co, cn) / size
+    guard jump < 1 else { return new }
+    let (shape, gap) = align(new.map { $0 - cn }, to: old.map { $0 - co })
+    let relative = gap / size
+    let t: Float = relative < 0.1 ? 0.35 : relative < 0.25 ? 0.6 : relative < 0.45 ? 0.85 : 1
+    let follow: Float = jump > 0.15 ? 0.9 : 0.5
+    let middle = co + (cn - co) * follow
+    return zip(old, shape).map { o, n in middle + (o - co) + (n - (o - co)) * t }
   }
 }

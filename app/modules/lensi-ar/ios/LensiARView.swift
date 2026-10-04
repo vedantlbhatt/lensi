@@ -236,24 +236,45 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let point: CGPoint?
     let box: CGRect?
     let part: Bool
-    /// Where in the world the part is (its tag, or the depth found under the prompt).
+    /// Where in the world the thing is (its tag, its outline's middle, or the depth found
+    /// under the prompt): the cut is laid on a plane through it.
     let anchor: simd_float3
+    /// Where the thing should be in this frame (its outline carried along, seen from here):
+    /// a cut that doesn't fit it is something else and is refused. Nil for a first look.
+    let predicted: [CGPoint]?
+    /// The shape follows its thing from frame to frame (a guide part, a tapped thing);
+    /// the reticle's is just whatever is in the middle.
+    let follows: Bool
   }
 
   private struct LiveShape {
     let layer: OutlineLayer
-    /// OutlineMath.count points, in the world.
+    /// OutlineMath.count points, in the world, as of `seen`.
     var world: [simd_float3]
+    /// When the frame they were cut from was captured (the same clock as CACurrentMediaTime).
     var seen: CFTimeInterval
     /// Asked for since it was last found, and not found.
     var misses = 0
+    /// How the thing itself moves (metres a second, steadied): between SAM's frames it's drawn
+    /// carried along, and SAM is asked where it should be next.
+    var velocity = simd_float3.zero
+    /// A guide tag rides with its part: where it sits from the outline's middle.
+    var tagOffset: simd_float3?
+    let follows: Bool
+
+    /// Where it is at `t`: its outline carried along by its own motion (at most 0.3 s ahead).
+    func placed(at t: CFTimeInterval) -> [simd_float3] {
+      guard simd_length(velocity) >= 0.02 else { return world }
+      let dt = Float(min(max(t - seen, 0), 0.3))
+      return dt == 0 ? world : world.map { $0 + velocity * dt }
+    }
   }
 
   private func segmentLive(_ frame: ARFrame) {
     // Not while a photo is being analysed: a plan or an answer is waiting on that.
     guard liveSegments, !samBusy, bounds.width > 0, let sam, !Analyzer.analyzing else { return }
     // As often as the phone keeps up; less often once it runs hot, or while it's propped up
-    // and still (then only hands move in the picture, and 4 times a second follows them).
+    // and still with nothing moving in front of it (then 4 times a second is plenty).
     var gap: TimeInterval
     switch ProcessInfo.processInfo.thermalState {
     case .critical: gap = 0.6
@@ -261,7 +282,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     default: gap = 0.08
     }
     let pose = frame.camera.transform
-    if gap < 0.25, let last = lastSamPose {
+    let moving = liveShapes.values.contains { simd_length($0.velocity) >= 0.02 }
+    if gap < 0.25, !moving, let last = lastSamPose {
       let moved = simd_distance(simd_make_float3(pose.columns.3), simd_make_float3(last.columns.3))
       let facing = simd_dot(simd_normalize(simd_make_float3(pose.columns.2)), simd_normalize(simd_make_float3(last.columns.2)))
       if moved < 0.01, facing > 0.99985 { gap = 0.25 }
@@ -271,14 +293,30 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let upright = CGSize(width: res.height, height: res.width)
     let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
     var prompts: [LivePrompt] = []
+    // Depth under a prompt: a raycast, or the tracked points near its ray.
+    func depth(at p: CGPoint) -> simd_float3 {
+      GuideFrameContext(selection: Selection(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
+        .anchor(at: p, session: sceneView.session)
+    }
+    // A shape that follows its thing: SAM is asked where it should be in this frame (its
+    // outline carried along by its own motion, seen from where the phone is now).
+    func follow(_ key: String) -> LivePrompt? {
+      guard let shape = liveShapes[key], shape.follows, shape.misses < 2 else { return nil }
+      let now = shape.placed(at: frame.timestamp)
+      guard let predicted = uprightPoints(now, camera: frame.camera, upright: upright),
+            predicted.contains(where: { unit.contains($0) }),
+            let p = LiveTracker.prompt(for: predicted, scale: upright) else { return nil }
+      return LivePrompt(key: key, point: p.point, box: p.box, part: false, anchor: OutlineMath.centre(now), predicted: predicted, follows: true)
+    }
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
       let toCamera = frame.camera.transform.inverse
-      // Tags whose part is on screen, in front of the phone.
+      // Tags whose part is on screen, in front of the phone (a tag rides with a moving part).
       let inView: [(pin: Pin, at: CGPoint)] = guidePins.compactMap { (pin: Pin) -> (pin: Pin, at: CGPoint)? in
+        let w = tagWorld(pin, at: frame.timestamp)
         guard !pin.label.isHidden, pin.label.pointing == nil,
-              simd_mul(toCamera, simd_float4(pin.world, 1)).z < -0.05 else { return nil }
-        let q = frame.camera.projectPoint(pin.world, orientation: .portrait, viewportSize: upright)
+              simd_mul(toCamera, simd_float4(w, 1)).z < -0.05 else { return nil }
+        let q = frame.camera.projectPoint(w, orientation: .portrait, viewportSize: upright)
         let p = CGPoint(x: q.x / upright.width, y: q.y / upright.height)
         return p.x > 0.01 && p.x < 0.99 && p.y > 0.01 && p.y < 0.99 ? (pin, p) : nil
       }
@@ -290,17 +328,19 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       for i in 0..<min(extra, others.count) { chosen.append(others[(samTurn + i) % others.count]) }
       samTurn += extra
       for (pin, at) in chosen {
-        // The plan's own outline of the part, seen from here, keeps SAM on the same part.
+        if let p = follow(pin.id) {
+          prompts.append(p)
+          continue
+        }
+        // A first look: the plan's own outline of the part, seen from here, keeps SAM on the same part.
         let box = uprightBox(pin.guideOutline, camera: frame.camera, upright: upright)
-        prompts.append(LivePrompt(key: pin.id, point: at, box: box, part: box == nil, anchor: pin.world))
+        prompts.append(LivePrompt(key: pin.id, point: at, box: box, part: box == nil, anchor: pin.world, predicted: nil, follows: true))
       }
+    } else if let p = follow(Self.centreKey) {
+      // The tapped thing, wherever it has gone.
+      prompts.append(p)
     } else {
-      // Depth under a prompt: a raycast, or the tracked points near its ray.
-      func depth(at p: CGPoint) -> simd_float3 {
-        GuideFrameContext(selection: Selection(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
-          .anchor(at: p, session: sceneView.session)
-      }
-      // A tapped thing, where it is in this frame (in front of the phone, in the picture).
+      // A tapped thing's last known place, in this frame (in front of the phone, in the picture).
       var tapped: CGPoint?
       if let target = tapTarget {
         if simd_mul(frame.camera.transform.inverse, simd_float4(target, 1)).z < -0.05 {
@@ -311,18 +351,18 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         if tapped == nil { tapTarget = nil }
       }
       if let tapped, let target = tapTarget {
-        prompts.append(LivePrompt(key: Self.centreKey, point: tapped, box: nil, part: true, anchor: target))
+        prompts.append(LivePrompt(key: Self.centreKey, point: tapped, box: nil, part: true, anchor: target, predicted: nil, follows: true))
       } else if let t = tracked.first(where: { $0.id == focusedId }) {
         let box = viewRectToUpright(t.shown, frame: frame).intersection(unit)
         if !box.isNull, box.width > 0.01, box.height > 0.01 {
           let middle = CGPoint(x: box.midX, y: box.midY)
-          prompts.append(LivePrompt(key: Self.centreKey, point: nil, box: box, part: false, anchor: depth(at: middle)))
+          prompts.append(LivePrompt(key: Self.centreKey, point: nil, box: box, part: false, anchor: depth(at: middle), predicted: nil, follows: false))
         }
       } else {
         let middle = viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame)
         if unit.contains(middle) {
           // Part-sized, like a tap: pointed at an engine, the part in the middle, not the whole bay.
-          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: true, anchor: depth(at: middle)))
+          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: true, anchor: depth(at: middle), predicted: nil, follows: false))
         }
       }
     }
@@ -331,11 +371,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     lastSamTime = frame.timestamp
     lastSamPose = pose
     let buffer = frame.capturedImage
+    let captured = frame.timestamp
     let camera = Selection(frame: frame, crop: unit)
     samQueue.async { [weak self] in
       let started = CACurrentMediaTime()
       var encodeMs: Double = 0
       var found: [String: [simd_float3]] = [:]
+      var refused = 0
       var failure: String?
       do {
         try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "live")
@@ -343,10 +385,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         for p in prompts {
           let mask = try sam.segment(
             id: "live", points: p.point.map { [$0] } ?? [], labels: p.point == nil ? [] : [1], box: p.box, preferPart: p.part)
-          guard mask.score >= 0.6, mask.polygon.count > 2 else { continue }
-          // Evenly spaced (in pixels), then onto the part's plane in the world.
-          let plane = camera.withPlane(through: p.anchor)
+          guard mask.score >= (p.predicted == nil ? 0.6 : 0.5), mask.polygon.count > 2 else { continue }
+          // Evenly spaced (in pixels).
           let ring = OutlineMath.resample(mask.polygon, scale: upright)
+          // Following a thing: a cut that doesn't fit where it should be is something else.
+          if let predicted = p.predicted, !LiveTracker.accepts(ring, predicted: predicted) {
+            refused += 1
+            continue
+          }
+          // Onto the thing's plane in the world.
+          let plane = camera.withPlane(through: p.anchor)
           let world = ring.compactMap { plane.onPlane($0) }
           if world.count == ring.count { found[p.key] = world }
         }
@@ -354,7 +402,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         failure = error.localizedDescription
       }
       let ms = (CACurrentMediaTime() - started) * 1000
-      let results = found, encoded = encodeMs, failed = failure
+      let results = found, encoded = encodeMs, failed = failure, refusals = refused
       DispatchQueue.main.async {
         guard let self else { return }
         self.samBusy = false
@@ -367,62 +415,96 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           if let failed {
             NSLog("[lensi] live SAM failed: %@", failed)
           } else {
-            NSLog("[lensi] live SAM %.0f ms a frame (encoder %.0f ms), %ld of %ld prompts found, thermal %ld",
-                  self.samMs, self.samEncodeMs, results.count, prompts.count, ProcessInfo.processInfo.thermalState.rawValue)
+            let fastest = self.liveShapes.values.map { simd_length($0.velocity) }.max() ?? 0
+            NSLog("[lensi] live SAM %.0f ms a frame (encoder %.0f ms), %ld of %ld prompts found, %ld refused, fastest thing %.2f m/s, thermal %ld",
+                  self.samMs, self.samEncodeMs, results.count, prompts.count, refusals, fastest, ProcessInfo.processInfo.thermalState.rawValue)
           }
         }
         guard self.liveSegments else { return }
-        self.takeLive(results, asked: prompts.map(\.key), now: now)
+        self.takeLive(results, asked: prompts, at: captured)
       }
     }
   }
 
-  /// The box around `world` (a part's outline) as this camera sees it, a little grown,
-  /// upright 0…1; nil when it's behind the phone, a speck, or most of the picture.
-  private func uprightBox(_ world: [simd_float3], camera: ARCamera, upright: CGSize) -> CGRect? {
-    guard world.count >= 3 else { return nil }
+  /// World points as this camera sees them (upright 0…1); nil when any is behind the phone.
+  private func uprightPoints(_ world: [simd_float3], camera: ARCamera, upright: CGSize) -> [CGPoint]? {
+    guard !world.isEmpty else { return nil }
     let toCamera = camera.transform.inverse
     var points: [CGPoint] = []
+    points.reserveCapacity(world.count)
     for w in world {
       guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else { return nil }
       let q = camera.projectPoint(w, orientation: .portrait, viewportSize: upright)
       points.append(CGPoint(x: q.x / upright.width, y: q.y / upright.height))
     }
+    return points
+  }
+
+  /// The box around `world` (a part's outline) as this camera sees it, a little grown,
+  /// upright 0…1; nil when it's behind the phone, a speck, or most of the picture.
+  private func uprightBox(_ world: [simd_float3], camera: ARCamera, upright: CGSize) -> CGRect? {
+    guard world.count >= 3, let points = uprightPoints(world, camera: camera, upright: upright) else { return nil }
     let r = bounding(points)
     let grown = r.insetBy(dx: -r.width * 0.1, dy: -r.height * 0.1).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
     guard !grown.isNull, grown.width > 0.02, grown.height > 0.02, grown.area < 0.6 else { return nil }
     return grown
   }
 
-  /// SAM's answers for one frame: found shapes are blended into what's shown; asked-for
-  /// ones it didn't find count a miss (two in a row and they go).
-  private func takeLive(_ found: [String: [simd_float3]], asked: [String], now: CFTimeInterval) {
-    for key in asked {
+  /// Where a guide tag is now: on its part, wherever the part has gone.
+  private func tagWorld(_ pin: Pin, at t: CFTimeInterval = CACurrentMediaTime()) -> simd_float3 {
+    guard let shape = liveShapes[pin.id], let offset = shape.tagOffset else { return pin.world }
+    return OutlineMath.centre(shape.placed(at: t)) + offset
+  }
+
+  /// SAM's answers for one frame (captured at `t`): found shapes are blended into what's
+  /// shown and their motion measured; asked-for ones it didn't find, or whose cut didn't fit,
+  /// count a miss (two in a row and they go).
+  private func takeLive(_ found: [String: [simd_float3]], asked: [LivePrompt], at t: CFTimeInterval) {
+    for prompt in asked {
+      let key = prompt.key
       if let world = found[key] {
-        if var shape = liveShapes[key] {
-          // Blended into what's showing (a part that takes turns is re-cut about once a second).
-          shape.world = OutlineMath.smooth(now - shape.seen < 2 ? shape.world : nil, world)
-          shape.seen = now
+        if var shape = liveShapes[key], t - shape.seen < 2 {
+          // Blended into where it should be by now: a moving thing is followed, its edge settles.
+          let next = OutlineMath.smooth(shape.placed(at: t), world)
+          let dt = Float(t - shape.seen)
+          if dt > 0.01 {
+            let v = (OutlineMath.centre(next) - OutlineMath.centre(shape.world)) / dt
+            shape.velocity = shape.velocity * 0.4 + v * 0.6
+          }
+          shape.world = next
+          shape.seen = t
           shape.misses = 0
           liveShapes[key] = shape
         } else {
+          // New, or not seen for a while: start over.
+          liveShapes[key]?.layer.removeFromSuperlayer()
           let layer = OutlineLayer()
           layer.isHidden = true
           // Under the tags.
           pinLayer.layer.insertSublayer(layer, at: 0)
-          liveShapes[key] = LiveShape(layer: layer, world: world, seen: now)
+          var shape = LiveShape(layer: layer, world: world, seen: t, follows: prompt.follows)
+          if let pin = pins[key] {
+            let offset = pin.world - OutlineMath.centre(world)
+            shape.tagOffset = simd_length(offset) < 0.5 ? offset : .zero
+          }
+          liveShapes[key] = shape
         }
-      } else {
-        liveShapes[key]?.misses += 1
+        // A tapped thing is wherever its outline is now (so a lost one is looked for there).
+        if key == Self.centreKey, prompt.follows, let shape = liveShapes[key] { tapTarget = OutlineMath.centre(shape.world) }
+      } else if var shape = liveShapes[key] {
+        shape.misses += 1
+        shape.velocity *= 0.5
+        liveShapes[key] = shape
       }
     }
     layoutLive()
   }
 
-  /// Every display frame: each live outline drawn where its part is now. The current step's
-  /// in the lens colour, the rest thin and white. It goes (fading) once SAM has missed it
-  /// twice in a row or its tag goes; one that's simply not been asked about lately (out of
-  /// view, or waiting its turn) stays where it is in the world for up to `liveStale`.
+  /// Every display frame: each live outline drawn where its thing is now (carried along by
+  /// its own motion between SAM's frames; the phone's is ARKit's). The current step's in the
+  /// lens colour, the rest thin and white. It goes (fading) once SAM has missed it twice in
+  /// a row or its tag goes; one that's simply not been asked about lately (out of view, or
+  /// waiting its turn) stays where it is in the world for up to `liveStale`.
   private func layoutLive() {
     guard !liveShapes.isEmpty else { return }
     let now = CACurrentMediaTime()
@@ -446,7 +528,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
       let path = UIBezierPath()
       var behind = false
-      for (i, w) in shape.world.enumerated() {
+      for (i, w) in shape.placed(at: now).enumerated() {
         guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else {
           behind = true
           break
@@ -731,7 +813,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let visible = bounds.inset(by: pinInsets)
     for id in pinOrder {
       guard let pin = pins[id] else { continue }
-      let projected = project(pin.world)
+      // A guide tag rides with its part when the part moves (its live outline says where).
+      let anchor = pin.parentId == Self.guideParent ? tagWorld(pin) : pin.world
+      let projected = project(anchor)
       if pin.parentId == Self.guideParent {
         // A little hysteresis, so a part right on the edge doesn't flicker between the two.
         let slack = pin.label.pointing == nil ? CGSize(width: -pin.label.bounds.width / 4, height: -6) : CGSize(width: 10, height: 10)
@@ -774,7 +858,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// is mirrored in front first, so its side still says which way to turn.
   private func placeOnEdge(_ pin: Pin, in area: CGRect) -> Bool {
     guard let camera = sceneView.session.currentFrame?.camera else { return false }
-    var local = simd_mul(camera.transform.inverse, simd_float4(pin.world, 1))
+    var local = simd_mul(camera.transform.inverse, simd_float4(tagWorld(pin), 1))
     local.z = -max(abs(local.z), 0.05)
     let ahead = simd_mul(camera.transform, local)
     let projected = sceneView.projectPoint(SCNVector3(ahead.x, ahead.y, ahead.z))

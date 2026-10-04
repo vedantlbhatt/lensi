@@ -169,3 +169,34 @@ func checkOutlineMath() -> Bool {
   for f in failures { print("FAIL outline math: \(f)") }
   return false
 }
+
+/// LiveTracker on shapes with known answers.
+func checkTracker() -> Bool {
+  var failures: [String] = []
+  func expect(_ condition: Bool, _ what: String) { if !condition { failures.append(what) } }
+  let square = [CGPoint(x: 0.4, y: 0.4), CGPoint(x: 0.6, y: 0.4), CGPoint(x: 0.6, y: 0.6), CGPoint(x: 0.4, y: 0.6)]
+  let c = LiveTracker.interiorPoint(square)
+  expect(abs(c.x - 0.5) < 0.02 && abs(c.y - 0.5) < 0.02, "interior point of a square: \(c)")
+  // A U: its box's middle is outside it; the interior point must not be.
+  let u = [CGPoint(x: 0.2, y: 0.2), CGPoint(x: 0.3, y: 0.2), CGPoint(x: 0.3, y: 0.7), CGPoint(x: 0.7, y: 0.7),
+           CGPoint(x: 0.7, y: 0.2), CGPoint(x: 0.8, y: 0.2), CGPoint(x: 0.8, y: 0.8), CGPoint(x: 0.2, y: 0.8)]
+  let ui = LiveTracker.interiorPoint(u)
+  expect(LiveTracker.contains(u, ui), "interior point of a U is inside it: \(ui)")
+  expect(!LiveTracker.contains(u, CGPoint(x: 0.5, y: 0.5)), "the U's box middle is outside it")
+  let moved = square.map { CGPoint(x: $0.x + 0.03, y: $0.y) }
+  expect(LiveTracker.accepts(moved, predicted: square), "the same thing a little moved is accepted")
+  let balloon = square.map { CGPoint(x: 0.5 + ($0.x - 0.5) * 3, y: 0.5 + ($0.y - 0.5) * 3) }
+  expect(!LiveTracker.accepts(balloon, predicted: square), "a cut 9 times the size is refused")
+  let elsewhere = square.map { CGPoint(x: $0.x + 0.3, y: $0.y) }
+  expect(!LiveTracker.accepts(elsewhere, predicted: square), "a cut somewhere else is refused")
+  let p = LiveTracker.prompt(for: square, scale: CGSize(width: 1, height: 1))
+  expect(p.map { $0.box.contains(CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)) && $0.box.width > 0.2 } ?? false, "the box prompt holds the outline, grown")
+  expect(abs(LiveTracker.iou(square, square) - 1) < 0.001, "IoU of a shape with itself")
+  if failures.isEmpty {
+    print("tracker: ok")
+    return true
+  }
+  for f in failures { print("FAIL tracker: \(f)") }
+  return false
+}
+

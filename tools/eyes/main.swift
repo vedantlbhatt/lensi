@@ -130,4 +130,5 @@ try data.write(to: outDir.appendingPathComponent("summary.json"))
 // The live camera's path into SAM, and the math that keeps live outlines steady (live.swift).
 let liveOK = checkLivePath(images)
 let mathOK = checkOutlineMath()
-if !liveOK || !mathOK { exit(1) }
+let trackerOK = checkTracker()
+if !liveOK || !mathOK || !trackerOK { exit(1) }
