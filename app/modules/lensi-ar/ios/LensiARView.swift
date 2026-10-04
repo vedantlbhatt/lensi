@@ -315,7 +315,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       } else {
         let middle = viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame)
         if unit.contains(middle) {
-          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: false, anchor: depth(at: middle)))
+          // Part-sized, like a tap: pointed at an engine, the part in the middle, not the whole bay.
+          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: true, anchor: depth(at: middle)))
         }
       }
     }
