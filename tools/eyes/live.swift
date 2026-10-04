@@ -132,9 +132,14 @@ func checkOutlineMath() -> Bool {
     CGPoint(x: 1, y: 1), CGPoint(x: 0.5, y: 1), CGPoint(x: 0, y: 1), CGPoint(x: 0, y: 0.5),
   ]
   expect(even.count == 8 && zip(even, want).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 1e-6 }, "resample square: \(even)")
-  // Measured in pixels: on a 2:1 image a unit square's sides aren't equal.
+  // Measured in pixels: on a 2:1 image the square's top and bottom are twice as long as its
+  // sides (perimeter 6), so 6 points put two steps along each long side and one down each short.
   let wide = OutlineMath.resample(square, count: 6, scale: CGSize(width: 2, height: 1))
-  expect(abs(wide[1].x - 1) < 1e-6 && abs(wide[1].y) < 1e-6, "resample in pixels: \(wide)")
+  let wideWant: [CGPoint] = [
+    CGPoint(x: 0, y: 0), CGPoint(x: 0.5, y: 0), CGPoint(x: 1, y: 0),
+    CGPoint(x: 1, y: 1), CGPoint(x: 0.5, y: 1), CGPoint(x: 0, y: 1),
+  ]
+  expect(wide.count == 6 && zip(wide, wideWant).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 1e-6 }, "resample in pixels: \(wide)")
 
   // A circle, started 17 points later, lines back up with no gap.
   let circle: [simd_float3] = (0..<64).map {
