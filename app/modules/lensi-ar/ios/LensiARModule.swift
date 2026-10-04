@@ -19,7 +19,8 @@ public class LensiARModule: Module {
 
     Events("onIntelligence", "onSpeech")
 
-    Constant("isSupported") { ARWorldTrackingConfiguration.isSupported }
+    // A video source (LENSI_VIDEO) stands in for the camera, e.g. in the Simulator.
+    Constant("isSupported") { ARWorldTrackingConfiguration.isSupported || LensiARView.videoURL != nil }
 
     // A scripted run (CI) can hand the app a lensi:// URL through the launch
     // environment (`SIMCTL_CHILD_LENSI_URL=…`), which skips the system's
@@ -108,7 +109,7 @@ public class LensiARModule: Module {
     // MARK: The camera
 
     View(LensiARView.self) {
-      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap", "onGuideChange", "onZoomRange")
+      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap", "onGuideChange", "onZoomRange", "onLockChange")
 
       Prop("showDetections") { (view: LensiARView, value: Bool) in
         view.showDetections = value
@@ -213,6 +214,18 @@ public class LensiARModule: Module {
 
       AsyncFunction("guideClear") { (view: LensiARView) in
         view.guideClear()
+      }.runOnQueue(.main)
+
+      /// Follow one thing: a tap (x, y), a dragged box (x, y, w, h) in view points, or with
+      /// x < 0 whatever is under the reticle.
+      AsyncFunction("lockTarget") { (view: LensiARView, x: Double, y: Double, w: Double, h: Double) in
+        let point: CGPoint? = x < 0 ? nil : CGPoint(x: x, y: y)
+        let rect: CGRect? = x < 0 || w <= 0 || h <= 0 ? nil : CGRect(x: x, y: y, width: w, height: h)
+        view.lockTarget(point: rect == nil ? point : nil, rect: rect)
+      }.runOnQueue(.main)
+
+      AsyncFunction("unlockTarget") { (view: LensiARView) in
+        view.unlockTarget()
       }.runOnQueue(.main)
 
       AsyncFunction("setZoom") { (view: LensiARView, zoom: Double) in

@@ -204,8 +204,12 @@ final class SAMSegmenter: @unchecked Sendable {
   /// `prior`: the outline this prompt is following (normalized, a live track's shape in this
   /// frame). Then the candidate that overlaps it most wins, so a tracked outline doesn't flip
   /// between "the handle" and "the whole mug" from one frame to the next.
+  ///
+  /// `level`: for a single tap, which reading of it: 0 the whole thing, 1 the part, 2 the
+  /// detail (SAM's three candidates by size, among the confident ones). Tapping again on a
+  /// followed thing steps down a level.
   func segment(id: String, points: [CGPoint], labels: [Int], box: CGRect?, preferPart: Bool = false,
-               prior: [CGPoint]? = nil) throws -> SAMMask {
+               prior: [CGPoint]? = nil, level: Int? = nil) throws -> SAMMask {
     lock.lock()
     defer { lock.unlock() }
     guard let prepared = cache[id] else { throw SAMError.notPrepared(id) }
@@ -217,11 +221,86 @@ final class SAMSegmenter: @unchecked Sendable {
     var k = SAMSegmenter.chooseMask(scores, labels: used.map { $0.1 }, hasBox: box != nil)
     if let prior, prior.count >= 3 {
       k = SAMSegmenter.closestCandidate(masks, scores: scores, prior: prior, prepared: prepared) ?? k
+    } else if let level, box == nil, used.count == 1, used[0].1 == 1 {
+      k = SAMSegmenter.candidate(masks, scores: scores, level: level, prepared: prepared)
     } else if preferPart, box == nil, used.count == 1, used[0].1 == 1,
               let part = SAMSegmenter.partCandidate(masks, scores: scores, prepared: prepared) {
       k = part
     }
     return try outline(masks, candidate: k, score: scores[k], prepared: prepared)
+  }
+
+  /// What the outlined thing looks like to SAM: the encoder's 256-channel features averaged
+  /// over the cells inside `polygon` (normalized to the prepared image), unit length. Free
+  /// (the encoder already ran) and works where Vision's models don't (the Simulator).
+  /// Compare with a dot product: 1 = same look.
+  func appearance(id: String, polygon: [CGPoint]) -> [Float]? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let prepared = cache[id], polygon.count >= 3 else { return nil }
+    let g = 64 // embedding grid; a cell is 16 canvas pixels
+    let gw = min(g, max(1, Int((Double(prepared.resizedWidth) / 16).rounded(.up))))
+    let gh = min(g, max(1, Int((Double(prepared.resizedHeight) / 16).rounded(.up))))
+    var inside = [UInt8](repeating: 0, count: gw * gh)
+    inside.withUnsafeMutableBytes { buf in
+      guard let ctx = CGContext(data: buf.baseAddress, width: gw, height: gh, bitsPerComponent: 8, bytesPerRow: gw,
+                                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
+      ctx.translateBy(x: 0, y: CGFloat(gh))
+      ctx.scaleBy(x: CGFloat(prepared.resizedWidth) / 16, y: -CGFloat(prepared.resizedHeight) / 16)
+      ctx.setFillColor(gray: 1, alpha: 1)
+      ctx.addLines(between: polygon)
+      ctx.closePath()
+      ctx.fillPath()
+    }
+    let cells = (0..<(gw * gh)).filter { inside[$0] > 127 }
+    guard !cells.isEmpty else { return nil }
+    let e = prepared.embeddings
+    var out = [Float](repeating: 0, count: 256)
+    let strides = e.strides.map(\.intValue)
+    if e.dataType == .float32 {
+      e.withUnsafeBufferPointer(ofType: Float.self) { p in
+        for c in 0..<256 {
+          var sum: Float = 0
+          for i in cells { sum += p[c * strides[1] + (i / gw) * strides[2] + (i % gw) * strides[3]] }
+          out[c] = sum / Float(cells.count)
+        }
+      }
+    } else {
+      let all = MLShapedArray<Float>(converting: e).scalars
+      for c in 0..<256 {
+        var sum: Float = 0
+        for i in cells { sum += all[c * g * g + (i / gw) * g + (i % gw)] }
+        out[c] = sum / Float(cells.count)
+      }
+    }
+    let norm = sqrt(out.reduce(0) { $0 + $1 * $1 })
+    guard norm > 0 else { return nil }
+    return out.map { $0 / norm }
+  }
+
+  /// The multimask candidate at `level` when the confident ones (score >= 60% of the best)
+  /// are ordered largest first; distinct sizes only, so each level is a visibly different cut.
+  private static func candidate(_ masks: [Float], scores: [Float], level: Int, prepared: Prepared) -> Int {
+    let n = maskSide
+    let plane = n * n
+    let validW = min(n, max(1, Int((Double(prepared.resizedWidth) / 4).rounded(.up))))
+    let validH = min(n, max(1, Int((Double(prepared.resizedHeight) / 4).rounded(.up))))
+    let top = max(scores[1], scores[2], scores[3])
+    var sized: [(k: Int, area: Int)] = []
+    for k in 1...3 where scores[k] >= top * 0.6 {
+      var on = 0
+      let base = k * plane
+      for y in 0..<validH {
+        let row = base + y * n
+        for x in 0..<validW where masks[row + x] > 0 { on += 1 }
+      }
+      if on > 0 { sized.append((k, on)) }
+    }
+    sized.sort { $0.area > $1.area }
+    var distinct: [(k: Int, area: Int)] = []
+    for c in sized where distinct.last.map({ Double(c.area) < Double($0.area) * 0.8 }) ?? true { distinct.append(c) }
+    guard !distinct.isEmpty else { return 1 }
+    return distinct[min(max(level, 0), distinct.count - 1)].k
   }
 
   /// Of all four candidates, the one with the highest IoU with `prior` (normalized polygon),

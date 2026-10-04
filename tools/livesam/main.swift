@@ -50,6 +50,9 @@ let synthetic = Int(opts["synthetic"] ?? "0")!
 /// camera motion applied to each object's inner point in the still). Tracks are prompted
 /// there and re-seeded there when lost, as LensiARView does.
 let anchored = opts["anchors"] == "1"
+/// Render every Nth frame; "demo" style draws like the app (smoothed, no truth).
+let renderEvery = Int(opts["render-every"] ?? "3")!
+let demoStyle = opts["style"] == "demo"
 let renderDir = opts["render"].map { URL(fileURLWithPath: $0) }
 let seqs: [String] = {
   if let s = opts["seqs"] { return s.split(separator: ",").map(String.init) }
@@ -190,7 +193,7 @@ func render(_ image: CGImage, outlines: [(Int, [CGPoint])], truth: [(Int, [Bool]
   ctx.translateBy(x: 0, y: CGFloat(h))
   ctx.scaleBy(x: 1, y: -1)
   // Truth: faint dots on the mask's edge cells.
-  for (obj, m) in truth {
+  for (obj, m) in demoStyle ? [] : truth {
     let c = colors[(obj - 1) % colors.count]
     ctx.setFillColor(red: c.0, green: c.1, blue: c.2, alpha: 0.9)
     for y in 1..<(gridH - 1) { for x in 1..<(gridW - 1) where m[y * gridW + x] {
@@ -202,7 +205,7 @@ func render(_ image: CGImage, outlines: [(Int, [CGPoint])], truth: [(Int, [Bool]
   }
   for (obj, poly) in outlines where poly.count >= 3 {
     let c = colors[(obj - 1) % colors.count]
-    let pts = poly.map { CGPoint(x: $0.x * CGFloat(w), y: $0.y * CGFloat(h)) }
+    let pts = (demoStyle ? Poly.smoothed(poly) : poly).map { CGPoint(x: $0.x * CGFloat(w), y: $0.y * CGFloat(h)) }
     ctx.addLines(between: pts)
     ctx.closePath()
     ctx.setFillColor(red: c.0, green: c.1, blue: c.2, alpha: 0.18)
@@ -408,7 +411,7 @@ for seq in seqs {
       prevShown[o] = d
       prevTruth[o] = g
     }
-    if let dir = renderDir, f % 3 == 0 {
+    if let dir = renderDir, f % renderEvery == 0 {
       let d = dir.appendingPathComponent("\(seq)-\(mode)")
       try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
       render(image, outlines: drawn, truth: objects.compactMap { o in truth[o].map { (o, $0) } },

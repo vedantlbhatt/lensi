@@ -51,6 +51,7 @@ def main():
     ap.add_argument("--edgesam", required=True)
     ap.add_argument("--weights", default=None)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--decoder-fp16", action="store_true", help="float16 decoder (runs on the Neural Engine)")
     a = ap.parse_args()
     sys.path.insert(0, a.edgesam)
     stub_mm()
@@ -93,7 +94,7 @@ def main():
         convert_to="mlprogram",
         minimum_deployment_target=ct.target.iOS17,
         # float16 shifts the small-mask logits enough to change which candidate wins.
-        compute_precision=ct.precision.FLOAT32,
+        compute_precision=ct.precision.FLOAT16 if a.decoder_fp16 else ct.precision.FLOAT32,
     )
     m.short_description = "EdgeSAM-3x prompt encoder + mask decoder (Lensi drop-in for LensiSAMDecoder)"
     m.save(os.path.join(a.out, "LensiSAMDecoder.mlpackage"))

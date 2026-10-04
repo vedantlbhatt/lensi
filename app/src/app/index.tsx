@@ -22,7 +22,9 @@ import { MemoriesButton, MEMORIES_SIZE } from '../components/camera/MemoriesButt
 import { MicButton } from '../components/camera/MicButton';
 import { Shutter } from '../components/camera/Shutter';
 import { ToolRail } from '../components/camera/ToolRail';
-import { ZoomChips } from '../components/camera/ZoomChips';
+import { RoundButton } from '../components/camera/RoundButton';
+import { ZoomControl } from '../components/camera/ZoomControl';
+import { Icon } from '../components/icons/Icon';
 import { CaptureView, type Rect } from '../components/capture/CaptureView';
 import { MemoriesSheet } from '../components/memories/MemoriesSheet';
 import { SettingsSheet } from '../components/ui/SettingsSheet';
@@ -380,6 +382,32 @@ export default function Camera() {
     [zoomRange],
   );
   const onZoomRange = useCallback((r: { min: number; max: number }) => setZoomRange({ min: r.min, max: r.max }), []);
+
+  // Scripted UI timeline (screen recordings of real footage in the Simulator).
+  const [rulerPeek, setRulerPeek] = useState(0);
+  useEffect(() => {
+    if (!params.steps) return;
+    const timers = params.steps.split('|').map((step) => {
+      const [ms, action, arg] = step.split(':');
+      return setTimeout(() => {
+        const n = (arg ?? '').split(',').map(Number);
+        if (action === 'lens') {
+          const l = LENSES.find((x) => x.key === arg)?.key;
+          if (l) setLens(l);
+        } else if (action === 'lock') {
+          if (n.length >= 2 && n.every(Number.isFinite)) {
+            const box = n.length >= 4 ? { w: n[2] * width, h: n[3] * height } : {};
+            camera.current?.lock({ x: n[0] * width, y: n[1] * height, ...box });
+          } else camera.current?.lock();
+        } else if (action === 'unlock') camera.current?.unlock();
+        else if (action === 'zoom' && Number.isFinite(n[0])) zoomTo(n[0]);
+        else if (action === 'ruler') setRulerPeek(Date.now());
+      }, Number(ms) || 0);
+    });
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.steps]);
+
   const pinch = Gesture.Pinch()
     .runOnJS(true)
     .onBegin(() => {
@@ -402,11 +430,41 @@ export default function Camera() {
         setLens(next.key);
       }
     });
+  // Following one thing: tap it, or hold and drag a box around it; the target button
+  // locks what's under the reticle (and releases). Live pins and the guide keep their taps.
+  const [lockState, setLockState] = useState<{ label: string | null } | null>(null);
+  const [dragBox, setDragBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const canLock = !live;
+  const toggleLock = useCallback(() => {
+    if (lockState) camera.current?.unlock();
+    else camera.current?.lock();
+  }, [lockState]);
   const tapToPin = Gesture.Tap()
     .runOnJS(true)
     .onEnd((e) => {
       setTouched(true);
+      if (canLock) camera.current?.lock({ x: e.x, y: e.y });
     });
+  const dragFrom = useRef({ x: 0, y: 0 });
+  const boxPan = Gesture.Pan()
+    .runOnJS(true)
+    .maxPointers(1)
+    .activateAfterLongPress(280)
+    .enabled(canLock)
+    .onStart((e) => {
+      dragFrom.current = { x: e.x, y: e.y };
+      setDragBox({ x: e.x, y: e.y, w: 0, h: 0 });
+    })
+    .onUpdate((e) => {
+      const a = dragFrom.current;
+      setDragBox({ x: Math.min(a.x, e.x), y: Math.min(a.y, e.y), w: Math.abs(e.x - a.x), h: Math.abs(e.y - a.y) });
+    })
+    .onEnd((e) => {
+      const a = dragFrom.current;
+      const box = { x: Math.min(a.x, e.x), y: Math.min(a.y, e.y), w: Math.abs(e.x - a.x), h: Math.abs(e.y - a.y) };
+      camera.current?.lock(box.w > 12 && box.h > 12 ? box : { x: a.x, y: a.y });
+    })
+    .onFinalize(() => setDragBox(null));
 
   const chrome = useSharedValue(1);
   useEffect(() => {
@@ -421,12 +479,18 @@ export default function Camera() {
   const bottomStyle = useAnimatedStyle(() => ({ transform: [{ translateY: lift.value * 8 }] }));
 
   const hint = tracking?.state === 'limited' ? TRACKING_HINTS[tracking.reason] : null;
-  const focusText = isVirtual ? (scene?.caption ?? null) : live ? (focus ? `tap to pin · ${focus}` : 'tap anything to pin it') : focus;
+  const focusText = lockState
+    ? lockState.label
+    : isVirtual
+      ? (scene?.caption ?? null)
+      : live
+        ? (focus ? `tap to pin · ${focus}` : 'tap anything to pin it')
+        : focus;
   const latest = captures[0];
 
   return (
     <View style={styles.root}>
-      <GestureDetector gesture={Gesture.Simultaneous(swipe, tapToPin, pinch)}>
+      <GestureDetector gesture={Gesture.Simultaneous(Gesture.Exclusive(boxPan, swipe), tapToPin, pinch)}>
         <View style={StyleSheet.absoluteFill} collapsable={false}>
           <CameraSurface
             key={camKey}
@@ -446,12 +510,23 @@ export default function Camera() {
             onScene={onScene}
             onGuideChange={guide.onChange}
             onZoomRange={onZoomRange}
+            onLock={(e) => {
+              setLockState(e.locked ? { label: e.label } : null);
+              if (e.locked) setTouched(true);
+            }}
             guidePins={guideLens ? { parts: guide.state.parts, focus: guide.part?.id ?? null } : undefined}
             pinInsets={guideLens && panelTop ? { top: insets.top + 56, bottom: Math.max(0, height - panelTop + 8) } : undefined}
             sceneKey={params.scene}
           />
         </View>
       </GestureDetector>
+
+      {dragBox ? (
+        <View
+          pointerEvents="none"
+          style={[styles.dragBox, { left: dragBox.x, top: dragBox.y, width: dragBox.w, height: dragBox.h, borderColor: pen }]}
+        />
+      ) : null}
 
       {/* Legibility: soft shade behind top and bottom chrome. */}
       <LinearGradient colors={['rgba(11,11,12,0.45)', 'rgba(11,11,12,0)']} style={[styles.shade, { top: 0, height: insets.top + 120 }]} pointerEvents="none" />
@@ -501,7 +576,7 @@ export default function Camera() {
                 <LensCarousel lens={lens} onChange={setLens} />
               </>
             ) : null}
-            <ZoomChips zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} />
+            <ZoomRow peek={rulerPeek} zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} locked={!!lockState} onLock={canLock || lockState ? toggleLock : undefined} />
             <GuidePanel
               state={guide.state}
               step={guide.step}
@@ -523,7 +598,7 @@ export default function Camera() {
           </View>
         ) : (
         <Animated.View style={[styles.bottom, { paddingBottom: insets.bottom + 18 }, bottomStyle]} pointerEvents="box-none">
-          <ZoomChips zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} />
+          <ZoomRow peek={rulerPeek} zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} locked={!!lockState} onLock={canLock || lockState ? toggleLock : undefined} />
           <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : live ? 'Live' : null} pen={pen} />
           <LensCarousel lens={lens} onChange={setLens} />
           <View style={styles.row}>
@@ -585,8 +660,45 @@ export function ErrorBoundary({ error, retry }: { error: Error; retry: () => Pro
   );
 }
 
+/** Zoom in the middle; the follow button on the right (lit while following something). */
+function ZoomRow({
+  peek,
+  zoom,
+  min,
+  max,
+  pen,
+  onZoom,
+  locked,
+  onLock,
+}: {
+  zoom: number;
+  min: number;
+  max: number;
+  pen: string;
+  onZoom: (z: number) => void;
+  locked: boolean;
+  onLock?: () => void;
+  peek?: number;
+}) {
+  return (
+    <View style={styles.zoomRow} pointerEvents="box-none">
+      <ZoomControl zoom={zoom} min={min} max={max} pen={pen} onZoom={onZoom} peek={peek} />
+      {onLock ? (
+        <View style={styles.lockBtn}>
+          <RoundButton size={38} label={locked ? 'Stop following' : 'Follow what is in the middle'} onPress={onLock} active={locked} activeColor="#FFFFFF">
+            <Icon name="target" size={20} color={locked ? '#0B0B0C' : '#FFFFFF'} />
+          </RoundButton>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
+  zoomRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  lockBtn: { position: 'absolute', right: 14, top: 4 },
+  dragBox: { position: 'absolute', borderWidth: 2, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)' },
   crash: { justifyContent: 'center', paddingHorizontal: 28, gap: 12, backgroundColor: '#0B0B0C' },
   crashTitle: { color: '#FFFFFF', ...face.semibold, fontSize: 32, letterSpacing: -0.3 },
   crashBody: { color: 'rgba(255,255,255,0.62)', ...face.regular, fontSize: 16, lineHeight: 22 },

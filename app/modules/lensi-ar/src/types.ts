@@ -62,7 +62,16 @@ export type LensiARViewRef = {
   guideClear(): Promise<void>;
   /** 0.5 (ultra-wide, where ARKit offers it) up to the camera's max; clamped natively. */
   setZoom(zoom: number): Promise<void>;
+  /**
+   * Follow one thing for the rest of the session: a tap (x, y), a box dragged around it
+   * (x, y, w, h), all in view points; x < 0 = whatever is under the reticle. Fires onLockChange.
+   */
+  lockTarget(x: number, y: number, w: number, h: number): Promise<void>;
+  unlockTarget(): Promise<void>;
 };
+
+/** The followed thing: whether there is one, and its name once the phone knows it. */
+export type LockEvent = { locked: boolean; label: string | null };
 
 export type GuideFrame = { frameId: string; uri: string; width: number; height: number };
 
@@ -94,6 +103,7 @@ export type LensiARViewProps = ViewProps & {
   onGuideChange?: (e: { nativeEvent: GuideChangeEvent }) => void;
   /** How far this camera zooms (min is 0.5 where the ultra-wide is available, else 1). */
   onZoomRange?: (e: { nativeEvent: ZoomRange }) => void;
+  onLockChange?: (e: { nativeEvent: LockEvent }) => void;
 };
 
 export type ZoomRange = { min: number; max: number; zoom: number };

@@ -139,11 +139,15 @@ enum OpticalFlow {
   }
 
   /// Where each point of `prev` went in `next` (nil when lost).
-  static func track(_ pts: [CGPoint], from prev: FlowFrame, to next: FlowFrame, check: Bool = true) -> [CGPoint?] {
-    let forward = trackOneWay(pts, prev, next)
+  /// `guess`: where each point probably went (e.g. the object's last motion), so fast
+  /// movement doesn't have to be found from zero. The backward check starts from the
+  /// original points.
+  static func track(_ pts: [CGPoint], from prev: FlowFrame, to next: FlowFrame, guess: [CGPoint]? = nil, check: Bool = true) -> [CGPoint?] {
+    let forward = trackOneWay(pts, prev, next, guess: guess)
     guard check else { return forward }
     let found = forward.compactMap { $0 }
-    let back = trackOneWay(found, next, prev)
+    let backGuess = guess == nil ? nil : zip(pts, forward).compactMap { p, f in f == nil ? nil : p }
+    let back = trackOneWay(found, next, prev, guess: backGuess)
     var out: [CGPoint?] = []
     var j = 0
     for (i, f) in forward.enumerated() {
@@ -155,7 +159,7 @@ enum OpticalFlow {
     return out
   }
 
-  private static func trackOneWay(_ pts: [CGPoint], _ prev: FlowFrame, _ next: FlowFrame) -> [CGPoint?] {
+  private static func trackOneWay(_ pts: [CGPoint], _ prev: FlowFrame, _ next: FlowFrame, guess: [CGPoint]? = nil) -> [CGPoint?] {
     let levels = min(prev.levels.count, next.levels.count)
     let r = radius
     let n = (2 * r + 1) * (2 * r + 1)
@@ -164,8 +168,14 @@ enum OpticalFlow {
     var gys = [Float](repeating: 0, count: n)
     var out: [CGPoint?] = []
     out.reserveCapacity(pts.count)
-    for p0 in pts {
-      var gx: Float = 0, gy: Float = 0 // guess, in the current level's pixels
+    for (index, p0) in pts.enumerated() {
+      // Guess, in the coarsest level's pixels.
+      let top = Float(1 << (levels - 1))
+      var gx: Float = 0, gy: Float = 0
+      if let guess, index < guess.count {
+        gx = Float(guess[index].x - p0.x) / top
+        gy = Float(guess[index].y - p0.y) / top
+      }
       var lost = false
       for L in stride(from: levels - 1, through: 0, by: -1) {
         let A = prev.levels[L], B = next.levels[L]
@@ -533,6 +543,8 @@ struct SegJob {
   let prior: [CGPoint]?
   /// First look at a guide part: prefer a part-sized candidate.
   let preferPart: Bool
+  /// First look at a tapped thing: which reading (0 whole, 1 part, 2 detail).
+  var level: Int? = nil
 }
 
 struct SegResult {
@@ -557,10 +569,13 @@ final class LiveSegTracker {
     var seedPoint: CGPoint?
     var seedBox: CGRect?
     var preferPart = false
+    var level: Int?
     var features: [CGPoint] = []
     /// Cumulative motion since the track began, per frame index.
     var history: [Int: CGAffineTransform] = [:]
     var motion = CGAffineTransform.identity
+    /// The last frame's motion: where to start looking in the next.
+    var lastStep = CGAffineTransform.identity
     var misses = 0
     var answers = 0
     var lastAnswerFrame = -1
@@ -592,7 +607,11 @@ final class LiveSegTracker {
   var promptStyle = ProcessInfo.processInfo.environment["LENSI_PROMPT"] ?? "box+point"
   /// Box prompts are the outline's bounds grown by this fraction of its size,
   /// so SAM can take back a part it dropped last time.
+  /// Frames in a row with nothing to follow (a cut, or it's gone) before a track is dropped.
+  var blindLimit = Int(ProcessInfo.processInfo.environment["LENSI_BLIND"] ?? "") ?? 4
+  var growthLimit = CGFloat(Double(ProcessInfo.processInfo.environment["LENSI_GROWTH"] ?? "") ?? 1.6)
   var negatives = (ProcessInfo.processInfo.environment["LENSI_NEG"] ?? "0") == "1"
+  var velocityGuess = (ProcessInfo.processInfo.environment["LENSI_VEL"] ?? "0") == "1"
   var rawPrompts = (ProcessInfo.processInfo.environment["LENSI_RAW"] ?? "1") == "1"
   var seedFlow = (ProcessInfo.processInfo.environment["LENSI_SEEDFLOW"] ?? "0") == "1"
   var boxPad: CGFloat = CGFloat(Double(ProcessInfo.processInfo.environment["LENSI_BOXPAD"] ?? "") ?? 0.1)
@@ -602,8 +621,9 @@ final class LiveSegTracker {
   // MARK: Tracks
 
   /// `point` / `box` normalized in the current frame.
-  func add(key: String, point: CGPoint? = nil, box: CGRect? = nil, preferPart: Bool = false) {
+  func add(key: String, point: CGPoint? = nil, box: CGRect? = nil, preferPart: Bool = false, level: Int? = nil) {
     let t = Track(key: key, frame: frameIndex)
+    t.level = level
     t.seedPoint = point.map { denorm($0) }
     t.seedBox = box.map { denorm($0) }
     t.preferPart = preferPart
@@ -639,12 +659,19 @@ final class LiveSegTracker {
   /// Moves every track with the flow from the last frame to this one.
   func step(_ frame: FlowFrame) {
     frameIndex += 1
-    size = CGSize(width: frame.width, height: frame.height)
+    let newSize = CGSize(width: frame.width, height: frame.height)
+    if newSize != size, previous != nil {
+      // Another camera (0.5x) or format: nothing carries over.
+      previous = nil
+      tracks.removeAll()
+    }
+    size = newSize
     defer { previous = frame }
     for t in tracks.values {
       var m = CGAffineTransform.identity
       if let prev = previous, !t.features.isEmpty {
-        let moved = OpticalFlow.track(t.features, from: prev, to: frame)
+        let moved = OpticalFlow.track(t.features, from: prev, to: frame,
+                                      guess: velocityGuess ? t.features.map { $0.applying(t.lastStep) } : nil)
         var p: [CGPoint] = [], q: [CGPoint] = []
         for (a, b) in zip(t.features, moved) {
           if let b { p.append(a); q.append(b) }
@@ -658,6 +685,7 @@ final class LiveSegTracker {
           t.features = q
         }
       }
+      t.lastStep = m
       t.motion = t.motion.concatenating(m)
       t.history[frameIndex] = t.motion
       t.history = t.history.filter { $0.key > frameIndex - 90 }
@@ -678,7 +706,7 @@ final class LiveSegTracker {
         let b = Poly.bounds(t.polygon)
         let visible = b.intersection(CGRect(origin: .zero, size: size))
         let onScreen = visible.isNull ? 0 : (visible.width * visible.height) / max(1, b.width * b.height)
-        if onScreen < 0.35 || (t.blind >= 6 && frameIndex - t.lastAnswerFrame > 6) { t.lost = true }
+        if onScreen < 0.35 || t.blind >= blindLimit { t.lost = true }
       }
       t.opacity += ((t.lost || !t.hasShape ? 0 : 1) - t.opacity) * 0.25
     }
@@ -690,7 +718,9 @@ final class LiveSegTracker {
   /// What SAM should look at in the current frame.
   /// `anchors`: a better point to prompt with for some tracks (normalized),
   /// e.g. where ARKit says a guide tag's part is in this frame.
-  func jobs(anchors: [String: CGPoint] = [:]) -> [SegJob] {
+  /// `softAnchors`: used only while they're inside the track's shape (a thing that may move:
+  /// its last known spot is a good prompt only while the outline agrees).
+  func jobs(anchors: [String: CGPoint] = [:], softAnchors: [String: CGPoint] = [:]) -> [SegJob] {
     tracks.values.sorted { $0.key < $1.key }.compactMap { t -> SegJob? in
       guard !t.lost else { return nil }
       if t.hasShape {
@@ -698,7 +728,13 @@ final class LiveSegTracker {
         let box = Poly.bounds(shape)
         let b = norm(box.insetBy(dx: -boxPad * box.width, dy: -boxPad * box.height)).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard !b.isNull, b.width > 0.005, b.height > 0.005 else { return nil }
-        let anchor = anchors[t.key].flatMap { a in a.x > 0 && a.x < 1 && a.y > 0 && a.y < 1 ? a : nil }
+        var anchor = anchors[t.key].flatMap { a in a.x > 0 && a.x < 1 && a.y > 0 && a.y < 1 ? a : nil }
+        if anchor == nil, let soft = softAnchors[t.key] {
+          let path = CGMutablePath()
+          path.addLines(between: shape)
+          path.closeSubpath()
+          if path.contains(denorm(soft)) { anchor = soft }
+        }
         let inner = promptStyle == "box" ? nil : anchor ?? Poly.interiorPoint(shape).map { norm($0) }
         if promptStyle == "point", inner == nil { return nil }
         var points = inner.map { [$0] } ?? []
@@ -724,7 +760,7 @@ final class LiveSegTracker {
       if let p = t.seedPoint {
         let n = norm(p)
         guard n.x > 0, n.x < 1, n.y > 0, n.y < 1 else { return nil }
-        return SegJob(key: t.key, frame: frameIndex, points: [n], labels: [1], box: nil, prior: nil, preferPart: t.preferPart)
+        return SegJob(key: t.key, frame: frameIndex, points: [n], labels: [1], box: nil, prior: nil, preferPart: t.preferPart, level: t.level)
       }
       return nil
     }
@@ -750,6 +786,13 @@ final class LiveSegTracker {
       } else {
         let fresh = Poly.aligned(sam, to: t.polygon)
         let agreement = Poly.iou(t.polygon, fresh)
+        let growth = abs(Poly.signedArea(fresh)) / max(1, abs(Poly.signedArea(t.polygon)))
+        // Ballooning into the background (the thing is leaving the frame, and SAM fills
+        // its box with what's behind): a few in a row before it's believed.
+        if growth > growthLimit && agreement < 0.6 && t.answers > 1 {
+          t.misses += 1
+          if t.misses <= 3 { continue }
+        }
         if agreement < 0.3 && t.answers > 1 {
           // A wild answer for a settled track (SAM grabbed the background, or
           // the table under the cup). Skip it; several in a row = take it.

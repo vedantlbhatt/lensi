@@ -8,6 +8,7 @@ import {
   type GuideChangeEvent,
   type GuideFrame,
   type LensiARViewRef,
+  type LockEvent,
   type SelectEvent,
   type TrackingEvent,
   type ZoomRange,
@@ -28,6 +29,12 @@ export type CameraHandle = {
   nextScene?(dir: 1 | -1): void;
   /** Zoom the camera (clamped to what it can do; see onZoomRange). */
   setZoom(zoom: number): void;
+  /**
+   * Follow one thing (its outline stays on it as the phone moves): a tap point, a dragged
+   * box, or nothing = what's under the reticle. View points. See onLock.
+   */
+  lock(target?: { x: number; y: number; w?: number; h?: number }): void;
+  unlock(): void;
   /** The native view, for live pins. Null on the virtual camera. */
   native?: LensiARViewRef | null;
   /**
@@ -65,6 +72,7 @@ export const CameraSurface = forwardRef<
     onScene?: (s: DemoScene) => void;
     onGuideChange?: (e: GuideChangeEvent) => void;
     onZoomRange?: (r: ZoomRange) => void;
+    onLock?: (e: LockEvent) => void;
     guidePins?: VirtualGuidePins;
     /** Room the chrome takes above and below: a guide tag whose part is out of view waits inside it. */
     pinInsets?: { top: number; bottom: number };
@@ -92,6 +100,8 @@ export const CameraSurface = forwardRef<
           setTorch: () => Promise.resolve(false),
           nextScene: (dir: 1 | -1) => virtual.current?.nextScene?.(dir),
           setZoom: (z: number) => virtual.current?.setZoom(z),
+          lock: () => virtual.current?.lock(),
+          unlock: () => virtual.current?.unlock(),
           native: null,
           guide: {
             capture: async () => {
@@ -151,6 +161,12 @@ export const CameraSurface = forwardRef<
         setZoom: (z: number) => {
           void native.current?.setZoom(z).catch(() => {});
         },
+        lock: (t?: { x: number; y: number; w?: number; h?: number }) => {
+          void native.current?.lockTarget(t?.x ?? -1, t?.y ?? -1, t?.w ?? 0, t?.h ?? 0).catch(() => {});
+        },
+        unlock: () => {
+          void native.current?.unlockTarget().catch(() => {});
+        },
         guide: {
           capture: async () => (await native.current?.guideCapture()) ?? null,
           pin: async (frameId: string, part: GuidePart) => {
@@ -183,6 +199,7 @@ export const CameraSurface = forwardRef<
         liveOutlines={props.liveOutlines && !props.paused}
         onScene={props.onScene}
         onZoomRange={props.onZoomRange}
+        onLock={props.onLock}
         guidePins={props.guidePins}
         sceneKey={props.sceneKey}
       />
@@ -204,6 +221,7 @@ export const CameraSurface = forwardRef<
       onPinTap={(e) => props.onPinTap?.(e.nativeEvent.id)}
       onGuideChange={(e) => props.onGuideChange?.(e.nativeEvent)}
       onZoomRange={(e) => props.onZoomRange?.(e.nativeEvent)}
+      onLockChange={(e) => props.onLock?.(e.nativeEvent)}
     />
   );
 });

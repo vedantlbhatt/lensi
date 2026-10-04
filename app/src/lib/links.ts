@@ -1,6 +1,12 @@
 /** What a scripted run (a lensi:// link or the launch environment) can ask for. */
 export type ScriptParams = {
   demo?: string;
+  /**
+   * A timeline of UI actions for screen recordings: `ms:action:arg|…`. Actions: lens:<key>,
+   * lock:<x,y> or lock:<x,y,w,h> (fractions of the screen), lock (the reticle), unlock,
+   * zoom:<z>, ruler (show the zoom ruler a moment).
+   */
+  steps?: string;
   /** A photo or video in the app's Documents folder (CI drops stock footage there). */
   file?: string;
   lens?: string;

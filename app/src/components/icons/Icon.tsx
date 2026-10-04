@@ -37,6 +37,7 @@ export type IconName =
   | 'pencil'
   | 'pointer'
   | 'plus'
+  | 'target'
   | 'photoPlus';
 
 export function Icon({
@@ -66,6 +67,14 @@ function glyph(name: IconName, p: P, color: string, fill?: string) {
   switch (name) {
     case 'close':
       return <Path {...p} d="M6.5 6.5l11 11M17.5 6.5l-11 11" />;
+    case 'target':
+      // Lock-on: four corners around a dot.
+      return (
+        <>
+          <Path {...p} d="M4 8.5V6a2 2 0 012-2h2.5M15.5 4H18a2 2 0 012 2v2.5M20 15.5V18a2 2 0 01-2 2h-2.5M8.5 20H6a2 2 0 01-2-2v-2.5" />
+          <Circle cx={12} cy={12} r={2.4} fill={fill ?? color} stroke="none" />
+        </>
+      );
     case 'flash':
       return <Path {...p} fill={fill ?? 'none'} d="M13.2 3.2L5.8 13.1h5.6l-1.1 7.7 7.9-10.4h-5.8l.8-7.2z" />;
     case 'flashOff':

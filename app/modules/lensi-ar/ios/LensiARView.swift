@@ -19,6 +19,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   let onPinTap = EventDispatcher()
   let onGuideChange = EventDispatcher()
   let onZoomRange = EventDispatcher()
+  let onLockChange = EventDispatcher()
 
   var showDetections = true
   /// SAM on the live camera feed (outlines instead of corner brackets).
@@ -47,6 +48,52 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// Live outlines by what they're of: a guide tag's pin id, "focus:<id>", or `centreKey`.
   private var liveOutlines: [String: (layer: CAShapeLayer, seen: CFTimeInterval)] = [:]
   private static let centreKey = "centre"
+
+  /// The thing chosen to follow for the rest of the session (a tap, a box dragged around
+  /// it, or the lock button for what's under the reticle). Its spot in the world is kept
+  /// up to date while it's seen, so it's found again when it comes back into view.
+  private struct Lock {
+    var world: simd_float3
+    var seedPoint: CGPoint?
+    var seedBox: CGRect?
+    var label: String?
+    var seeded = false
+    var lastLabelTime: CFTimeInterval = 0
+    var draws = 0
+    /// Where it was last outlined (upright normalized): where to look again if it's lost.
+    var lastSeen: CGPoint?
+    /// Which reading of a tap: 0 the whole thing; each tap inside the outline goes smaller.
+    var level = 0
+  }
+  private var lock: Lock?
+  private static let lockKey = "lock"
+
+  // Video source: LENSI_VIDEO=<path> plays that file (looped) instead of the camera and
+  // runs the same live segmentation on it. For the Simulator, which has no camera, and
+  // for demos on real footage. No ARKit, so no world pins; outlines, lock and zoom work.
+  static let videoURL: URL? = ProcessInfo.processInfo.environment["LENSI_VIDEO"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+  private let videoView = UIView()
+  private var playerLayer: AVPlayerLayer?
+  private var player: AVPlayer?
+  private var videoOutput: AVPlayerItemVideoOutput?
+  private var videoSize = CGSize.zero
+  private var videoEnd: NSObjectProtocol?
+  private let lockTag = PinLabel(text: "", color: .white, isCallout: true)
+  /// samQueue: the lock's name is being looked up.
+  private var identifying = false
+  /// samQueue: what the locked thing looks like, to tell it from whatever is found where it
+  /// might be after it's lost.
+  private let lockMemory = AppearanceMemory()
+  private var lastRemember: CFTimeInterval = 0
+  private var lastDriftCheck: CFTimeInterval = 0
+  /// samQueue: checks in a row where the lock no longer looked like itself.
+  private var driftStrikes = 0
+  /// samQueue: the lock's size (fraction of the frame) the last time it was itself.
+  private var lockArea: CGFloat = 0
+  /// flowQueue: the lock's track was restarted from a guess and isn't confirmed yet.
+  private var lockUnverified = false
+  /// Main: frames since the lock started, to step through places to look for it.
+  private var lockSearchTick = 0
   /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
   var livePins = false
   /// Room the app's own chrome takes (the guide panel below, the top bar):
@@ -119,6 +166,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     clipsToBounds = true
     backgroundColor = .black
 
+    if let url = Self.videoURL { setUpVideo(url) }
     sceneView.session.delegate = self
     sceneView.automaticallyUpdatesLighting = false
     sceneView.rendersCameraGrain = false
@@ -136,6 +184,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     layer.addSublayer(focusLayer)
     focusTag.isHidden = true
     addSubview(focusTag)
+    lockTag.isHidden = true
+    addSubview(lockTag)
 
     pinLayer.isUserInteractionEnabled = false
     addSubview(pinLayer)
@@ -153,6 +203,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     // bounds + center, not frame: the camera view carries the zoom as a transform.
     sceneView.bounds = CGRect(origin: .zero, size: bounds.size)
     sceneView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    videoView.bounds = CGRect(origin: .zero, size: bounds.size)
+    videoView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    playerLayer?.frame = videoView.bounds
     pinLayer.frame = bounds
     boxLayer.frame = bounds
     focusLayer.frame = bounds
@@ -164,6 +217,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   func start() {
+    if player != nil {
+      guard !running, !paused else { return }
+      running = true
+      player?.play()
+      onZoomRange(["min": 0.5, "max": Double(Self.maxZoom), "zoom": Double(zoomFactor)])
+      let link = CADisplayLink(target: self, selector: #selector(tick))
+      link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+      link.add(to: .main, forMode: .common)
+      displayLink = link
+      return
+    }
     guard !running, !paused, ARWorldTrackingConfiguration.isSupported else { return }
     // Say so up front rather than showing a black camera.
     let auth = AVCaptureDevice.authorizationStatus(for: .video)
@@ -188,6 +252,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     displayLink?.invalidate()
     displayLink = nil
     if recorder != nil { stopRecording { _ in } }
+    if let player {
+      player.pause()
+      return
+    }
     sceneView.session.pause()
   }
 
@@ -227,6 +295,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     var point: CGPoint?
     var box: CGRect?
     var preferPart = false
+    /// Only where to look again if the track is lost, not a prompt for every pass.
+    var soft = false
+    var level: Int?
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -234,6 +305,29 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let res = frame.camera.imageResolution
     let upright = CGSize(width: res.height, height: res.width)
     var seeds: [String: Seed] = [:]
+    var softAnchors: [String: CGPoint] = [:]
+    if var l = lock {
+      if !l.seeded {
+        seeds[Self.lockKey] = Seed(point: l.seedPoint, box: l.seedBox, level: l.seedBox == nil ? l.level : nil)
+        l.seeded = true
+        lock = l
+      } else {
+        // Keep the track; if it's lost, start again where the thing was last seen.
+        var seed = Seed()
+        let local = simd_mul(frame.camera.transform.inverse, simd_float4(l.world, 1))
+        if local.z < -0.05 {
+          let q = frame.camera.projectPoint(l.world, orientation: .portrait, viewportSize: upright)
+          let p = CGPoint(x: q.x / upright.width, y: q.y / upright.height)
+          if p.x > 0.02, p.x < 0.98, p.y > 0.02, p.y < 0.98 {
+            seed.point = p
+            seed.soft = true
+            softAnchors[Self.lockKey] = p
+          }
+        }
+        if seed.point == nil { seed = Seed(point: lockSearchPoint(), soft: true) }
+        seeds[Self.lockKey] = seed
+      }
+    }
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
       // The current step's part first; at most four.
@@ -247,6 +341,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         guard p.x > 0.01, p.x < 0.99, p.y > 0.01, p.y < 0.99 else { continue }
         seeds[pin.id] = Seed(point: p, preferPart: true)
       }
+    } else if lock != nil {
+      // Locked: only the chosen thing is outlined.
     } else if let t = tracked.first(where: { $0.id == focusedId }) {
       let box = viewRectToUpright(t.shown, frame: frame).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
       if !box.isNull, box.width > 0.01, box.height > 0.01 {
@@ -256,20 +352,31 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       seeds[Self.centreKey] = Seed(point: viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame))
     }
 
-    flowBusy = true
-    let buffer = frame.capturedImage
     let display = frame.displayTransform(for: .portrait, viewportSize: bounds.size)
+    let size = bounds.size
+    runFlow(frame.capturedImage, rotate: true, seeds: seeds, softAnchors: softAnchors, sam: sam) { p in
+      let n = CGPoint(x: p.y, y: 1 - p.x).applying(display)
+      return CGPoint(x: n.x * size.width, y: n.y * size.height)
+    }
+  }
+
+  /// Optical flow on this frame (flowQueue), SAM when it's free, then the outlines are drawn.
+  /// `rotate`: the buffer is the landscape sensor image (ARKit); false for upright video.
+  /// `toView`: upright normalized point -> this view, before zoom.
+  private func runFlow(_ buffer: CVPixelBuffer, rotate: Bool, seeds: [String: Seed], softAnchors: [String: CGPoint],
+                       sam: SAMSegmenter, toView: @escaping (CGPoint) -> CGPoint) {
+    flowBusy = true
     flowQueue.async { [weak self] in
       guard let self else { return }
       let started = CACurrentMediaTime()
       let tracker = self.segTracker
-      if let flow = FlowFrame.from(buffer, longSide: 480, rotateRight: true) {
+      if let flow = FlowFrame.from(buffer, longSide: 480, rotateRight: rotate) {
         tracker.step(flow)
         self.syncTracks(seeds)
         if !self.samBusy {
-          let anchors = seeds.compactMapValues { $0.box == nil ? $0.point : nil }
-          let jobs = tracker.jobs(anchors: anchors)
-          if !jobs.isEmpty { self.runSAM(jobs, buffer: buffer, sam: sam) }
+          let anchors = seeds.compactMapValues { $0.box == nil && !$0.soft ? $0.point : nil }
+          let jobs = tracker.jobs(anchors: anchors, softAnchors: softAnchors)
+          if !jobs.isEmpty { self.runSAM(jobs, buffer: buffer, rotate: rotate, sam: sam, verifyLock: self.lockUnverified) }
         }
       }
       let outlines = tracker.outlines()
@@ -277,7 +384,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       self.flowMs = self.flowMs == 0 ? ms : self.flowMs * 0.9 + ms * 0.1
       DispatchQueue.main.async {
         self.flowBusy = false
-        self.drawLive(outlines, display: display)
+        self.drawLive(outlines, toView: toView)
       }
     }
   }
@@ -298,30 +405,37 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         centreOff = 0
       }
     }
-    for (key, seed) in seeds where !tracker.has(key) {
+    for (key, seed) in seeds where !tracker.has(key) && (seed.point != nil || seed.box != nil) {
+      if key == Self.lockKey { lockUnverified = seed.soft }
       tracker.remove(key: key)
-      tracker.add(key: key, point: seed.box == nil ? seed.point : nil, box: seed.box, preferPart: seed.preferPart)
+      tracker.add(key: key, point: seed.box == nil ? seed.point : nil, box: seed.box, preferPart: seed.preferPart, level: seed.level)
     }
   }
 
   /// flowQueue. One encoder pass on this frame and a decoder pass per job.
-  private func runSAM(_ jobs: [SegJob], buffer: CVPixelBuffer, sam: SAMSegmenter) {
+  private func runSAM(_ jobs: [SegJob], buffer: CVPixelBuffer, rotate: Bool, sam: SAMSegmenter, verifyLock: Bool) {
     samBusy = true
     samQueue.async { [weak self] in
       guard let self else { return }
       let started = CACurrentMediaTime()
       var results: [SegResult] = []
       do {
-        try sam.prepare(ciImage: CIImage(cvPixelBuffer: buffer).oriented(.right), context: self.samContext, id: "live")
+        let image = CIImage(cvPixelBuffer: buffer)
+        try sam.prepare(ciImage: rotate ? image.oriented(.right) : image, context: self.samContext, id: "live")
         for job in jobs {
           let mask = try sam.segment(id: "live", points: job.points, labels: job.labels, box: job.box,
-                                     preferPart: job.preferPart, prior: job.prior)
+                                     preferPart: job.preferPart, prior: job.prior, level: job.level)
           let ok = mask.score >= 0.5 && mask.polygon.count > 2
           results.append(SegResult(key: job.key, frame: job.frame, polygon: ok ? mask.polygon : [], score: mask.score))
         }
       } catch {}
       let ms = (CACurrentMediaTime() - started) * 1000
+      let checked = self.checkLock(results, buffer: buffer, rotate: rotate, verify: verifyLock)
+      results = checked.results
+      self.identifyLock(results, buffer: buffer, rotate: rotate)
       self.flowQueue.async {
+        if checked.confirmed { self.lockUnverified = false }
+        if checked.drifted { self.segTracker.remove(key: Self.lockKey) }
         self.segTracker.apply(results)
         self.samBusy = false
         self.samMs = self.samMs == 0 ? ms : self.samMs * 0.8 + ms * 0.2
@@ -334,7 +448,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
   }
 
-  private func drawLive(_ outlines: [(key: String, polygon: [CGPoint], opacity: CGFloat)], display: CGAffineTransform) {
+  private func drawLive(_ outlines: [(key: String, polygon: [CGPoint], opacity: CGFloat)], toView: (CGPoint) -> CGPoint) {
     let now = CACurrentMediaTime()
     CATransaction.begin()
     CATransaction.setDisableActions(true)
@@ -352,16 +466,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
       let path = UIBezierPath()
       for (i, p) in Poly.smoothed(o.polygon).enumerated() {
-        let n = CGPoint(x: p.y, y: 1 - p.x).applying(display)
-        let v = zoomed(CGPoint(x: n.x * bounds.width, y: n.y * bounds.height))
+        let v = zoomed(toView(p))
         if i == 0 { path.move(to: v) } else { path.addLine(to: v) }
       }
       path.close()
-      let focused = pins[o.key]?.label.emphasis == .focused
+      let locked = o.key == Self.lockKey
+      let focused = locked || pins[o.key]?.label.emphasis == .focused
       let strong = focused || !o.key.hasPrefix(Self.guideParent)
       let color: UIColor = focused ? accent : .white
+      if locked { placeLockTag(path.bounds, opacity: o.opacity, polygon: o.polygon) }
       layer.path = path.cgPath
-      layer.lineWidth = focused ? 2.5 : strong ? 2 : 1.5
+      layer.lineWidth = locked ? 3 : focused ? 2.5 : strong ? 2 : 1.5
       layer.strokeColor = color.withAlphaComponent(strong ? 1 : 0.75).cgColor
       layer.fillColor = color.withAlphaComponent(focused ? 0.14 : 0.07).cgColor
       layer.opacity = Float(o.opacity)
@@ -372,7 +487,165 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       entry.layer.removeFromSuperlayer()
       liveOutlines[key] = nil
     }
+    if !drawn.contains(Self.lockKey) { lockTag.isHidden = true }
     CATransaction.commit()
+  }
+
+  // MARK: - Lock
+
+  /// Follow one thing from now on. `point` / `rect` are in this view; neither = what's under
+  /// the reticle (the focused detection's box when there is one).
+  func lockTarget(point: CGPoint?, rect: CGRect?) {
+    guard bounds.width > 0 else { return }
+    let frame = sceneView.session.currentFrame
+    guard frame != nil || player != nil else { return }
+    let toUpright: (CGPoint) -> CGPoint = { v in
+      if let frame { return self.viewToUpright(v, frame: frame) }
+      return self.viewToVideo(self.unzoomed(v))
+    }
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    var seedPoint: CGPoint?
+    var seedBox: CGRect?
+    var label: String?
+    if let rect, rect.width > 12, rect.height > 12 {
+      let b = bounding([CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY),
+                        CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.minY)].map(toUpright)).intersection(unit)
+      guard !b.isNull, b.width > 0.01, b.height > 0.01 else { return }
+      seedBox = b
+      seedPoint = CGPoint(x: b.midX, y: b.midY)
+    } else if let point {
+      seedPoint = toUpright(point)
+      label = tracked.filter { $0.shown.contains(point) }.min { $0.shown.area < $1.shown.area }?.label
+    } else if let frame, let t = tracked.first(where: { $0.id == focusedId }) {
+      let b = viewRectToUpright(t.shown, frame: frame).intersection(unit)
+      if !b.isNull, b.width > 0.01 { seedBox = b; seedPoint = CGPoint(x: b.midX, y: b.midY) }
+      label = t.label
+    }
+    if seedPoint == nil { seedPoint = toUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92)) }
+    guard let p = seedPoint else { return }
+    // A tap inside what's already followed: the next, smaller reading of it.
+    var level = 0
+    if rect == nil, let point, let current = lock, let path = liveOutlines[Self.lockKey]?.layer.path, path.contains(point) {
+      level = (current.level + 1) % 3
+      label = nil
+    }
+    let world = frame.map { Selection(frame: $0, crop: unit).anchor(at: p, session: sceneView.session) } ?? .zero
+    lock = Lock(world: world, seedPoint: p, seedBox: seedBox, label: label, level: level)
+    lockSearchTick = 0
+    samQueue.async {
+      self.lockMemory.reset()
+      self.lastRemember = 0
+      self.lockArea = 0
+    }
+    flowQueue.async { self.lockUnverified = false }
+    lockTag.text = label ?? ""
+    lockTag.color = accent
+    flowQueue.async { self.segTracker.remove(key: Self.lockKey) }
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    onLockChange(["locked": true, "label": label as Any])
+  }
+
+  func unlockTarget() {
+    guard lock != nil else { return }
+    lock = nil
+    lockTag.isHidden = true
+    flowQueue.async { self.segTracker.remove(key: Self.lockKey) }
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    onLockChange(["locked": false, "label": NSNull()])
+  }
+
+  /// The lock's tag sits above its outline. While the outline is steady, the thing's spot in
+  /// the world follows it (it may have moved), so a lost lock is looked for in the right place.
+  private func placeLockTag(_ box: CGRect, opacity: CGFloat, polygon: [CGPoint]) {
+    guard var l = lock else { return }
+    l.draws += 1
+    if l.draws % 5 == 0, opacity > 0.9, let inner = Poly.interiorPoint(polygon) { l.lastSeen = inner }
+    if l.draws % 10 == 0, opacity > 0.9, let inner = Poly.interiorPoint(polygon),
+       let frame = sceneView.session.currentFrame {
+      let w = Selection(frame: frame, crop: CGRect(x: 0, y: 0, width: 1, height: 1)).anchor(at: inner, session: sceneView.session)
+      if simd_distance(w, l.world) < 2 { l.world = w }
+    }
+    lock = l
+    guard let text = l.label, !text.isEmpty else { lockTag.isHidden = true; return }
+    if lockTag.text != text { lockTag.text = text }
+    lockTag.isHidden = false
+    lockTag.alpha = opacity
+    let half = lockTag.bounds.width / 2 + 8
+    lockTag.center = CGPoint(x: min(max(box.midX, half), bounds.width - half), y: max(box.minY - 18, safeAreaInsets.top + 60))
+  }
+
+  /// samQueue, after a pass. A lock restarted from a guess only takes an answer that looks
+  /// like what was locked (anything else becomes a miss, so nothing wrong is ever drawn);
+  /// a confirmed lock adds to what it's known to look like every 1.5 s.
+  private func checkLock(_ results: [SegResult], buffer: CVPixelBuffer, rotate: Bool, verify: Bool) -> (results: [SegResult], confirmed: Bool, drifted: Bool) {
+    guard let i = results.firstIndex(where: { $0.key == Self.lockKey }), results[i].polygon.count >= 3 else { return (results, false, false) }
+    let raw = CIImage(cvPixelBuffer: buffer)
+    let image = rotate ? raw.oriented(.right) : raw
+    let r = results[i]
+    let samLook = SAMSegmenter.shared?.appearance(id: "live", polygon: r.polygon)
+    if verify {
+      let d = lockMemory.distance(image, polygon: r.polygon, sam: samLook)
+      let area = Poly.bounds(r.polygon).width * Poly.bounds(r.polygon).height
+      if (d ?? 0) >= 1 || (lockArea > 0 && area < lockArea * 0.25) {
+        var out = results
+        out[i] = SegResult(key: r.key, frame: r.frame, polygon: [], score: 0)
+        return (out, false, false)
+      }
+      driftStrikes = 0
+      return (results, true, false)
+    }
+    let now = CACurrentMediaTime()
+    // Drift: the outline slid off onto something else (the tree behind the player). Twice
+    // in a row clearly not itself: drop it, and look for it again.
+    if now - lastDriftCheck > 0.5, !lockMemory.isEmpty {
+      lastDriftCheck = now
+      if let d = lockMemory.distance(image, polygon: r.polygon, sam: samLook) {
+        driftStrikes = d > 1.15 ? driftStrikes + 1 : 0
+        if driftStrikes >= 2 {
+          driftStrikes = 0
+          var out = results
+          out[i] = SegResult(key: r.key, frame: r.frame, polygon: [], score: 0)
+          return (out, false, true)
+        }
+        if d < 1 { lockArea = Poly.bounds(r.polygon).width * Poly.bounds(r.polygon).height }
+        if d < 0.67, now - lastRemember > 1.5 {
+          lastRemember = now
+          lockMemory.remember(image, polygon: r.polygon, sam: samLook)
+        }
+        return (results, false, false)
+      }
+    }
+    if lockMemory.isEmpty {
+      // The first look: what was chosen.
+      lastRemember = now
+      lockArea = Poly.bounds(r.polygon).width * Poly.bounds(r.polygon).height
+      lockMemory.remember(image, polygon: r.polygon, sam: samLook)
+    }
+    return (results, false, false)
+  }
+
+  /// samQueue, after a pass: name the locked thing (Vision's classifier on just the outline),
+  /// once a second until it has a name, then every few seconds.
+  private func identifyLock(_ results: [SegResult], buffer: CVPixelBuffer, rotate: Bool) {
+    guard let r = results.first(where: { $0.key == Self.lockKey }), r.polygon.count >= 3 else { return }
+    let now = CACurrentMediaTime()
+    DispatchQueue.main.async {
+      guard let l = self.lock, !self.identifying, now - l.lastLabelTime > (l.label == nil ? 1 : 4) else { return }
+      self.lock?.lastLabelTime = now
+      self.identifying = true
+      self.samQueue.async {
+        let image = CIImage(cvPixelBuffer: buffer)
+        let found = Identify.label(rotate ? image.oriented(.right) : image, polygon: r.polygon)
+        DispatchQueue.main.async {
+          self.identifying = false
+          guard self.lock != nil, let found, found.confidence >= 0.35 else { return }
+          if self.lock?.label != found.name {
+            self.lock?.label = found.name
+            self.onLockChange(["locked": true, "label": found.name])
+          }
+        }
+      }
+    }
   }
 
   private func clearLiveOutlines() {
@@ -387,20 +660,100 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     return CACurrentMediaTime() - entry.seen < 0.45
   }
 
+  /// Places to look for a lost lock, a new one every few frames: a 3x3 grid over the frame.
+  private func lockSearchPoint() -> CGPoint {
+    lockSearchTick += 1
+    let k = (lockSearchTick / 6) % 9
+    return CGPoint(x: 0.25 + 0.25 * CGFloat(k % 3), y: 0.3 + 0.2 * CGFloat(k / 3))
+  }
+
+  // MARK: - Video source
+
+  private func setUpVideo(_ url: URL) {
+    let item = AVPlayerItem(url: url)
+    let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+      kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+      kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+    ])
+    item.add(output)
+    let player = AVPlayer(playerItem: item)
+    player.isMuted = true
+    player.actionAtItemEnd = .none
+    videoEnd = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+      self?.player?.seek(to: .zero)
+      self?.player?.play()
+    }
+    let layer = AVPlayerLayer(player: player)
+    layer.videoGravity = .resizeAspectFill
+    videoView.layer.addSublayer(layer)
+    videoView.isUserInteractionEnabled = false
+    addSubview(videoView)
+    sceneView.isHidden = true
+    self.player = player
+    playerLayer = layer
+    videoOutput = output
+  }
+
+  private func pullVideoFrame() {
+    guard let output = videoOutput else { return }
+    let t = output.itemTime(forHostTime: CACurrentMediaTime())
+    guard output.hasNewPixelBuffer(forItemTime: t),
+          let buffer = output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) else { return }
+    videoSize = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+    segmentVideo(buffer)
+  }
+
+  /// Upright normalized video point -> this view (aspect fill), before zoom.
+  private func videoToView(_ p: CGPoint) -> CGPoint {
+    guard videoSize.width > 0 else { return p }
+    let s = max(bounds.width / videoSize.width, bounds.height / videoSize.height)
+    let w = videoSize.width * s, h = videoSize.height * s
+    return CGPoint(x: (bounds.width - w) / 2 + p.x * w, y: (bounds.height - h) / 2 + p.y * h)
+  }
+
+  private func viewToVideo(_ v: CGPoint) -> CGPoint {
+    guard videoSize.width > 0 else { return CGPoint(x: 0.5, y: 0.5) }
+    let s = max(bounds.width / videoSize.width, bounds.height / videoSize.height)
+    let w = videoSize.width * s, h = videoSize.height * s
+    return CGPoint(x: (v.x - (bounds.width - w) / 2) / w, y: (v.y - (bounds.height - h) / 2) / h)
+  }
+
+  private func segmentVideo(_ buffer: CVPixelBuffer) {
+    guard liveSegments, samReady, !flowBusy, bounds.width > 0, let sam = SAMSegmenter.shared else { return }
+    var seeds: [String: Seed] = [:]
+    if var l = lock {
+      if !l.seeded {
+        seeds[Self.lockKey] = Seed(point: l.seedPoint, box: l.seedBox, level: l.seedBox == nil ? l.level : nil)
+        l.seeded = true
+        lock = l
+      } else {
+        // Lost: look where it was last, then around the frame; checkLock decides.
+        let search = lockSearchPoint()
+        seeds[Self.lockKey] = Seed(point: lockSearchTick % 24 < 6 ? (l.lastSeen ?? search) : search, soft: true)
+      }
+    } else {
+      seeds[Self.centreKey] = Seed(point: viewToVideo(unzoomed(CGPoint(x: bounds.midX, y: bounds.midY * 0.92))))
+    }
+    runFlow(buffer, rotate: false, seeds: seeds, softAnchors: [:], sam: sam) { [weak self] p in
+      self?.videoToView(p) ?? p
+    }
+  }
+
   // MARK: - Zoom
 
   func setZoom(_ requested: Double) {
     guard requested.isFinite else { return }
-    let lowest: CGFloat = ultraWideFormat != nil ? 0.5 : 1
+    let lowest: CGFloat = ultraWideFormat != nil || player != nil ? 0.5 : 1
     let z = min(max(CGFloat(requested), lowest), Self.maxZoom)
     zoomFactor = z
-    let ultra = z < 1 && ultraWideFormat != nil
+    let ultra = z < 1 && ultraWideFormat != nil && player == nil
     if ultra != onUltraWide { useUltraWide(ultra) }
     // The ultra-wide sees twice as wide: 0.5 is its whole picture, 0.7 a 1.4x crop.
     zoom = ultra ? z / 0.5 : z
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     sceneView.transform = CGAffineTransform(scaleX: zoom, y: zoom)
+    videoView.transform = CGAffineTransform(scaleX: zoom, y: zoom)
     CATransaction.commit()
     layoutPins()
   }
@@ -551,6 +904,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   // MARK: - Per-frame drawing
 
   @objc private func tick() {
+    if player != nil { pullVideoFrame() }
     let center = CGPoint(x: bounds.midX, y: bounds.midY * 0.92)
     let boxes = UIBezierPath()
     let focus = UIBezierPath()
@@ -580,7 +934,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     CATransaction.setDisableActions(true)
     boxLayer.path = boxes.cgPath
     focusLayer.path = focus.cgPath
-    if showDetections, let f = newFocus {
+    if showDetections, lock == nil, let f = newFocus {
       focusTag.isHidden = false
       if focusTag.text != f.label { focusTag.text = f.label }
       focusTag.center = CGPoint(x: f.shown.minX + focusTag.bounds.width / 2, y: f.shown.minY - 20)

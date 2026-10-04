@@ -23,7 +23,7 @@ import { face } from '../../theme/type';
 import { labelWidth } from '../capture/layout';
 import type { CameraHandle, VirtualGuidePins } from './CameraSurface';
 
-export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom'>;
+export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom' | 'lock' | 'unlock'>;
 
 /** The virtual camera "zooms" its scene the way the real one does: 0.5x to 10x. */
 const ZOOM: ZoomRange = { min: 0.5, max: 10, zoom: 1 };
@@ -41,13 +41,16 @@ export const VirtualCamera = forwardRef<
     liveOutlines?: boolean;
     onScene?: (s: DemoScene) => void;
     onZoomRange?: (r: ZoomRange) => void;
+    /** The scene's subject was locked (or released): it's the only thing the virtual camera can follow. */
+    onLock?: (e: { locked: boolean; label: string | null }) => void;
     guidePins?: VirtualGuidePins;
     sceneKey?: string;
   }
->(function VirtualCamera({ pen, brackets, liveOutlines, onScene, onZoomRange, guidePins, sceneKey }, ref) {
+>(function VirtualCamera({ pen, brackets, liveOutlines, onScene, onZoomRange, onLock, guidePins, sceneKey }, ref) {
   const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [locked, setLocked] = useState(false);
   useEffect(() => {
     onZoomRange?.(ZOOM);
   }, [onZoomRange]);
@@ -62,6 +65,12 @@ export const VirtualCamera = forwardRef<
     onScene?.(scene);
     setDemoQuestion(scene.script.question);
   }, [scene, onScene]);
+  // A new scene: the locked thing isn't in it.
+  useEffect(() => {
+    setLocked(false);
+    onLock?.({ locked: false, label: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene.key]);
 
   useImperativeHandle(
     ref,
@@ -72,8 +81,16 @@ export const VirtualCamera = forwardRef<
       setTorch: async () => false,
       nextScene: (dir: 1 | -1) => setIndex((i) => (i + dir + DEMO_SCENES.length) % DEMO_SCENES.length),
       setZoom: (z: number) => setZoom(Math.min(ZOOM.max, Math.max(ZOOM.min, z))),
+      lock: () => {
+        setLocked(true);
+        onLock?.({ locked: true, label: scene.objects[0]?.label ?? null });
+      },
+      unlock: () => {
+        setLocked(false);
+        onLock?.({ locked: false, label: null });
+      },
     }),
-    [scene],
+    [scene, onLock],
   );
 
   const drift = useSharedValue(0);
@@ -114,8 +131,8 @@ export const VirtualCamera = forwardRef<
         <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
         {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
         {/* Live outline of what's in view, as the phone's live SAM draws it (the scene's real SAM outline). */}
-        {liveOutlines && !guidePins?.parts.length ? (
-          <GuideOutline key={`live-${scene.key}`} part={{ id: 'live', label: '', at: { x: 0.5, y: 0.5 }, outline: scene.outline.polygon.map(([x, y]) => ({ x, y })) }} fit={fit} pen={pen} focused={false} strong />
+        {(liveOutlines || locked) && !guidePins?.parts.length ? (
+          <GuideOutline key={`live-${scene.key}`} part={{ id: 'live', label: '', at: { x: 0.5, y: 0.5 }, outline: scene.outline.polygon.map(([x, y]) => ({ x, y })) }} fit={fit} pen={pen} focused={locked} strong />
         ) : null}
         {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}
         {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}
