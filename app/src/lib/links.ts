@@ -19,6 +19,8 @@ export type ScriptParams = {
   scene?: string;
   /** Web preview: what the fake recogniser hears after the scene's question, lines split by `|` (films hands-free). */
   talk?: string;
+  /** Tap the camera here once it's up, as `x,y` in 0–1 of the screen (CI films tap-to-outline). */
+  outline?: string;
 };
 
 /** `"0.3,0.33"` as a point on the photo, or null when it isn't one. */

@@ -123,6 +123,10 @@ done
 # Default brain: Apple Intelligence fails in this VM, so the eyes tag the parts.
 scenario 10-live-guide 40 "lensi:///?scene=truck&guide=How%20do%20I%20check%20the%20tyre%20pressure%3F"
 
+# Tap to outline: a tap on the camera outlines what's there, here the front tyre (the
+# Simulator's camera picks the scene's real SAM shape under the finger; a phone runs live SAM).
+scenario 10c-tap-outline 12 "lensi:///?scene=truck&outline=0.96,0.54"
+
 # The same job with steps: the Lensi server in mock mode answers it with a scripted
 # plan (no model, no key), so the real app's panel, tags and outline can be filmed.
 # The server runs on this Mac; the Simulator reaches it as localhost.

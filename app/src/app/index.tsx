@@ -328,6 +328,14 @@ export default function Camera() {
     if (params.brain === 'auto' || params.brain === 'apple' || params.brain === 'cloud' || params.brain === 'vision') {
       setSettings({ brain: params.brain });
     }
+    if (params.outline) {
+      // A tap on the camera, as if made by hand (the scene comes up first).
+      const at = pointOf(params.outline);
+      if (at) {
+        const h = setTimeout(() => camera.current?.outlineAt?.(at.x * width, at.y * height), 2500);
+        return () => clearTimeout(h);
+      }
+    }
     if (params.guide) {
       // Give the camera a moment to come up, then start the job as if it were said.
       setLens('guide');
@@ -361,7 +369,7 @@ export default function Camera() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk]);
+  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk, params.outline]);
 
   // Zoom: pinch the camera, or tap .5 / 1 / 2 / 5. The camera says how far it
   // goes (.5 only where ARKit can track with the ultra-wide).
