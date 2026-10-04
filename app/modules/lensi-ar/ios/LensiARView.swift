@@ -930,8 +930,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let top = box.minY - h - 6
         pin.label.center = CGPoint(x: min(max(box.midX, half), bounds.width - half),
                                    y: min(max(top, visible.minY + h), max(visible.minY + h, visible.maxY - h)))
+        placeTag(pin)
         continue
       }
+      // Its outline isn't drawn (out of view): nor is its tag.
+      if held { pin.tagNode?.isHidden = true }
       let y = pin.parentId == Self.guideParent ? min(max(p.y, visible.minY + 13), visible.maxY - 13) : p.y
       pin.label.center = CGPoint(x: min(max(p.x, half), bounds.width - half), y: y)
       if pin.parentId == Self.guideParent { drawGuideOutline(pin) }
@@ -945,6 +948,23 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         )
       }
     }
+  }
+
+  /// A pinned thing's tag as SceneKit draws it (TagNode), where its UIKit copy is on screen: in
+  /// the world at the depth of its outline, so it's drawn with the outline in the camera's frame.
+  private func placeTag(_ pin: Pin) {
+    guard let tag = pin.tagNode else { return }
+    guard let eye = outlineEye(), let shape = liveShapes[pin.id] else {
+      tag.isHidden = true
+      return
+    }
+    let middle = OutlineMath.centre(shape.drawn ?? shape.world)
+    let depth = sceneView.projectPoint(SCNVector3(middle.x, middle.y, middle.z)).z
+    let at = unzoomed(pin.label.center)
+    let w = sceneView.unprojectPoint(SCNVector3(Float(at.x), Float(at.y), depth))
+    tag.show(pin.label)
+    tag.place(at: simd_float3(w.x, w.y, w.z), eye: eye)
+    tag.isHidden = false
   }
 
   /// Puts a tag on the edge of `area`, on the line from its middle towards
@@ -1284,7 +1304,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     node.isHidden = true
     outlines.addChildNode(node)
     liveLayers[id] = node
-    addPin(Pin(id: id, parentId: nil, world: centre, text: thing.label ?? "Looking", color: accent))
+    // Its tag is drawn by SceneKit with its outline, so the two move as one (TagNode).
+    let pin = Pin(id: id, parentId: nil, world: centre, text: thing.label ?? "Looking", color: accent)
+    pin.label.drawnElsewhere = true
+    let tag = TagNode()
+    tag.isHidden = true
+    outlines.addChildNode(tag)
+    pin.tagNode = tag
+    addPin(pin)
     scrubThings[index].pinId = id
     // Drawn as its pin from now on.
     layoutScrub()

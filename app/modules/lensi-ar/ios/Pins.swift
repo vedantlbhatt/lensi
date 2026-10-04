@@ -29,6 +29,11 @@ final class PinLabel: UIView {
   var color: UIColor { didSet { apply() } }
   var emphasis: Emphasis = .normal { didSet { if emphasis != oldValue { apply() } } }
   let isCallout: Bool
+  /// SceneKit draws this tag (TagNode, from `picture()`), with its thing's outline in the camera's
+  /// own frame: the view stays where the tag is, for taps, but shows nothing.
+  var drawnElsewhere = false { didSet { if drawnElsewhere != oldValue { apply() } } }
+  /// How opaque the view is when nothing's animating it.
+  private var restingAlpha: CGFloat { drawnElsewhere ? 0 : emphasis == .dimmed ? 0.55 : 1 }
 
   /// Screen-space direction to the part, in radians (0 = right, π/2 = down);
   /// nil while the part is in view.
@@ -66,7 +71,38 @@ final class PinLabel: UIView {
   private func apply() {
     backgroundColor = !isCallout || emphasis == .focused ? color : .white
     label.textColor = .black
-    alpha = emphasis == .dimmed ? 0.55 : 1
+    alpha = restingAlpha
+  }
+
+  /// Room around `picture()` for the tag's shadow.
+  static let pictureMargin: CGFloat = 12
+
+  /// The tag as a picture, its shadow included (`pictureMargin` all round), as it looks on screen.
+  func picture() -> UIImage {
+    let m = PinLabel.pictureMargin
+    let format = UIGraphicsImageRendererFormat.default()
+    format.opaque = false
+    let size = CGSize(width: bounds.width + 2 * m, height: bounds.height + 2 * m)
+    return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+      let cg = ctx.cgContext
+      let pill = UIBezierPath(roundedRect: CGRect(x: m, y: m, width: bounds.width, height: bounds.height), cornerRadius: layer.cornerRadius)
+      cg.saveGState()
+      cg.setShadow(offset: layer.shadowOffset, blur: layer.shadowRadius,
+                   color: UIColor.black.withAlphaComponent(CGFloat(layer.shadowOpacity)).cgColor)
+      (backgroundColor ?? color).setFill()
+      pill.fill()
+      cg.restoreGState()
+      let style = NSMutableParagraphStyle()
+      style.lineBreakMode = .byTruncatingTail
+      let text = NSAttributedString(string: label.text ?? "", attributes: [
+        .font: label.font ?? UIFont.systemFont(ofSize: 16, weight: .bold),
+        .foregroundColor: label.textColor ?? UIColor.black,
+        .paragraphStyle: style,
+      ])
+      let line = text.size().height
+      text.draw(with: CGRect(x: m + label.frame.minX, y: m + (bounds.height - line) / 2, width: label.frame.width, height: line + 2),
+                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], context: nil)
+    }
   }
 
   var text: String {
@@ -107,6 +143,8 @@ final class Pin {
   /// it (only while its step is up).
   var guideOutline: [simd_float3] = []
   var guideShape: OutlineNode?
+  /// A pinned thing's tag as SceneKit draws it, with its outline (TagNode).
+  var tagNode: TagNode?
   var outlineScreenOrigin: CGPoint = .zero
   var outlineDistance: Float = 1
   /// The zoom it was drawn at; it scales with the zoom from there.
@@ -144,7 +182,10 @@ final class Pin {
     dot.isHidden = hidden
     line.isHidden = hidden
     outline?.isHidden = hidden
-    if hidden { guideShape?.isHidden = true }
+    if hidden {
+      guideShape?.isHidden = true
+      tagNode?.isHidden = true
+    }
   }
 
   func removeFromSuperview() {
@@ -153,15 +194,66 @@ final class Pin {
     line.removeFromSuperlayer()
     outline?.removeFromSuperlayer()
     guideShape?.removeFromParentNode()
+    tagNode?.removeFromParentNode()
   }
 
   /// Fades in from slightly small and stops: no spring, no overshoot.
   func popIn() {
+    guard !label.drawnElsewhere else { return }
     label.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
     label.alpha = 0
     UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
       self.label.transform = .identity
       self.label.alpha = 1
     }
+  }
+}
+
+/// A pinned thing's tag, drawn by SceneKit like its outline (OutlineNode), so the two move as one
+/// with the camera image however fast the phone moves: a picture of the tag (PinLabel.picture),
+/// facing the camera, the same size on screen at any distance. The UIKit tag stays where it is,
+/// for taps, and shows nothing.
+final class TagNode: SCNNode {
+  private let plane = SCNPlane(width: 0.1, height: 0.04)
+  /// What the picture shows (text, colour, size): it's redrawn only when that changes.
+  private var drawnFor = ""
+  private var size = CGSize.zero
+
+  override init() {
+    super.init()
+    let m = SCNMaterial()
+    m.lightingModel = .constant
+    m.isDoubleSided = true
+    m.readsFromDepthBuffer = false
+    m.writesToDepthBuffer = false
+    m.blendMode = .alpha
+    plane.materials = [m]
+    geometry = plane
+    // Over the outlines.
+    renderingOrder = 2_000
+    let facing = SCNBillboardConstraint()
+    facing.freeAxes = .all
+    constraints = [facing]
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is not used")
+  }
+
+  /// Shows `label` as it looks now.
+  func show(_ label: PinLabel) {
+    let key = "\(label.text)|\(label.color.description)|\(label.bounds.width)x\(label.bounds.height)"
+    guard key != drawnFor else { return }
+    drawnFor = key
+    let picture = label.picture()
+    plane.firstMaterial?.diffuse.contents = picture
+    size = picture.size
+  }
+
+  /// Its middle at `world`, its size on screen the picture's, as `eye` sees it.
+  func place(at world: simd_float3, eye: OutlineEye) {
+    simdPosition = world
+    plane.width = CGFloat(eye.metres(Float(size.width), at: world))
+    plane.height = CGFloat(eye.metres(Float(size.height), at: world))
   }
 }
