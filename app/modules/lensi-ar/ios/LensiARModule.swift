@@ -218,6 +218,27 @@ public class LensiARModule: Module {
       AsyncFunction("setZoom") { (view: LensiARView, zoom: Double) in
         view.setZoom(zoom)
       }.runOnQueue(.main)
+
+      // The strip: slide to pick, hold to pin.
+      AsyncFunction("scrubStart") { (view: LensiARView, top: Double, bottom: Double, promise: Promise) in
+        view.scrubStart(top: top, bottom: bottom) { things in promise.resolve(things) }
+      }.runOnQueue(.main)
+
+      AsyncFunction("scrubTo") { (view: LensiARView, index: Int) in
+        view.scrubTo(index)
+      }.runOnQueue(.main)
+
+      AsyncFunction("scrubPin") { (view: LensiARView, index: Int) -> String? in
+        view.scrubPin(index)
+      }.runOnQueue(.main)
+
+      AsyncFunction("scrubEnd") { (view: LensiARView) in
+        view.scrubEnd()
+      }.runOnQueue(.main)
+
+      AsyncFunction("scrubClear") { (view: LensiARView) in
+        view.scrubClear()
+      }.runOnQueue(.main)
     }
   }
 }

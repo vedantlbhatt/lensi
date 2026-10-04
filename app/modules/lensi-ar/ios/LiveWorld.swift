@@ -98,9 +98,12 @@ struct LiveShape {
   var tagOffset: simd_float3?
   /// Its last change of shape, so the next tells real turning or bending from edge noise.
   var lastChange: [simd_float3]?
-  /// It follows its thing from frame to frame (a guide part, a tapped thing); the reticle's
-  /// is just whatever is in the middle.
+  /// It follows its thing from frame to frame (a guide part, a pinned thing).
   let follows: Bool
+  /// Pinned by the user (the strip): never let go, however long SAM loses it (behind a hand,
+  /// out of view). It stays where it was in the world, and only a cut that fits it there
+  /// takes it back.
+  var pinned = false
   /// How far the flow has carried it, frame by frame (capture times, newest last, the last
   /// second): a SAM cut that lands after the flow has moved on is brought along the same way.
   var moves: [(t: CFTimeInterval, by: simd_float3)] = []

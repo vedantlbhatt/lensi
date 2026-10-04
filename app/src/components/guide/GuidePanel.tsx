@@ -83,7 +83,7 @@ export function GuidePanel({
       ) : idle ? (
         <Animated.View key="idle" entering={FadeIn.duration(200)} style={styles.block}>
           <Text style={styles.title}>What are you working on?</Text>
-          <Text style={styles.sub}>Tap the mic and say what&rsquo;s wrong: Lensi tags the parts and walks you through it. Tap anything to outline it.</Text>
+          <Text style={styles.sub}>Tap the mic and say what&rsquo;s wrong: Lensi tags the parts and walks you through it. Slide along the bar below the camera to pick a part, and hold to pin it.</Text>
           {state.note ? <Text style={[styles.note, { color: toneColor(state.note.tone, pen) }]}>{state.note.text}</Text> : null}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} style={styles.chipScroll}>
             {STARTERS.map((s) => (

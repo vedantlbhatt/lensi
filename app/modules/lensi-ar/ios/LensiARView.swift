@@ -37,14 +37,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var lastSamPose: simd_float4x4?
   /// SAM once it has loaded (nil until then, and on a phone without the models).
   private var sam: SAMSegmenter?
-  /// What a tap asked to have outlined (when taps don't pin): a point in the world, so the
-  /// outline stays on it as the phone moves. Nil: whatever is in the middle of the screen.
-  private var tapTarget: simd_float3?
-  /// Live outlines by what they're of: a guide tag's pin id, or `centreKey`. Their state is
-  /// LiveShape (LiveWorld.swift, which tools/pin runs on ARKit's recorded poses); their layers
-  /// are here.
+  /// Live outlines by what they're of: a guide tag's pin id, or a pinned thing's. Their state
+  /// is LiveShape (LiveWorld.swift, which tools/pin runs on ARKit's recorded poses); their
+  /// layers are here, and where each was last drawn on screen (a pinned thing's tag sits above it).
   private var liveShapes: [String: LiveShape] = [:]
   private var liveLayers: [String: OutlineLayer] = [:]
+  private var liveBoxes: [String: CGRect] = [:]
+  /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
+  private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
   private let flowQueue = DispatchQueue(label: "lensi.flow", qos: .userInitiated)
   private var flowBusy = false
@@ -54,8 +54,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// camera and capture time), and what makes the small copies.
   private var flowPrevious: (frame: LiveFlow.Frame, camera: FrozenCamera, t: CFTimeInterval)?
   private lazy var flowContext = CIContext(options: [.useSoftwareRenderer: false])
-  private static let centreKey = "centre"
-  /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
+  /// Taps pin things in space only in live mode; otherwise a tap on the camera does nothing
+  /// (things are picked and pinned on the strip: `scrubStart`).
   var livePins = false
   /// Room the app's own chrome takes (the guide panel below, the top bar):
   /// guide tags keep clear of it.
@@ -92,6 +92,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var pins: [String: Pin] = [:]
   private var pinOrder: [String] = []
   private var contexts: [String: FrozenCamera] = [:]
+
+  // The strip (slide to pick, hold to pin): the things in view when the finger landed.
+  private var scrubThings: [ScrubThing] = []
+  private var scrubIndex: Int?
+  /// Bumped by every landing and lift: a search that answers after its finger has gone is dropped.
+  private var scrubSession = 0
+  /// The strip's search is on SAM's queue: the live outlines wait for it.
+  private var scrubBusy = false
 
   // Live guide: frames the plan was made from (pose frozen), the part being
   // watched for a change, and the state of that watch.
@@ -234,9 +242,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   //
   // SAM on the camera feed, as often as the phone keeps up (the encoder on the
   // Neural Engine, then one decoder pass per prompt). Prompts: where each guide
-  // tag's part is in this frame, so its outline is re-cut from wherever the
-  // phone is now; with no tags, the tracked object under the reticle; with
-  // nothing tracked, whatever is in the middle of the screen.
+  // tag's part, and each thing pinned from the strip, is in this frame, so its
+  // outline is re-cut from wherever the phone is now. Nothing else is outlined
+  // by itself, so moving the phone never changes what is.
   //
   // Each outline SAM finds is laid in the world (on a plane through its part,
   // facing the camera that saw it) and redrawn from there every display frame,
@@ -254,8 +262,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// Where the thing should be in this frame (its outline carried along, seen from here):
     /// a cut that doesn't fit it is something else and is refused. Nil for a first look.
     let predicted: [CGPoint]?
-    /// The shape follows its thing from frame to frame (a guide part, a tapped thing);
-    /// the reticle's is just whatever is in the middle.
+    /// The shape follows its thing from frame to frame (a guide part, a pinned thing).
     let follows: Bool
     /// Which cut to take as the thing, and how to blend it in (LiveTracker.asking: strict and
     /// gentle for a still thing).
@@ -265,7 +272,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   private func segmentLive(_ frame: ARFrame) {
     // Not while a photo is being analysed: a plan or an answer is waiting on that.
-    guard liveSegments, !samBusy, bounds.width > 0, let sam, !Analyzer.analyzing else { return }
+    guard liveSegments, !samBusy, !scrubBusy, bounds.width > 0, let sam, !Analyzer.analyzing else { return }
     // As often as the phone keeps up; less often once it runs hot, or while it's propped up
     // and still with nothing moving in front of it (then 4 times a second is plenty).
     var gap: TimeInterval
@@ -286,17 +293,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let upright = CGSize(width: res.height, height: res.width)
     let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
     var prompts: [LivePrompt] = []
-    // Depth under a prompt: a raycast, or the tracked points near its ray.
-    func depth(at p: CGPoint) -> simd_float3 {
-      GuideFrameContext(selection: FrozenCamera(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
-        .anchor(at: p, session: sceneView.session)
-    }
     // A shape that follows its thing: SAM is asked where it should be in this frame (its
     // outline carried along by its own motion, seen from where the phone is now).
     func follow(_ key: String) -> LivePrompt? {
-      guard let shape = liveShapes[key], shape.follows, shape.misses < 2 else { return nil }
+      guard let shape = liveShapes[key], shape.follows, shape.misses < 2 || shape.pinned else { return nil }
       let now = shape.placed(at: frame.timestamp)
-      let asking = LiveTracker.asking(sizesPerSecond: CGFloat(shape.sizesPerSecond))
+      // A pinned thing SAM has lost (behind a hand, out of view) is only taken back where it
+      // was and as it was: asked for as a still thing, strictly.
+      let asking = LiveTracker.asking(sizesPerSecond: shape.misses < 2 ? CGFloat(shape.sizesPerSecond) : 0)
       guard let predicted = uprightPoints(now, camera: frame.camera, upright: upright),
             predicted.contains(where: { unit.contains($0) }),
             let p = LiveTracker.prompt(for: predicted, scale: upright, grow: asking.grow) else { return nil }
@@ -331,35 +335,19 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let box = uprightBox(pin.guideOutline, camera: frame.camera, upright: upright)
         prompts.append(LivePrompt(key: pin.id, point: at, box: box, part: box == nil, anchor: pin.world, predicted: nil, follows: true))
       }
-    } else if let p = follow(Self.centreKey) {
-      // The tapped thing, wherever it has gone.
-      prompts.append(p)
-    } else {
-      // A tapped thing's last known place, in this frame (in front of the phone, in the picture).
-      var tapped: CGPoint?
-      if let target = tapTarget {
-        if simd_mul(frame.camera.transform.inverse, simd_float4(target, 1)).z < -0.05 {
-          let q = frame.camera.projectPoint(target, orientation: .portrait, viewportSize: upright)
-          let p = CGPoint(x: q.x / upright.width, y: q.y / upright.height)
-          if p.x > 0.01, p.x < 0.99, p.y > 0.01, p.y < 0.99 { tapped = p }
-        }
-        if tapped == nil { tapTarget = nil }
-      }
-      if let tapped, let target = tapTarget {
-        prompts.append(LivePrompt(key: Self.centreKey, point: tapped, box: nil, part: true, anchor: target, predicted: nil, follows: true))
-      } else if let t = tracked.first(where: { $0.id == focusedId }) {
-        let box = viewRectToUpright(t.shown, frame: frame).intersection(unit)
-        if !box.isNull, box.width > 0.01, box.height > 0.01 {
-          let middle = CGPoint(x: box.midX, y: box.midY)
-          prompts.append(LivePrompt(key: Self.centreKey, point: nil, box: box, part: false, anchor: depth(at: middle), predicted: nil, follows: false))
-        }
-      } else {
-        let middle = viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame)
-        if unit.contains(middle) {
-          // Part-sized, like a tap: pointed at an engine, the part in the middle, not the whole bay.
-          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: true, anchor: depth(at: middle), predicted: nil, follows: false))
+    }
+    // Pinned things (the strip): one or two a frame, in turns, each where it should be now.
+    let held = pinOrder.filter { liveShapes[$0]?.pinned == true }
+    if !held.isEmpty {
+      let ask = min(prompts.isEmpty ? 2 : 1, held.count)
+      var asked = 0
+      for i in 0..<held.count where asked < ask {
+        if let p = follow(held[(pinTurn + i) % held.count]) {
+          prompts.append(p)
+          asked += 1
         }
       }
+      pinTurn += 1
     }
     guard !prompts.isEmpty else { return }
     samBusy = true
@@ -458,7 +446,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for prompt in asked {
       let key = prompt.key
       if let world = found[key] {
-        if var shape = liveShapes[key], t - shape.seen < 2 {
+        // A pinned thing is blended back however long it was lost: its cut was asked for where
+        // it should be, and had to fit it there.
+        if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
           shape.take(world, at: t, how: prompt.smoothing)
           liveShapes[key] = shape
         } else {
@@ -476,8 +466,6 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           }
           liveShapes[key] = shape
         }
-        // A tapped thing is wherever its outline is now (so a lost one is looked for there).
-        if key == Self.centreKey, prompt.follows, let shape = liveShapes[key] { tapTarget = OutlineMath.centre(shape.world) }
       } else if var shape = liveShapes[key] {
         shape.misses += 1
         shape.velocity *= 0.5
@@ -532,61 +520,65 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   /// Every display frame: each live outline drawn where its thing is now (carried along by
-  /// its own motion between SAM's frames; the phone's is ARKit's). The current step's in the
-  /// lens colour, the rest thin and white. It goes (fading) once SAM has missed it twice in
-  /// a row or its tag goes; one that's simply not been asked about lately (out of view, or
-  /// waiting its turn) stays where it is in the world for up to `liveStale`.
+  /// its own motion between SAM's frames; the phone's is ARKit's). The current step's part and
+  /// every pinned thing bold in their colour, other parts thin and white. A guide part's goes
+  /// (fading) once SAM has missed it twice in a row or its tag goes; one that's simply not been
+  /// asked about lately (out of view, or waiting its turn) stays where it is in the world for up
+  /// to `liveStale`. A pinned thing's goes only with its pin: lost, it stays where it was.
   private func layoutLive() {
     guard !liveShapes.isEmpty else { return }
     let now = CACurrentMediaTime()
     let toCamera = sceneView.session.currentFrame?.camera.transform.inverse
-    let guiding = pins.values.contains { $0.parentId == Self.guideParent }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
     for (key, var shape) in liveShapes {
       let pin = pins[key]
-      let gone = key == Self.centreKey ? guiding : pin == nil
       let age = now - shape.cut
       guard let layer = liveLayers[key] else {
         liveShapes[key] = nil
         continue
       }
-      if gone || shape.misses >= 2 || age > Self.liveStale {
+      if pin == nil || (!shape.pinned && (shape.misses >= 2 || age > Self.liveStale)) {
         retire(layer)
         liveShapes[key] = nil
         liveLayers[key] = nil
+        liveBoxes[key] = nil
         continue
       }
       guard let toCamera, pin.map({ !$0.label.isHidden && $0.label.pointing == nil }) ?? true else {
         layer.isHidden = true
+        liveBoxes[key] = nil
         continue
       }
       let drawn = shape.draw(at: now)
       liveShapes[key] = shape
-      let path = UIBezierPath()
-      var behind = false
-      for (i, w) in drawn.enumerated() {
-        guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else {
-          behind = true
-          break
-        }
-        let q = sceneView.projectPoint(SCNVector3(w.x, w.y, w.z))
-        let v = zoomed(CGPoint(x: CGFloat(q.x), y: CGFloat(q.y)))
-        if i == 0 { path.move(to: v) } else { path.addLine(to: v) }
-      }
-      guard !behind else {
+      guard let path = screenPath(drawn, toCamera: toCamera) else {
         layer.isHidden = true
+        liveBoxes[key] = nil
         continue
       }
-      path.close()
       let focused = pin?.label.emphasis == .focused
-      let strong = focused || key == Self.centreKey
-      let color: UIColor = focused ? accent : .white
+      let strong = focused || shape.pinned
+      let color: UIColor = shape.pinned ? (pin?.label.color ?? accent) : focused ? accent : .white
       layer.setOutline(path.cgPath)
-      layer.style(color, width: focused ? 2.5 : strong ? 2 : 1.5, stroke: strong ? 1 : 0.75, fill: focused ? 0.14 : 0.07)
+      layer.style(color, width: strong ? 2.5 : 1.5, stroke: strong ? 1 : 0.75, fill: focused ? 0.14 : shape.pinned ? 0.1 : 0.07)
       layer.isHidden = false
+      liveBoxes[key] = path.bounds
     }
+  }
+
+  /// World points as a closed path on screen; nil when any is behind the phone.
+  private func screenPath(_ world: [simd_float3], toCamera: simd_float4x4) -> UIBezierPath? {
+    let path = UIBezierPath()
+    for (i, w) in world.enumerated() {
+      guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else { return nil }
+      let q = sceneView.projectPoint(SCNVector3(w.x, w.y, w.z))
+      let v = zoomed(CGPoint(x: CGFloat(q.x), y: CGFloat(q.y)))
+      if i == 0 { path.move(to: v) } else { path.addLine(to: v) }
+    }
+    path.close()
+    return path
   }
 
   /// Not re-cut for this long (seconds), an outline is let go even if nothing said it's wrong.
@@ -602,10 +594,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     CATransaction.commit()
   }
 
+  /// Live outlines off (or the camera paused under a capture): what SAM was keeping up goes,
+  /// but a pinned thing stays pinned (drawn where it was, followed again once they're back on).
   private func clearLiveOutlines() {
-    for layer in liveLayers.values { layer.removeFromSuperlayer() }
-    liveLayers.removeAll()
-    liveShapes.removeAll()
+    for key in Array(liveShapes.keys) where liveShapes[key]?.pinned != true {
+      liveShapes[key] = nil
+    }
+    for (key, layer) in liveLayers where liveShapes[key] == nil {
+      layer.removeFromSuperlayer()
+      liveLayers[key] = nil
+      liveBoxes[key] = nil
+    }
   }
 
   /// A live outline is being kept up for this pin, so its frozen one steps aside (never both:
@@ -808,13 +807,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     CATransaction.setDisableActions(true)
     boxLayer.path = boxes.cgPath
     focusLayer.path = focus.cgPath
-    if showDetections, let f = newFocus {
-      focusTag.isHidden = false
-      if focusTag.text != f.label { focusTag.text = f.label }
-      focusTag.center = CGPoint(x: f.shown.minX + focusTag.bounds.width / 2, y: f.shown.minY - 20)
-    } else {
-      focusTag.isHidden = true
-    }
+    // No name follows the reticle: what the camera is "on" would change every time the phone
+    // moved. Things are named once they're pinned.
+    focusTag.isHidden = true
     CATransaction.commit()
 
     if newFocus?.label != focusedLabel {
@@ -823,8 +818,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
     focusedId = newFocus?.id
 
-    layoutPins()
+    // Outlines first: a pinned thing's tag sits above where its outline is drawn.
     layoutLive()
+    layoutPins()
+    layoutScrub()
   }
 
   private func brackets(_ r: CGRect, length: CGFloat) -> UIBezierPath {
@@ -853,8 +850,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let visible = bounds.inset(by: pinInsets)
     for id in pinOrder {
       guard let pin = pins[id] else { continue }
-      // A guide tag rides with its part when the part moves (its live outline says where).
-      let anchor = pin.parentId == Self.guideParent ? tagWorld(pin) : pin.world
+      // A guide tag rides with its part when the part moves, and a pinned thing's with the
+      // thing (their live outlines say where).
+      let held = liveShapes[id]?.pinned == true
+      let anchor = pin.parentId == Self.guideParent || held ? tagWorld(pin) : pin.world
       let projected = project(anchor)
       if pin.parentId == Self.guideParent {
         // A little hysteresis, so a part right on the edge doesn't flicker between the two.
@@ -878,6 +877,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       // The tag sits on the thing itself: no dot, no leader line. A part near
       // the edge keeps its whole tag on screen.
       let half = pin.label.bounds.width / 2 + 8
+      // A pinned thing's tag sits just above its outline: it names the thing without covering it.
+      if held, let box = liveBoxes[id] {
+        let h = pin.label.bounds.height / 2
+        let top = box.minY - h - 6
+        pin.label.center = CGPoint(x: min(max(box.midX, half), bounds.width - half),
+                                   y: min(max(top, visible.minY + h), max(visible.minY + h, visible.maxY - h)))
+        continue
+      }
       let y = pin.parentId == Self.guideParent ? min(max(p.y, visible.minY + 13), visible.maxY - 13) : p.y
       pin.label.center = CGPoint(x: min(max(p.x, half), bounds.width - half), y: y)
       if pin.parentId == Self.guideParent { drawGuideOutline(pin) }
@@ -933,29 +940,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         return
       }
     }
-    guard livePins else {
-      outlineTapped(p)
-      return
-    }
+    // Otherwise a tap on the camera does nothing: things are picked on the strip.
+    guard livePins else { return }
     select(at: p)
-  }
-
-  /// A tap with nothing to pin: outline what's under the finger, live, until another tap or
-  /// it leaves the picture (then it's the middle of the screen again).
-  private func outlineTapped(_ point: CGPoint) {
-    guard liveSegments, let frame = sceneView.session.currentFrame else { return }
-    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
-    let at = viewToUpright(point, frame: frame)
-    guard unit.contains(at) else { return }
-    let look = GuideFrameContext(selection: FrozenCamera(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
-    tapTarget = look.anchor(at: at, session: sceneView.session)
-    // What's outlined now is something else: let it go, and cut the new one on the next frame.
-    if let old = liveLayers[Self.centreKey] {
-      retire(old)
-      liveLayers[Self.centreKey] = nil
-    }
-    liveShapes[Self.centreKey] = nil
-    lastSamTime = 0
   }
 
   /// Picks the tracked object under `point` (or the focused one), freezes the
@@ -1082,6 +1069,219 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     layoutPins()
     pin.popIn()
     UIImpactFeedbackGenerator(style: pin.parentId == nil ? .medium : .light).impactOccurred()
+  }
+
+  // MARK: - The strip: slide to pick, hold to pin
+  //
+  // A finger landing on the strip asks for the things in view: SAM's part proposals on the
+  // frame on screen, and YOLO's whole objects cut from their boxes, each laid in the world on
+  // a plane through it at the depth under its middle. Sliding moves the highlight from one to
+  // the next in the order they were across the screen, and holding still pins the highlighted
+  // one (JS times the hold). They're fixed in the world when the finger lands, so moving the
+  // phone never changes which one is highlighted; a pinned one is then followed like a guide
+  // part, and never let go.
+
+  private struct ScrubThing {
+    /// OutlineMath.count points in the world, on a plane through it facing the camera.
+    let world: [simd_float3]
+    /// YOLO's name for it, when it's one of YOLO's things.
+    let label: String?
+    let confidence: Float
+    let layer: OutlineLayer
+    /// Its pin once it's pinned (holding on it again does nothing).
+    var pinId: String?
+  }
+
+  /// One thing found in the picture (upright 0…1).
+  private struct ScrubFind {
+    let polygon: [CGPoint]
+    let label: String?
+    let confidence: Float
+  }
+
+  /// The things in view, between `top` and `bottom` on screen (points: clear of the app's
+  /// chrome). Answers each one's name (or none) and where its middle is on screen (0…1), left
+  /// to right; none when there's no frame or nothing found.
+  func scrubStart(top: Double, bottom: Double, done: @escaping ([[String: Any]]) -> Void) {
+    scrubEnd()
+    let session = scrubSession
+    guard bounds.width > 0, let frame = sceneView.session.currentFrame else {
+      done([])
+      return
+    }
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    let lo = CGFloat(max(0, top))
+    let hi = min(bounds.height, CGFloat(bottom))
+    let region = viewRectToUpright(CGRect(x: 0, y: lo, width: bounds.width, height: max(1, hi - lo)), frame: frame).intersection(unit)
+    guard !region.isNull, region.width > 0.05, region.height > 0.05 else {
+      done([])
+      return
+    }
+    // YOLO's things in view: whole objects, with names.
+    let objects: [ScrubFind] = tracked.compactMap { (t: Tracked) -> ScrubFind? in
+      guard t.missed == 0 else { return nil }
+      let b = viewRectToUpright(t.shown, frame: frame).intersection(region)
+      guard !b.isNull, b.width > 0.03, b.height > 0.03 else { return nil }
+      return ScrubFind(polygon: [CGPoint(x: b.minX, y: b.minY), CGPoint(x: b.maxX, y: b.minY),
+                                 CGPoint(x: b.maxX, y: b.maxY), CGPoint(x: b.minX, y: b.maxY)],
+                       label: t.label, confidence: t.confidence)
+    }
+    let camera = FrozenCamera(frame: frame, crop: unit)
+    let points = frame.rawFeaturePoints?.points ?? []
+    let res = frame.camera.imageResolution
+    let upright = CGSize(width: res.height, height: res.width)
+    guard let sam else {
+      // No SAM on this phone: YOLO's boxes are the things.
+      done(scrubLay(objects, camera: camera, points: points, upright: upright))
+      return
+    }
+    let buffer = frame.capturedImage
+    scrubBusy = true
+    samQueue.async { [weak self] in
+      let started = CACurrentMediaTime()
+      var found: [ScrubFind] = []
+      do {
+        try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "scrub")
+        for o in objects.prefix(4) {
+          let b = LiveTracker.bounds(o.polygon)
+          let m = try sam.segment(id: "scrub", points: [], labels: [], box: b)
+          if m.score >= 0.6, m.polygon.count > 2 { found.append(ScrubFind(polygon: m.polygon, label: o.label, confidence: o.confidence)) }
+        }
+        let parts = try sam.proposeParts(id: "scrub", region: region, grid: 6, maxParts: 12,
+                                         minArea: 0.002, maxArea: 0.3, minScore: 0.8, budget: 0.6)
+        found += parts.map { ScrubFind(polygon: $0.polygon, label: nil, confidence: 0) }
+      } catch {
+        NSLog("[lensi] strip: SAM failed: %@", error.localizedDescription)
+      }
+      let ms = (CACurrentMediaTime() - started) * 1000
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.scrubBusy = false
+        guard session == self.scrubSession else {
+          done([])
+          return
+        }
+        let things = self.scrubLay(found, camera: camera, points: points, upright: upright)
+        NSLog("[lensi] strip: %ld things in view (%ld found) in %.0f ms", things.count, found.count, ms)
+        done(things)
+      }
+    }
+  }
+
+  /// The strip's finds laid in the world, the same thing found twice kept once, in order across
+  /// the screen; each gets a layer (drawn by `layoutScrub`).
+  private func scrubLay(_ found: [ScrubFind], camera: FrozenCamera, points: [simd_float3], upright: CGSize) -> [[String: Any]] {
+    let look = GuideFrameContext(selection: camera, points: points)
+    var kept: [ScrubFind] = []
+    for f in found where !kept.contains(where: { LiveTracker.iou($0.polygon, f.polygon) > 0.6 }) {
+      kept.append(f)
+    }
+    var laid: [(world: [simd_float3], find: ScrubFind, at: CGPoint)] = []
+    for f in kept {
+      let ring = OutlineMath.resample(f.polygon, scale: upright)
+      let middle = LiveTracker.interiorPoint(f.polygon, scale: upright)
+      let plane = camera.withPlane(through: look.anchor(at: middle, session: sceneView.session))
+      let world = ring.compactMap { plane.onPlane($0) }
+      guard world.count == ring.count, let (p, _) = project(OutlineMath.centre(world)), bounds.contains(p) else { continue }
+      laid.append((world: world, find: f, at: p))
+    }
+    // Left to right as they are on screen.
+    laid.sort { ($0.at.x, $0.at.y) < ($1.at.x, $1.at.y) }
+    laid = Array(laid.prefix(14))
+    scrubThings = laid.map { l in
+      let layer = OutlineLayer()
+      layer.isHidden = true
+      pinLayer.layer.insertSublayer(layer, at: 0)
+      return ScrubThing(world: l.world, label: l.find.label, confidence: l.find.confidence, layer: layer, pinId: nil)
+    }
+    scrubIndex = nil
+    layoutScrub()
+    return laid.map { l in
+      let name: Any = l.find.label.map { $0 as Any } ?? NSNull()
+      return ["label": name, "x": Double(l.at.x / bounds.width), "y": Double(l.at.y / bounds.height)]
+    }
+  }
+
+  /// The highlighted thing (out of range: none).
+  func scrubTo(_ index: Int) {
+    scrubIndex = scrubThings.indices.contains(index) ? index : nil
+    layoutScrub()
+  }
+
+  /// Pins thing `index`: a tag, an outline SAM keeps on it from now on, and its picture to JS
+  /// (onSelect) to be named, as a tap's was. Answers its pin's id.
+  func scrubPin(_ index: Int) -> String? {
+    guard scrubThings.indices.contains(index), let frame = sceneView.session.currentFrame else { return nil }
+    if let id = scrubThings[index].pinId { return id }
+    let thing = scrubThings[index]
+    let id = UUID().uuidString
+    let centre = OutlineMath.centre(thing.world)
+    // Where it is in the picture now (the phone may have moved since the finger landed): the
+    // crop that names it, and where callouts in that crop land.
+    let res = frame.camera.imageResolution
+    let upright = CGSize(width: res.height, height: res.width)
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    var crop = uprightPoints(thing.world, camera: frame.camera, upright: upright).map { bounding($0) } ?? unit
+    crop = crop.insetBy(dx: -crop.width * 0.15, dy: -crop.height * 0.15).intersection(unit)
+    if crop.isNull || crop.width < 0.02 || crop.height < 0.02 { crop = unit }
+    contexts[id] = FrozenCamera(frame: frame, crop: crop).withPlane(through: centre)
+    var shape = LiveShape(world: thing.world, at: frame.timestamp, follows: true)
+    shape.pinned = true
+    shape.tagOffset = .zero
+    liveShapes[id] = shape
+    let layer = OutlineLayer()
+    layer.isHidden = true
+    pinLayer.layer.insertSublayer(layer, at: 0)
+    liveLayers[id] = layer
+    addPin(Pin(id: id, parentId: nil, world: centre, text: thing.label ?? "Looking", color: accent))
+    scrubThings[index].pinId = id
+    thing.layer.isHidden = true
+    layoutLive()
+    layoutPins()
+    let buffer = frame.capturedImage
+    let label = thing.label
+    let confidence = thing.confidence
+    visionQueue.async { [weak self] in
+      guard let self else { return }
+      let jpeg = self.detector.jpeg(buffer, crop: crop)
+      DispatchQueue.main.async {
+        self.onSelect(["id": id, "label": label as Any, "confidence": confidence, "image": jpeg?.base64EncodedString() ?? ""])
+      }
+    }
+    return id
+  }
+
+  /// The finger left the strip: the things fade (a pinned one stays, as its pin).
+  func scrubEnd() {
+    scrubSession += 1
+    for thing in scrubThings { retire(thing.layer) }
+    scrubThings = []
+    scrubIndex = nil
+  }
+
+  /// Unpins every pinned thing, and whatever the brain added to it.
+  func scrubClear() {
+    for id in pinOrder where pins[id]?.parentId == nil { removePin(id: id) }
+  }
+
+  /// The strip's things where they are now: the highlighted one bold in the lens colour, the
+  /// rest faint, so the finger sees what it can reach. A pinned one is drawn as its pin instead.
+  private func layoutScrub() {
+    guard !scrubThings.isEmpty else { return }
+    let toCamera = sceneView.session.currentFrame?.camera.transform.inverse
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+    for (i, thing) in scrubThings.enumerated() {
+      guard let toCamera, thing.pinId == nil, let path = screenPath(thing.world, toCamera: toCamera) else {
+        thing.layer.isHidden = true
+        continue
+      }
+      let on = i == scrubIndex
+      thing.layer.setOutline(path.cgPath)
+      thing.layer.style(on ? accent : .white, width: on ? 2.5 : 1.25, stroke: on ? 1 : 0.5, fill: on ? 0.16 : 0)
+      thing.layer.isHidden = false
+    }
   }
 
   // MARK: - Photo, video, torch
@@ -1408,7 +1608,6 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     guideFrameOrder.removeAll()
     guideWatchId = nil
     watch.reset()
-    tapTarget = nil
   }
 
   /// Twice a second, while the phone is steady and the watched part is in

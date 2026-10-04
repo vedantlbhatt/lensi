@@ -15,6 +15,7 @@ import {
 import type { GuidePart } from '../../lib/guide';
 import type { Picked } from '../../lib/media';
 import type { Pt } from '../../lib/types';
+import type { ScrubThing } from './ScrubStrip';
 import { VirtualCamera, type VirtualHandle } from './VirtualCamera';
 
 /** One camera API whether we have ARKit or the virtual stand-in. */
@@ -29,10 +30,18 @@ export type CameraHandle = {
   /** Zoom the camera (clamped to what it can do; see onZoomRange). */
   setZoom(zoom: number): void;
   /**
-   * A tap on the camera at x, y (screen points): outline what's there, live. The native view
-   * handles its own taps, so this is for the virtual camera.
+   * The strip, slide to pick and hold to pin. `start` finds the things in view between `top`
+   * and `bottom` (screen points, clear of the chrome), in order across the screen, fixed where
+   * they are from then on (a moving phone doesn't change them); `to` highlights one, `pin`
+   * pins it (resolving its pin id), `end` lets the rest go; `clear` unpins everything.
    */
-  outlineAt?(x: number, y: number): void;
+  scrub: {
+    start(top: number, bottom: number): Promise<ScrubThing[]>;
+    to(index: number): void;
+    pin(index: number): Promise<string | null>;
+    end(): void;
+    clear(): void;
+  };
   /** The native view, for live pins. Null on the virtual camera. */
   native?: LensiARViewRef | null;
   /**
@@ -97,7 +106,13 @@ export const CameraSurface = forwardRef<
           setTorch: () => Promise.resolve(false),
           nextScene: (dir: 1 | -1) => virtual.current?.nextScene?.(dir),
           setZoom: (z: number) => virtual.current?.setZoom(z),
-          outlineAt: (x: number, y: number) => virtual.current?.outlineAt?.(x, y),
+          scrub: {
+            start: async (top: number, bottom: number) => (await virtual.current?.scrub.start(top, bottom)) ?? [],
+            to: (i: number) => virtual.current?.scrub.to(i),
+            pin: async (i: number) => (await virtual.current?.scrub.pin(i)) ?? null,
+            end: () => virtual.current?.scrub.end(),
+            clear: () => virtual.current?.scrub.clear(),
+          },
           native: null,
           guide: {
             capture: async () => {
@@ -156,6 +171,31 @@ export const CameraSurface = forwardRef<
         },
         setZoom: (z: number) => {
           void native.current?.setZoom(z).catch(() => {});
+        },
+        scrub: {
+          start: async (top: number, bottom: number) => {
+            try {
+              return (await native.current?.scrubStart(top, bottom)) ?? [];
+            } catch {
+              return [];
+            }
+          },
+          to: (i: number) => {
+            void native.current?.scrubTo(i).catch(() => {});
+          },
+          pin: async (i: number) => {
+            try {
+              return (await native.current?.scrubPin(i)) ?? null;
+            } catch {
+              return null;
+            }
+          },
+          end: () => {
+            void native.current?.scrubEnd().catch(() => {});
+          },
+          clear: () => {
+            void native.current?.scrubClear().catch(() => {});
+          },
         },
         guide: {
           capture: async () => (await native.current?.guideCapture()) ?? null,

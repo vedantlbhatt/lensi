@@ -10,6 +10,7 @@ import {
   outlinePath,
   pointInPolygon,
   polygonArea,
+  polygonIoU,
   simplify,
   smoothClosedPath,
   toView,
@@ -142,3 +143,16 @@ test('a tap picks the smallest shape it is inside', () => {
   assert.equal(smallestShapeAt({ x: 0.5, y: 0.5 }, [[{ x: 0, y: 0 }, { x: 1, y: 1 }]]), null);
 });
 
+
+test('polygonIoU: the same shape, half of it, and none of it', () => {
+  const sq = (x: number, y: number, s: number) => [
+    { x, y },
+    { x: x + s, y },
+    { x: x + s, y: y + s },
+    { x, y: y + s },
+  ];
+  assert.ok(polygonIoU(sq(0, 0, 1), sq(0, 0, 1)) > 0.99);
+  // Overlapping by half its width: 1/3 of the union.
+  assert.ok(Math.abs(polygonIoU(sq(0, 0, 1), sq(0.5, 0, 1)) - 1 / 3) < 0.03);
+  assert.equal(polygonIoU(sq(0, 0, 1), sq(2, 2, 1)), 0);
+});

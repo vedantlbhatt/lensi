@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import Animated, {
@@ -15,15 +15,43 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { DEMO_SCENES, setDemoQuestion, type DemoScene, type ZoomRange } from '../../../modules/lensi-ar/src';
-import { boxToView, fitRect, smallestShapeAt, toView, type Fit } from '../../lib/geometry';
+import { boxToView, centroid, fitRect, pointInPolygon, polygonIoU, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
+import type { Pt } from '../../lib/types';
 import { assetPhoto, type Picked } from '../../lib/media';
 import { Grain } from '../../motion/Grain';
 import { face } from '../../theme/type';
 import { labelWidth } from '../capture/layout';
 import type { CameraHandle, VirtualGuidePins } from './CameraSurface';
 
-export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom' | 'outlineAt'>;
+export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom' | 'scrub'>;
+
+/** Something the strip can pick on a demo scene, in scene coordinates (0-1). */
+type Thing = { label: string; polygon: Pt[] };
+type Pinned = Thing & { id: string };
+/** The strip while a finger is on it: the things it found, the highlighted one, the ones pinned this time. */
+type Strip = { things: Thing[]; index: number; pinned: number[] };
+
+/**
+ * What the strip can pick on a demo scene: its parts (real MobileSAM shapes), each named by the
+ * callout on it, and the whole subject; the same shape twice is kept once.
+ */
+function sceneThings(scene: DemoScene): Thing[] {
+  const things: Thing[] = [];
+  const add = (polygon: Pt[], label: string) => {
+    if (polygon.length < 3 || things.some((t) => polygonIoU(t.polygon, polygon) > 0.6)) return;
+    things.push({ label, polygon });
+  };
+  for (const p of scene.parts) {
+    const polygon = p.polygon.map(([x, y]) => ({ x, y }));
+    const named =
+      scene.script.callouts.find((c) => Math.hypot(c.at[0] - p.at[0], c.at[1] - p.at[1]) < 0.03) ??
+      scene.script.callouts.find((c) => pointInPolygon({ x: c.at[0], y: c.at[1] }, polygon));
+    add(polygon, p.label ?? named?.label ?? 'Part');
+  }
+  add(scene.outline.polygon.map(([x, y]) => ({ x, y })), scene.script.title);
+  return things;
+}
 
 /**
  * The virtual camera crops into its scene the way the real one does above 1x. There's no
@@ -52,8 +80,20 @@ export const VirtualCamera = forwardRef<
   const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
-  /** What a tap asked to have outlined (scene 0-1 space), like the phone's tap-to-outline. */
-  const [tapped, setTapped] = useState<{ x: number; y: number }[] | null>(null);
+  // The strip, as the phone's: the things found when the finger landed, and what's pinned
+  // (pins ride the scene, as the phone's stay on their things).
+  const [strip, setStrip] = useState<Strip | null>(null);
+  const stripRef = useRef<Strip | null>(null);
+  const [pinned, setPinned] = useState<Pinned[]>([]);
+  const pinnedRef = useRef<Pinned[]>([]);
+  const putStrip = (s: Strip | null) => {
+    stripRef.current = s;
+    setStrip(s);
+  };
+  const putPinned = (p: Pinned[]) => {
+    pinnedRef.current = p;
+    setPinned(p);
+  };
   useEffect(() => {
     onZoomRange?.(ZOOM);
   }, [onZoomRange]);
@@ -67,7 +107,9 @@ export const VirtualCamera = forwardRef<
   useEffect(() => {
     onScene?.(scene);
     setDemoQuestion(scene.script.question);
-    setTapped(null);
+    // Pins belong to the scene they were made on.
+    putStrip(null);
+    putPinned([]);
   }, [scene, onScene]);
 
   // Zoom scales the scene about the screen's centre; tags and outlines are
@@ -89,16 +131,39 @@ export const VirtualCamera = forwardRef<
       setTorch: async () => false,
       nextScene: (dir: 1 | -1) => setIndex((i) => (i + dir + DEMO_SCENES.length) % DEMO_SCENES.length),
       setZoom: (z: number) => setZoom(Math.min(ZOOM.max, Math.max(ZOOM.min, z))),
-      // The smallest of the scene's real SAM shapes under the finger (its parts, then the
-      // subject); a tap on none of them goes back to outlining the subject.
-      outlineAt: (x: number, y: number) => {
-        if (guidePins?.parts.length) return;
-        const at = { x: (x - fit.x) / fit.w, y: (y - fit.y) / fit.h };
-        const shapes = [...scene.parts.map((p) => p.polygon), scene.outline.polygon].map((poly) => poly.map(([px, py]) => ({ x: px, y: py })));
-        setTapped(smallestShapeAt(at, shapes));
+      scrub: {
+        // The scene's things whose middle is on screen between `top` and `bottom`, left to right.
+        start: async (top: number, bottom: number) => {
+          const found = sceneThings(scene)
+            .map((t) => ({ ...t, at: toView(centroid(t.polygon), fit) }))
+            .filter((t) => t.at.x > 0 && t.at.x < width && t.at.y > top && t.at.y < bottom)
+            .sort((a, b) => a.at.x - b.at.x || a.at.y - b.at.y)
+            .slice(0, 14);
+          putStrip({ things: found.map(({ label, polygon }) => ({ label, polygon })), index: -1, pinned: [] });
+          return found.map((t) => ({ label: t.label }));
+        },
+        to: (i: number) => {
+          const s = stripRef.current;
+          if (s) putStrip({ ...s, index: i });
+        },
+        pin: async (i: number) => {
+          const s = stripRef.current;
+          const t = s?.things[i];
+          if (!s || !t) return null;
+          putStrip({ ...s, pinned: [...s.pinned, i] });
+          // Pinned before (an earlier touch): it stays the one pin.
+          const same = pinnedRef.current.find((p) => polygonIoU(p.polygon, t.polygon) > 0.8);
+          if (same) return same.id;
+          const id = `pin-${Date.now().toString(36)}-${i}`;
+          putPinned([...pinnedRef.current, { ...t, id }]);
+          return id;
+        },
+        end: () => putStrip(null),
+        clear: () => putPinned([]),
       },
     }),
-    [scene, fit.x, fit.y, fit.w, fit.h, guidePins?.parts.length],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scene, fit.x, fit.y, fit.w, fit.h, width],
   );
 
   const drift = useSharedValue(0);
@@ -129,17 +194,26 @@ export const VirtualCamera = forwardRef<
       <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
         <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
         {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
-        {/* Live outline of what's in view, as the phone's live SAM draws it (the scene's real SAM outline). */}
-        {liveOutlines && !guidePins?.parts.length ? (
-          <GuideOutline
-            key={`live-${scene.key}-${tapped ? tapped.length + ':' + tapped[0].x.toFixed(3) : 'subject'}`}
-            part={{ id: 'live', label: '', at: { x: 0.5, y: 0.5 }, outline: tapped ?? scene.outline.polygon.map(([x, y]) => ({ x, y })) }}
-            fit={fit}
-            pen={pen}
-            focused={false}
-            strong
-          />
-        ) : null}
+        {/* The strip's things while a finger is on it: the highlighted one in the lens colour, the rest faint. */}
+        {strip?.things.map((t, i) =>
+          strip.pinned.includes(i) ? null : (
+            <GuideOutline
+              key={`s-${i}-${t.label}`}
+              part={{ id: `s${i}`, label: t.label, at: { x: 0.5, y: 0.5 }, outline: t.polygon }}
+              fit={fit}
+              pen={pen}
+              focused={i === strip.index}
+              faint={i !== strip.index}
+            />
+          ),
+        )}
+        {/* Pinned things: outlined in the lens colour, named just above. */}
+        {pinned.map((p) => (
+          <GuideOutline key={p.id} part={{ id: p.id, label: p.label, at: { x: 0.5, y: 0.5 }, outline: p.polygon }} fit={fit} pen={pen} focused />
+        ))}
+        {pinned.map((p) => (
+          <PinTag key={`t-${p.id}`} pin={p} fit={fit} pen={pen} screenW={width} />
+        ))}
         {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}
         {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}
       </Animated.View>
@@ -154,12 +228,27 @@ export const VirtualCamera = forwardRef<
  * over a faint dark halo so it still reads where the part is as pale as the line (the same
  * look as the phone's live outlines).
  */
-function GuideOutline({ part, fit, pen, focused, strong }: { part: GuidePart; fit: Fit; pen: string; focused: boolean; strong?: boolean }) {
+function GuideOutline({
+  part,
+  fit,
+  pen,
+  focused,
+  strong,
+  faint,
+}: {
+  part: GuidePart;
+  fit: Fit;
+  pen: string;
+  focused: boolean;
+  strong?: boolean;
+  /** The strip's other things: thin, with no fill. */
+  faint?: boolean;
+}) {
   if (!part.outline) return null;
   const points = part.outline.map((q) => toView(q, fit)).map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ');
   const color = focused ? pen : '#FFFFFF';
   const bold = focused || strong;
-  const width = focused ? 2.5 : bold ? 2 : 1.5;
+  const width = focused ? 2.5 : bold ? 2 : faint ? 1.25 : 1.5;
   return (
     <Animated.View entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
       <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
@@ -167,9 +256,9 @@ function GuideOutline({ part, fit, pen, focused, strong }: { part: GuidePart; fi
         <Polygon
           points={points}
           fill={color}
-          fillOpacity={focused ? 0.14 : bold ? 0.07 : 0.06}
+          fillOpacity={focused ? 0.14 : bold ? 0.07 : faint ? 0 : 0.06}
           stroke={color}
-          strokeOpacity={bold ? 1 : 0.75}
+          strokeOpacity={bold ? 1 : faint ? 0.5 : 0.75}
           strokeWidth={width}
           strokeLinejoin="round"
         />
@@ -195,6 +284,24 @@ function GuideTag({ part, fit, pen, focus, screenW }: { part: GuidePart; fit: Fi
       <View style={[styles.tag, focused && { backgroundColor: pen }]}>
         <Animated.Text style={styles.tagText} numberOfLines={1}>
           {part.label}
+        </Animated.Text>
+      </View>
+    </Animated.View>
+  );
+}
+
+/** A pinned thing's name, just above its outline, on the lens colour (as the phone draws it). */
+function PinTag({ pin, fit, pen, screenW }: { pin: Pinned; fit: Fit; pen: string; screenW: number }) {
+  const pts = pin.polygon.map((q) => toView(q, fit));
+  const xs = pts.map((q) => q.x);
+  const top = Math.min(...pts.map((q) => q.y));
+  const half = (labelWidth(pin.label) * 16) / 13 / 2 + 14;
+  const x = Math.min(screenW - half, Math.max(half, (Math.min(...xs) + Math.max(...xs)) / 2));
+  return (
+    <Animated.View entering={FadeIn.duration(240)} style={[styles.pinSlot, { left: x - 130, top: Math.max(4, top - 40) }]} pointerEvents="none">
+      <View style={[styles.pinTag, { backgroundColor: pen }]}>
+        <Animated.Text style={styles.pinText} numberOfLines={1}>
+          {pin.label}
         </Animated.Text>
       </View>
     </Animated.View>
@@ -276,6 +383,19 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   tagText: { color: '#000000', ...face.semibold, fontSize: 13, letterSpacing: -0.08 },
+  pinSlot: { position: 'absolute', width: 260, height: 32, alignItems: 'center', justifyContent: 'center' },
+  pinTag: {
+    height: 32,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderCurve: 'continuous',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  pinText: { color: '#000000', ...face.bold, fontSize: 16, letterSpacing: -0.2 },
   corner: { position: 'absolute', left: 0, top: 0, width: 0, height: 0 },
   bar: {
     position: 'absolute',

@@ -4,6 +4,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, Easing, FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { haptic } from '../../lib/haptics';
+import { STRIP_PAD as PAD, stripIndex, stripTick } from '../../lib/strip';
 import { PressScale } from '../../motion/PressScale';
 import { ShinyText } from '../../motion/ShinyText';
 import { faint, ink, mist, paper } from '../../theme/tokens';
@@ -18,10 +19,6 @@ export type ScrubThing = { label: string | null };
 export const HOLD_MS = 1500;
 /** A finger that drifts less than this (points) since the last change is holding still. */
 const STILL = 10;
-/** Past a boundary by this much before the next thing takes over, so a finger on the line doesn't flicker. */
-const HYSTERESIS = 5;
-/** The strip's ends, where nothing sits (points). */
-const PAD = 22;
 const HEIGHT = 50;
 
 type Phase = 'idle' | 'finding' | 'choosing' | 'empty';
@@ -45,8 +42,8 @@ export function ScrubStrip({
   pen: string;
   /** How many things are pinned now: a button to clear them shows when there are any. */
   pins: number;
-  /** A finger landed: the things in view, in order across the screen. */
-  onStart: () => Promise<ScrubThing[]>;
+  /** A finger landed: the things in view above `top` (where the strip is on screen), in order across it. */
+  onStart: (top: number) => Promise<ScrubThing[]>;
   /** The highlighted thing changed. */
   onMove: (index: number) => void;
   /** Held still on it: pin it. */
@@ -64,21 +61,13 @@ export function ScrubStrip({
   const [width, setWidth] = useState(0);
   const [tipWidth, setTipWidth] = useState(0);
   const widthRef = useRef(0);
+  const touch = useRef<View>(null);
   // Everything the touch handlers need between renders.
   const s = useRef({ session: 0, down: false, x: 0, anchor: 0, index: -1, n: 0, pinned: new Set<number>() });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progress = useSharedValue(0);
 
-  const indexAt = (x: number, n: number, current: number) => {
-    const seg = Math.max(1, widthRef.current - 2 * PAD) / n;
-    const at = x - PAD;
-    let i = Math.max(0, Math.min(n - 1, Math.floor(at / seg)));
-    if (current >= 0 && current < n && i !== current) {
-      const past = i > current ? at - (current + 1) * seg : current * seg - at;
-      if (past < HYSTERESIS) i = current;
-    }
-    return i;
-  };
+  const indexAt = (x: number, n: number, current: number) => stripIndex(x, widthRef.current, n, current);
 
   const disarm = () => {
     if (timer.current) clearTimeout(timer.current);
@@ -134,22 +123,26 @@ export function ScrubStrip({
     setThings([]);
     setPhase('finding');
     const session = st.session;
-    onStart()
-      .then((list) => {
-        const now = s.current;
-        if (now.session !== session || !now.down) return;
-        now.n = list.length;
-        setThings(list);
-        if (!list.length) {
-          setPhase('empty');
-          return;
-        }
-        setPhase('choosing');
-        choose(indexAt(now.x, list.length, -1));
-      })
-      .catch(() => {
-        if (s.current.session === session) setPhase('empty');
-      });
+    const ask = (top: number) =>
+      onStart(top)
+        .then((list) => {
+          const now = s.current;
+          if (now.session !== session || !now.down) return;
+          now.n = list.length;
+          setThings(list);
+          if (!list.length) {
+            setPhase('empty');
+            return;
+          }
+          setPhase('choosing');
+          choose(indexAt(now.x, list.length, -1));
+        })
+        .catch(() => {
+          if (s.current.session === session) setPhase('empty');
+        });
+    // Things are looked for above the strip: what's under the app's chrome can't be seen.
+    if (touch.current) touch.current.measureInWindow((_x, y) => void ask(y));
+    else void ask(NaN);
   };
 
   const move = (x: number) => {
@@ -205,8 +198,7 @@ export function ScrubStrip({
   useEffect(() => () => disarm(), []);
 
   const n = things.length;
-  const seg = n ? Math.max(1, width - 2 * PAD) / n : 0;
-  const tickX = (k: number) => PAD + seg * (k + 0.5);
+  const tickX = (k: number) => stripTick(k, width, n);
   const thing = index >= 0 && index < n ? things[index] : null;
   const done = index >= 0 && pinnedNow.includes(index);
   const name = thing ? (thing.label ?? `Thing ${index + 1}`) : '';
@@ -243,6 +235,7 @@ export function ScrubStrip({
       <View style={styles.row} pointerEvents="box-none">
         <GestureDetector gesture={gesture}>
           <View
+            ref={touch}
             style={styles.touch}
             onLayout={(e) => {
               widthRef.current = e.nativeEvent.layout.width;

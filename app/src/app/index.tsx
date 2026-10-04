@@ -20,9 +20,10 @@ import { LensCarousel } from '../components/camera/LensCarousel';
 import { ListeningOverlay } from '../components/camera/ListeningOverlay';
 import { MemoriesButton, MEMORIES_SIZE } from '../components/camera/MemoriesButton';
 import { MicButton } from '../components/camera/MicButton';
+import { ScrubStrip } from '../components/camera/ScrubStrip';
 import { Shutter } from '../components/camera/Shutter';
 import { ToolRail } from '../components/camera/ToolRail';
-import { ZoomChips } from '../components/camera/ZoomChips';
+import { ZoomDial } from '../components/camera/ZoomDial';
 import { CaptureView, type Rect } from '../components/capture/CaptureView';
 import { MemoriesSheet } from '../components/memories/MemoriesSheet';
 import { SettingsSheet } from '../components/ui/SettingsSheet';
@@ -71,15 +72,15 @@ export default function Camera() {
 
   // Every launch opens on the live guide: open the app, point, say the job.
   const [lens, setLens] = useState<Lens>('guide');
-  const [live, setLive] = useState(false);
   const [torch, setTorch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Open | null>(null);
   const [memories, setMemories] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [drop, setDrop] = useState(false);
-  const [focus, setFocus] = useState<string | null>(null);
   const [scene, setScene] = useState<DemoScene | null>(null);
+  // What's pinned from the strip (the camera keeps the pins themselves).
+  const [pinIds, setPinIds] = useState<string[]>([]);
   const [tracking, setTracking] = useState<TrackingEvent | null>(null);
   // The camera never started (no permission, sensor error): say so, keep Drop working.
   const blocked = tracking?.state === 'failed' ? (tracking.reason === 'cameraDenied' ? 'cameraDenied' : 'failed') : null;
@@ -122,7 +123,11 @@ export default function Camera() {
   const onScene = useCallback(
     (s: DemoScene) => {
       setScene(s);
-      if (lastScene.current && lastScene.current !== s.key) guideStop();
+      if (lastScene.current && lastScene.current !== s.key) {
+        guideStop();
+        // The virtual camera's pins were on the last scene.
+        setPinIds([]);
+      }
       lastScene.current = s.key;
     },
     [guideStop],
@@ -328,14 +333,6 @@ export default function Camera() {
     if (params.brain === 'auto' || params.brain === 'apple' || params.brain === 'cloud' || params.brain === 'vision') {
       setSettings({ brain: params.brain });
     }
-    if (params.outline) {
-      // A tap on the camera, as if made by hand (the scene comes up first).
-      const at = pointOf(params.outline);
-      if (at) {
-        const h = setTimeout(() => camera.current?.outlineAt?.(at.x * width, at.y * height), 2500);
-        return () => clearTimeout(h);
-      }
-    }
     if (params.guide) {
       // Give the camera a moment to come up, then start the job as if it were said.
       setLens('guide');
@@ -369,31 +366,76 @@ export default function Camera() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk, params.outline]);
+  }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk]);
 
-  // Zoom: pinch the camera, or tap .5 / 1 / 2 / 5. The camera says how far it
-  // goes (.5 only where ARKit can track with the ultra-wide).
+  // Scripted strip and dial (CI and the web demo film them): ?zoom=2.7 turns the dial there
+  // and leaves it up; ?scrub=0.2,0.6 lands a finger on the strip, slides and holds (a pin).
+  const [dialDemo, setDialDemo] = useState<number | undefined>();
+  const [stripDemo, setStripDemo] = useState<number[] | undefined>();
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const z = Number(params.zoom);
+    if (params.zoom && Number.isFinite(z)) timers.push(setTimeout(() => setDialDemo(z), 2000));
+    const stops = (params.scrub ?? '').split(',').map(Number).filter((v) => Number.isFinite(v) && v >= 0 && v <= 1);
+    if (params.scrub && stops.length) timers.push(setTimeout(() => setStripDemo(stops), params.zoom ? 5500 : 2500));
+    return () => timers.forEach(clearTimeout);
+  }, [params.scrub, params.zoom]);
+
+  // Zoom: the dial at the bottom (drag across it, or tap it for the next stop), or a pinch on
+  // the camera. The camera says how far it goes (.5 only where ARKit can track with the
+  // ultra-wide); the dial keeps whatever zoom it's let go at.
   const [zoomRange, setZoomRange] = useState({ min: 1, max: 10 });
   const [zoomShown, setZoomShown] = useState(1);
-  const zoomRef = useRef(1);
+  const zoomLive = useSharedValue(1);
+  const [pinching, setPinching] = useState(false);
   const pinchFrom = useRef(1);
   const zoomTo = useCallback(
     (z: number) => {
       const v = Math.min(zoomRange.max, Math.max(zoomRange.min, z));
-      zoomRef.current = v;
+      zoomLive.value = v;
       camera.current?.setZoom(v);
-      // The label only needs tenths, so most pinch frames don't re-render.
+      // The label only needs tenths, so most frames of a drag don't re-render.
       setZoomShown(Math.round(v * 10) / 10);
     },
-    [zoomRange],
+    [zoomRange, zoomLive],
   );
   const onZoomRange = useCallback((r: { min: number; max: number }) => setZoomRange({ min: r.min, max: r.max }), []);
   const pinch = Gesture.Pinch()
     .runOnJS(true)
     .onBegin(() => {
-      pinchFrom.current = zoomRef.current;
+      pinchFrom.current = zoomLive.value;
     })
-    .onUpdate((e) => zoomTo(pinchFrom.current * e.scale));
+    .onStart(() => setPinching(true))
+    .onUpdate((e) => zoomTo(pinchFrom.current * e.scale))
+    .onFinalize(() => setPinching(false));
+
+  // The strip: slide along it to pick one of the things in view, hold still to pin it. The
+  // things are found where the finger lands, in the part of the screen the chrome leaves.
+  // While a finger is on it the zoom button steps aside; while the dial is up, what's under it does.
+  const [scrubbing, setScrubbing] = useState(false);
+  const [dialOpen, setDialOpen] = useState(false);
+  const stripStart = useCallback(
+    (top: number) => {
+      setTouched(true);
+      setScrubbing(true);
+      const bottom = Number.isFinite(top) && top > 0 ? top - 4 : panelTop || height - 300;
+      return camera.current?.scrub.start(insets.top + 56, bottom) ?? Promise.resolve([]);
+    },
+    [insets.top, panelTop, height],
+  );
+  const stripMove = useCallback((i: number) => camera.current?.scrub.to(i), []);
+  const stripPin = useCallback(async (i: number) => {
+    const id = await camera.current?.scrub.pin(i);
+    if (id) setPinIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+  }, []);
+  const stripEnd = useCallback(() => {
+    setScrubbing(false);
+    camera.current?.scrub.end();
+  }, []);
+  const stripClear = useCallback(() => {
+    camera.current?.scrub.clear();
+    setPinIds([]);
+  }, []);
 
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera
   // and the demo scene on the virtual one. One finger: two are a pinch.
@@ -410,14 +452,6 @@ export default function Camera() {
         setLens(next.key);
       }
     });
-  const tapToPin = Gesture.Tap()
-    .runOnJS(true)
-    .onEnd((e) => {
-      setTouched(true);
-      // Outline what was tapped, live (the native camera does this itself).
-      camera.current?.outlineAt?.(e.x, e.y);
-    });
-
   const chrome = useSharedValue(1);
   useEffect(() => {
     // The guide keeps its panel lit while listening: that's where the words appear.
@@ -431,27 +465,55 @@ export default function Camera() {
   const bottomStyle = useAnimatedStyle(() => ({ transform: [{ translateY: lift.value * 8 }] }));
 
   const hint = tracking?.state === 'limited' ? TRACKING_HINTS[tracking.reason] : null;
-  const focusText = isVirtual ? (scene?.caption ?? null) : live ? (focus ? `tap to pin · ${focus}` : 'tap anything to pin it') : focus;
+  // Only the virtual camera's scene caption: nothing on screen names what the camera happens to
+  // be pointed at (it would change every time the phone moved). Pinned things carry their names.
+  const focusText = isVirtual ? (scene?.caption ?? null) : null;
+  const zoomDial = (
+    <ZoomDial
+      value={zoomLive}
+      zoom={zoomShown}
+      min={zoomRange.min}
+      max={zoomRange.max}
+      pen={pen}
+      onZoom={zoomTo}
+      turning={pinching}
+      demo={dialDemo}
+      onOpen={setDialOpen}
+      hidden={scrubbing}
+    />
+  );
+  const scrubStrip = (
+    <ScrubStrip
+      pen={pen}
+      pins={pinIds.length}
+      onStart={stripStart}
+      onMove={stripMove}
+      onPin={stripPin}
+      onEnd={stripEnd}
+      onClear={stripClear}
+      demo={stripDemo}
+    />
+  );
   const latest = captures[0];
 
   return (
     <View style={styles.root}>
-      <GestureDetector gesture={Gesture.Simultaneous(swipe, tapToPin, pinch)}>
+      <GestureDetector gesture={Gesture.Simultaneous(swipe, pinch)}>
         <View style={StyleSheet.absoluteFill} collapsable={false}>
           <CameraSurface
             key={camKey}
             ref={camera}
             pen={pen}
-            brackets={settings.liveBrackets && !guideLens}
+            brackets={settings.liveBrackets}
             liveOutlines={settings.liveBrackets}
-            livePins={live}
+            livePins={false}
             paused={!!open || memories}
-            onFocusChange={setFocus}
             onTracking={setTracking}
             onSelect={livePins.onSelect}
-            onPinTap={live ? livePins.onPinTap : (id) => {
+            onPinTap={(id) => {
               const p = guide.state.parts.find((x) => x.id === id);
               if (p) toast(p.label);
+              else livePins.onPinTap(id);
             }}
             onScene={onScene}
             onGuideChange={guide.onChange}
@@ -474,17 +536,12 @@ export default function Camera() {
           <BrainChip engine={engine} pen={pen} onPress={() => setSettingsOpen(true)} />
           <ToolRail
             torch={torch}
-            live={live}
             pen={pen}
             onTorch={async () => {
               const want = !torch;
               const ok = await camera.current?.setTorch(want);
               if (!ok && want) toast(isVirtual ? 'No torch on the virtual camera' : 'Torch unavailable');
               setTorch(!!ok && want);
-            }}
-            onLive={() => {
-              setLive((v) => !v);
-              toast(live ? 'Live pins off' : 'Live pins: tap things to pin them in space');
             }}
             onDrop={() => setDrop(true)}
             onSettings={() => setSettingsOpen(true)}
@@ -506,12 +563,13 @@ export default function Camera() {
             onLayout={(e) => setPanelTop(Math.round(e.nativeEvent.layout.y))}
           >
             {guideStatus === 'idle' && !voice.listening ? (
-              <>
+              <View style={[styles.stack, dialOpen && styles.under]} pointerEvents={dialOpen ? 'none' : 'box-none'}>
                 <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : null} pen={pen} />
                 <LensCarousel lens={lens} onChange={setLens} />
-              </>
+              </View>
             ) : null}
-            <ZoomChips zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} />
+            {zoomDial}
+            {scrubStrip}
             <GuidePanel
               state={guide.state}
               step={guide.step}
@@ -532,9 +590,16 @@ export default function Camera() {
             />
           </View>
         ) : (
-        <Animated.View style={[styles.bottom, { paddingBottom: insets.bottom + 18 }, bottomStyle]} pointerEvents="box-none">
-          <ZoomChips zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} />
-          <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : live ? 'Live' : null} pen={pen} />
+        <Animated.View
+          style={[styles.bottom, { paddingBottom: insets.bottom + 18 }, bottomStyle]}
+          pointerEvents="box-none"
+          onLayout={(e) => setPanelTop(Math.round(e.nativeEvent.layout.y))}
+        >
+          <View style={[styles.stack, dialOpen && styles.under]} pointerEvents="none">
+            <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : null} pen={pen} />
+          </View>
+          {zoomDial}
+          {scrubStrip}
           <LensCarousel lens={lens} onChange={setLens} />
           <View style={styles.row}>
             <MemoriesButton uri={latest?.media.stillUri ?? null} count={captures.length} onPress={() => setMemories(true)} />
@@ -619,5 +684,8 @@ const styles = StyleSheet.create({
   hintWrap: { position: 'absolute', alignSelf: 'center', paddingHorizontal: 14, height: 32, borderRadius: 16, justifyContent: 'center', backgroundColor: 'rgba(11,11,12,0.7)' },
   hint: { color: '#FFFFFF', ...face.semibold, fontSize: 14 },
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, alignItems: 'center', gap: 6 },
+  stack: { alignSelf: 'stretch', alignItems: 'center', gap: 6 },
+  // Under the zoom dial while it's up.
+  under: { opacity: 0 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', alignSelf: 'stretch', paddingHorizontal: 26 },
 });

@@ -123,9 +123,12 @@ done
 # Default brain: Apple Intelligence fails in this VM, so the eyes tag the parts.
 scenario 10-live-guide 40 "lensi:///?scene=truck&guide=How%20do%20I%20check%20the%20tyre%20pressure%3F"
 
-# Tap to outline: a tap on the camera outlines what's there, here the front tyre (the
-# Simulator's camera picks the scene's real SAM shape under the finger; a phone runs live SAM).
-scenario 10c-tap-outline 12 "lensi:///?scene=truck&outline=0.96,0.54"
+# Slide to pin: a finger lands on the strip, slides from the first thing towards the
+# middle, holds still for 1.5 s and lets go; the thing it stopped on stays pinned (the
+# Simulator's camera picks among the scene's real SAM shapes; a phone runs SAM live).
+scenario 10c-slide-to-pin 16 "lensi:///?scene=cars&scrub=0.05,0.35,0.6"
+# The zoom dial: turned to 2.7x and left up, so the shot shows the dial itself.
+scenario 10d-zoom-dial 12 "lensi:///?scene=truck&zoom=2.7"
 
 # The same job with steps: the Lensi server in mock mode answers it with a scripted
 # plan (no model, no key), so the real app's panel, tags and outline can be filmed.

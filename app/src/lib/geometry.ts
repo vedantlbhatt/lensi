@@ -86,6 +86,29 @@ export function pointInPolygon(p: Pt, poly: Pt[]): boolean {
 
 export const pointInBox = (p: Pt, b: Box) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 
+/** How much two shapes are the same shape (intersection over union), sampled on a grid over both. */
+export function polygonIoU(a: Pt[], b: Pt[], grid = 48): number {
+  if (a.length < 3 || b.length < 3) return 0;
+  const ba = boundsOf(a);
+  const bb = boundsOf(b);
+  const x0 = Math.min(ba.x, bb.x);
+  const y0 = Math.min(ba.y, bb.y);
+  const w = Math.max(ba.x + ba.w, bb.x + bb.w) - x0;
+  const h = Math.max(ba.y + ba.h, bb.y + bb.h) - y0;
+  let both = 0;
+  let either = 0;
+  for (let j = 0; j < grid; j++) {
+    for (let i = 0; i < grid; i++) {
+      const p = { x: x0 + ((i + 0.5) / grid) * w, y: y0 + ((j + 0.5) / grid) * h };
+      const inA = pointInPolygon(p, a);
+      const inB = pointInPolygon(p, b);
+      if (inA && inB) both++;
+      if (inA || inB) either++;
+    }
+  }
+  return either ? both / either : 0;
+}
+
 /** What a tap at `p` means among overlapping shapes: the smallest one it's inside (a tyre over the truck). */
 export function smallestShapeAt(p: Pt, shapes: Pt[][]): Pt[] | null {
   let best: Pt[] | null = null;

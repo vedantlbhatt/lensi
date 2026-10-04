@@ -5,17 +5,9 @@ import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValu
 import Svg, { Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { haptic } from '../../lib/haptics';
+import { nextZoomStop, zoomAfterDrag, zoomText } from '../../lib/strip';
 import { face } from '../../theme/type';
 
-/** 0.5, 1, 2.7: the way the Camera app writes zoom (".5" below 1). */
-export function zoomText(z: number): string {
-  if (z < 0.995) return `.${Math.round(z * 10)}`;
-  const r = Math.round(z * 10) / 10;
-  return Number.isInteger(r) ? `${r}` : r.toFixed(1);
-}
-
-/** Where a tap on the button goes next. */
-const STOPS = [0.5, 1, 2, 5];
 /** The numbers written on the dial (the ends are clamped to what the camera can do). */
 const NUMBERS = [0.5, 1, 2, 3, 5, 10];
 /** Degrees the dial turns per e-fold of zoom: 1x to 2x is 50 degrees, .5x to 10x 216. */
@@ -33,7 +25,6 @@ function tickValues(min: number, max: number): { z: number; major: boolean }[] {
   add(1, 2, 0.1);
   add(2, 5, 0.2);
   add(5, 10.001, 0.5);
-  out.push({ z: 10, major: false });
   return out
     .filter((t) => t.z >= min - 1e-6 && t.z <= max + 1e-6)
     .map((t) => ({ z: t.z, major: NUMBERS.some((n) => Math.abs(n - t.z) < 1e-6) }));
@@ -54,6 +45,8 @@ export function ZoomDial({
   onZoom,
   turning = false,
   demo,
+  onOpen,
+  hidden = false,
 }: {
   /** The zoom now, exactly (the dial turns with it on the UI thread). */
   value: SharedValue<number>;
@@ -67,6 +60,10 @@ export function ZoomDial({
   turning?: boolean;
   /** Scripted runs (CI, the web demo): turn the dial to this zoom by itself, and leave it up. */
   demo?: number;
+  /** The dial is up (the chrome under it steps aside). */
+  onOpen?: (open: boolean) => void;
+  /** Out of the way (a finger is on the strip below). */
+  hidden?: boolean;
 }) {
   const { width } = useWindowDimensions();
   const R = Math.round(width * 0.62);
@@ -81,10 +78,13 @@ export function ZoomDial({
   const shown = useSharedValue(0);
   const close = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hold = useRef(false);
+  const opened = useRef(onOpen);
+  opened.current = onOpen;
   const show = useCallback(() => {
     if (close.current) clearTimeout(close.current);
     close.current = null;
     setOpen(true);
+    opened.current?.(true);
     shown.value = withTiming(1, { duration: 160 });
   }, [shown]);
   const hide = useCallback(
@@ -93,7 +93,10 @@ export function ZoomDial({
       close.current = setTimeout(() => {
         if (hold.current) return;
         shown.value = withTiming(0, { duration: 240 });
-        close.current = setTimeout(() => setOpen(false), 260);
+        close.current = setTimeout(() => {
+          setOpen(false);
+          opened.current?.(false);
+        }, 260);
       }, after);
     },
     [shown],
@@ -140,7 +143,7 @@ export function ZoomDial({
       last.current = value.value;
       show();
     })
-    .onUpdate((e) => turnTo(clamp(from.current * Math.exp(-e.translationX / span))))
+    .onUpdate((e) => turnTo(zoomAfterDrag(from.current, e.translationX, span, min, max)))
     .onFinalize(() => {
       hold.current = false;
       hide();
@@ -149,10 +152,8 @@ export function ZoomDial({
   // A tap goes to the next stop, gliding there like the Camera app's buttons.
   const glide = useRef<number | null>(null);
   const tapNext = useCallback(() => {
-    const stops = STOPS.filter((s) => s >= min - 1e-3 && s <= max + 1e-3);
-    if (!stops.length) return;
     const now = value.value;
-    const target = stops.find((s) => s > now + 0.05) ?? stops[0];
+    const target = nextZoomStop(now, min, max);
     if (glide.current) cancelAnimationFrame(glide.current);
     const start = Date.now();
     const step = () => {
@@ -198,7 +199,11 @@ export function ZoomDial({
     opacity: shown.value,
     transform: [{ translateY: (1 - shown.value) * 18 }],
   }));
-  const buttonStyle = useAnimatedStyle(() => ({ opacity: 1 - shown.value }));
+  const away = useSharedValue(0);
+  useEffect(() => {
+    away.value = withTiming(hidden ? 1 : 0, { duration: 140 });
+  }, [hidden, away]);
+  const buttonStyle = useAnimatedStyle(() => ({ opacity: (1 - shown.value) * (1 - away.value) }));
   // The ticks turn so the zoom now sits at the top, under the pointer.
   const turn = useAnimatedStyle(() => ({
     transform: [{ rotate: `${-DEG * Math.log(Math.max(0.01, value.value))}deg` }],
@@ -213,7 +218,7 @@ export function ZoomDial({
   const rim = `M ${cx - width / 2} ${chord} A ${R} ${R} 0 0 1 ${cx + width / 2} ${chord}`;
 
   return (
-    <View style={styles.row} pointerEvents="box-none">
+    <View style={styles.row} pointerEvents={hidden ? 'none' : 'box-none'}>
       {/* The finger stays on the button (it starts the drag); the dial only shows the turn. */}
       {open ? (
         <Animated.View style={[styles.dial, { width, height: chord, bottom: 22 }, dialStyle]} pointerEvents="none">

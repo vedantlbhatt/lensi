@@ -62,7 +62,23 @@ export type LensiARViewRef = {
   guideClear(): Promise<void>;
   /** 0.5 (ultra-wide, where ARKit offers it) up to the camera's max; clamped natively. */
   setZoom(zoom: number): Promise<void>;
+  /**
+   * The strip: the things in view between `top` and `bottom` (screen points), left to right,
+   * fixed in the world from now on (a moving phone doesn't change them). `x`, `y`: where each
+   * one's middle is on screen, 0-1.
+   */
+  scrubStart(top: number, bottom: number): Promise<ScrubFound[]>;
+  /** Highlight thing `index` (-1: none). */
+  scrubTo(index: number): Promise<void>;
+  /** Pin thing `index`: resolves its pin id; onSelect follows with its picture, to name it. */
+  scrubPin(index: number): Promise<string | null>;
+  /** The finger left the strip. */
+  scrubEnd(): Promise<void>;
+  /** Unpin every pinned thing. */
+  scrubClear(): Promise<void>;
 };
+
+export type ScrubFound = { label: string | null; x: number; y: number };
 
 export type GuideFrame = { frameId: string; uri: string; width: number; height: number };
 
