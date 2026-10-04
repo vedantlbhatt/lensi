@@ -11,6 +11,8 @@
 //   flow@8     the same, carried between SAM's frames by its own pixels (LiveFlow: points
 //              inside it followed frame to frame, their median motion); flowS@8 also turns
 //              and scales with them, and flowG@8 also eases what's shown onto each new cut
+//              (half the way each frame: 60 ms); flowF@8 three quarters (30 ms); flowA@8
+//              half, and more the further off it is
 //   lensi@4, flowS@4: SAM on every sixth frame (a hot phone, a guide part waiting its turn)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -230,6 +232,9 @@ final class Runner {
   /// Ease what's shown this much of the way to the outline each frame, rather than jumping
   /// when SAM's cut lands (what's shown rides the flow too, so it doesn't lag the motion).
   let glide: CGFloat?
+  /// Ease a small correction (edge noise) more than a big one (it's really somewhere else):
+  /// the share taken each frame grows with how far off what's shown is, for its size.
+  let adaptiveGlide: Bool
   var display: [CGPoint]?
   /// The outline as SAM last left it, and its box then (what the follower's box is compared to).
   var anchorOutline: [CGPoint]?
@@ -247,7 +252,7 @@ final class Runner {
   var centres: [CGPoint?] = []
 
   init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int, follow: Bool = false, adaptive: Bool = false,
-       moveOnly: Bool = false, flow: OpticalFlow? = nil, scaling: Bool = false, glide: CGFloat? = nil) {
+       moveOnly: Bool = false, flow: OpticalFlow? = nil, scaling: Bool = false, glide: CGFloat? = nil, adaptiveGlide: Bool = false) {
     self.moveOnly = moveOnly
     self.label = label
     self.tracking = tracking
@@ -258,6 +263,7 @@ final class Runner {
     self.flow = flow
     self.scaling = scaling
     self.glide = glide
+    self.adaptiveGlide = adaptiveGlide
   }
 
   /// Where the outline is expected at frame f: the last one carried along by its motion
@@ -360,8 +366,13 @@ final class Runner {
     let size = max(OutlineMath.spread(b), 1e-6)
     guard simd_distance(OutlineMath.centre(a), OutlineMath.centre(b)) < size else { return target }
     let lined = OutlineMath.align(b, to: a).points
+    var share = Float(k)
+    if adaptiveGlide {
+      let off = (zip(a, lined).reduce(Float(0)) { $0 + simd_distance_squared($1.0, $1.1) } / Float(a.count)).squareRoot()
+      share = min(1, share + 2.5 * off / size)
+    }
     return zip(a, lined).map { s, t in
-      let p = s + (t - s) * Float(k)
+      let p = s + (t - s) * share
       return CGPoint(x: CGFloat(p.x) / scale.width, y: CGFloat(p.y) / scale.height)
     }
   }
@@ -416,6 +427,8 @@ let runners = [
   Runner("flow@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow),
   Runner("flowS@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true),
   Runner("flowG@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.5),
+  Runner("flowF@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75),
+  Runner("flowA@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.5, adaptiveGlide: true),
   Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true),
   Runner("flowS@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true),
 ]

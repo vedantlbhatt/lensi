@@ -46,7 +46,7 @@ jobs:
           path: footage/DAVIS
           key: davis-2017-480p-tracking-v1
       - name: Live SAM on real footage
-        run: bash tools/track/ci.sh flowS@8 flowG@8 flowS@4
+        run: bash tools/track/ci.sh flowS@8 flowG@8 flowF@8 flowA@8 flowS@4
       - name: Push results to ci-track-lab
         if: always()
         env:

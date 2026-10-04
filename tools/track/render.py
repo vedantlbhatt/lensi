@@ -1,6 +1,6 @@
 """Draws tools/track's outlines on the real frames, the way the phone draws them.
 
-  render.py <frames dir> <name>.json <out dir>
+  render.py <frames dir> <name>.json <out dir> [run label, default lensi@8]
 
 Writes <name>.mp4 (the phone's outline, SAM 8 times a second, on every frame) and
 <name>-compare.mp4 (top: SAM asked at a fixed spot every frame; bottom: the phone's
@@ -68,6 +68,9 @@ def main():
     frames_dir, json_path, out_dir = sys.argv[1:4]
     # Which run is "now" (the app's setting at the phone's rate, unless told otherwise).
     now_label = sys.argv[4] if len(sys.argv) > 4 else "lensi@8"
+    # Per-frame scores in the captions only when asked (TRACK_SCORES=1): they flicker, and the
+    # reel's cards carry the averages.
+    scores = os.environ.get("TRACK_SCORES", "0") == "1"
     os.makedirs(out_dir, exist_ok=True)
     data = json.load(open(json_path))
     name = data["name"]
@@ -91,16 +94,17 @@ def main():
             continue
         big = cv2.resize(img, (w * s, h * s), interpolation=cv2.INTER_CUBIC) if s != 1 else img.copy()
         big = outline(big, unpack(lensi["outlines"][i]), PEN, 2.5 * s)
-        big = caption(big, [f"Live SAM, tracked: {name}{j(lensi, i)}"], size=13 * s)
+        big = caption(big, [f"Live SAM, tracked: {name}{j(lensi, i) if scores else ''}"], size=13 * s)
         single.write(big)
         left = outline(img.copy(), unpack(fixed["outlines"][i]), OLD, 2)
-        left = caption(left, [f"Before: SAM at a fixed spot{j(fixed, i)}"], size=15)
+        left = caption(left, [f"Before: SAM at a fixed spot{j(fixed, i) if scores else ''}"], size=15)
         right = outline(img.copy(), unpack(lensi["outlines"][i]), PEN, 2.5)
         how = {"vision@8": "SAM 8/s + box tracker", "visionT@8": "SAM 8/s + box tracker (moves only)",
-               "flow@8": "SAM 8/s + optical flow", "flowS@8": "SAM 8/s + optical flow",
-               "flowG@8": "SAM 8/s + optical flow, eased", "lensi@4": "SAM 4/s",
-               "flowS@4": "SAM 4/s + optical flow"}.get(now_label, "SAM 8/s")
-        right = caption(right, [f"Now: tracked, {how}{j(lensi, i)}"], size=15)
+               "flow@8": "SAM 8/s + point tracking", "flowS@8": "SAM 8/s + point tracking",
+               "flowG@8": "SAM 8/s + point tracking", "flowF@8": "SAM 8/s + point tracking",
+               "flowA@8": "SAM 8/s + point tracking", "lensi@4": "SAM 4/s",
+               "flowS@4": "SAM 4/s + point tracking"}.get(now_label, "SAM 8/s")
+        right = caption(right, [f"Now: {how}{j(lensi, i) if scores else ''}"], size=15)
         pair.write(np.vstack([left, right]))
     single.release()
     pair.release()

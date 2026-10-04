@@ -1,10 +1,10 @@
 """One reel from tools/track's comparison videos, with a title card before each clip.
 
-  reel.py <ci-track dir> <out.mp4> <label> clip:"Title|Subtitle" [clip:"..."]...
+  reel.py <ci-track dir> <out.mp4> <label> [--speed S] [--loops N] clip:"Title|Subtitle" [clip:"..."]...
 
-<label> picks which run's videos (lensi@8 -> <clip>-compare.mp4, vision@8 ->
-<clip>-vision-at8-compare.mp4). Clips play at half speed so the outline can be followed.
-Needs ffmpeg.
+<label> picks which run's videos (lensi@8 -> <clip>-compare.mp4, flowG@8 ->
+<clip>-flowG-at8-compare.mp4). Clips play at `speed` (1: as filmed; 0.5 shows each 24 fps
+frame twice, which looks choppier than the footage is) `loops` times. Needs ffmpeg.
 """
 import json
 import os
@@ -61,10 +61,21 @@ def run(*args):
 
 def main():
     src, out, label = sys.argv[1:4]
+    rest = sys.argv[4:]
+    speed, loops = 1.0, 1
+    while rest and rest[0].startswith("--"):
+        if rest[0] == "--speed":
+            speed = float(rest[1])
+        elif rest[0] == "--loops":
+            loops = int(rest[1])
+        rest = rest[2:]
     tag = "" if label == "lensi@8" else "-" + label.replace("@", "-at")
+    how = {"flowG@8": "SAM 8 times a second; in between, the points inside the outline are followed frame to frame",
+           "flowS@8": "SAM 8 times a second; in between, the points inside the outline are followed frame to frame",
+           "lensi@8": "SAM 8 times a second; in between, the outline coasts at its last speed"}.get(label, label)
     tmp = tempfile.mkdtemp()
     parts = []
-    for n, arg in enumerate(sys.argv[4:]):
+    for n, arg in enumerate(rest):
         clip, titles = arg.split(":", 1)
         title, sub = (titles.split("|", 1) + [""])[:2]
         stats = json.load(open(os.path.join(src, f"{clip}.json")))
@@ -73,13 +84,14 @@ def main():
         score = (f"Overlap with the hand-drawn mask: before {j_old * 100:.0f}%, now {j_now * 100:.0f}%"
                  if j_now >= 0 else "No hand-drawn mask for this clip: judge by eye.")
         png = os.path.join(tmp, f"card{n}.png")
-        card(png, [title, sub, score, "Top: before (SAM asked at the same spot every frame). Bottom: now (tracked). Half speed."])
+        pace = "As filmed." if speed == 1 else f"{speed:g}x speed."
+        card(png, [title, sub, score, f"Top: before (SAM asked at the same spot every frame). Bottom: now ({how}). {pace}"])
         c = os.path.join(tmp, f"c{n}.mp4")
         run("ffmpeg", "-y", "-loop", "1", "-t", "3.2", "-i", png, "-vf", "fps=30,format=yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", c)
         v = os.path.join(tmp, f"v{n}.mp4")
-        run("ffmpeg", "-y", "-i", os.path.join(src, f"{clip}{tag}-compare.mp4"),
-            "-vf", f"setpts=2.0*PTS,scale={W}:{H},fps=30,format=yuv420p", "-an",
+        run("ffmpeg", "-y", "-stream_loop", str(loops - 1), "-i", os.path.join(src, f"{clip}{tag}-compare.mp4"),
+            "-vf", f"setpts={1 / speed:g}*PTS,scale={W}:{H},fps=30,format=yuv420p", "-an",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", v)
         parts += [c, v]
     lst = os.path.join(tmp, "list.txt")
