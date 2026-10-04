@@ -8,9 +8,9 @@
 //   lensi@8    the same with SAM on every third frame (8 a second at 24 fps, about what a
 //              phone manages); in between, the outline is carried along by its own motion
 //   visionT@8  the same, moved between SAM's frames by Vision's box tracker instead
-//   flow@8     the same, carried between SAM's frames by its own pixels (Vision's optical
-//              flow, every frame); flowS@8 lets it grow and shrink with them too, and
-//              flowG@8 also eases what's shown onto each new cut instead of jumping
+//   flow@8     the same, carried between SAM's frames by its own pixels (LiveFlow: points
+//              inside it followed frame to frame, their median motion); flowS@8 also turns
+//              and scales with them, and flowG@8 also eases what's shown onto each new cut
 //   lensi@4, flowS@4: SAM on every sixth frame (a hot phone, a guide part waiting its turn)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -18,7 +18,7 @@
 // its middle lurches rather than glides), each with the mask's own for reference. Writes
 // <out>/<name>.json for tools/track/render.py.
 //
-//   swiftc -O -o track tools/track/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,Analyzer,Detector}.swift
+//   swiftc -O -o track tools/track/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,Analyzer,Detector}.swift
 //   LENSI_MODELS_DIR=<models> ./track <frames dir> <masks dir or -> <out dir> <name> [x,y,w,h seed box, 0-1]
 import CoreGraphics
 import CoreVideo
@@ -185,140 +185,28 @@ final class BoxFollower {
   }
 }
 
-func median(_ v: [Float]) -> Float {
-  guard !v.isEmpty else { return 0 }
-  let s = v.sorted()
-  return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
-}
-
-/// Vision's optical flow from one frame to the next (VNGenerateOpticalFlowRequest): how every
-/// pixel moved. Between SAM's frames an outline can be carried by its own pixels, so it moves
-/// the way the thing does (speeding up, slowing, turning) instead of at the last cut's speed.
+/// The app's LiveFlow fed frame by frame: each frame as LiveFlow sees it (grey, 360 across),
+/// shared by every runner that carries its outline from the last frame to this one.
 final class OpticalFlow {
-  /// The motion of each pixel from the last frame to this one, in 0-1 image units, y down,
-  /// on the flow's own grid (which may be coarser than the frame).
-  struct Field {
-    let w: Int, h: Int
-    let dx: [Float], dy: [Float]
+  private var previous: LiveFlow.Frame?
+  private(set) var current: LiveFlow.Frame?
+  /// Milliseconds to make each frame, and for each carry.
+  var frameMs: [Double] = []
+  var carryMs: [Double] = []
 
-    func at(_ p: CGPoint) -> CGPoint {
-      let x = min(max(Int(p.x * CGFloat(w)), 0), w - 1), y = min(max(Int(p.y * CGFloat(h)), 0), h - 1)
-      return CGPoint(x: CGFloat(dx[y * w + x]), y: CGFloat(dy[y * w + x]))
-    }
-  }
-
-  let size: CGSize
-  private var previous: CGImage?
-  private(set) var field: Field?
-  /// Vision's vectors' sign and unit, per axis, found once by shifting a frame a known amount
-  /// (so nothing here depends on which image Vision measures from, or on its grid).
-  private(set) var unit: (x: Float, y: Float)?
-  var ms: [Double] = []
-
-  init(size: CGSize) { self.size = size }
-
-  /// Vision's raw flow between two frames, as it comes.
-  static func raw(from a: CGImage, to b: CGImage) -> (w: Int, h: Int, dx: [Float], dy: [Float])? {
-    let request = VNGenerateOpticalFlowRequest(targetedCGImage: b, options: [:])
-    request.computationAccuracy = .medium
-    request.outputPixelFormat = kCVPixelFormatType_TwoComponent32Float
-    do {
-      try VNImageRequestHandler(cgImage: a, options: [:]).perform([request])
-    } catch {
-      print("optical flow failed: \(error)")
-      return nil
-    }
-    guard let pb = (request.results?.first as? VNPixelBufferObservation)?.pixelBuffer,
-          CVPixelBufferGetPixelFormatType(pb) == kCVPixelFormatType_TwoComponent32Float else { return nil }
-    CVPixelBufferLockBaseAddress(pb, .readOnly)
-    defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
-    guard let base = CVPixelBufferGetBaseAddress(pb) else { return nil }
-    let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb), row = CVPixelBufferGetBytesPerRow(pb)
-    var dx = [Float](repeating: 0, count: w * h), dy = [Float](repeating: 0, count: w * h)
-    for y in 0..<h {
-      let p = base.advanced(by: y * row).assumingMemoryBound(to: Float.self)
-      for x in 0..<w {
-        dx[y * w + x] = p[2 * x]
-        dy[y * w + x] = p[2 * x + 1]
-      }
-    }
-    return (w, h, dx, dy)
-  }
-
-  /// Shifts `image` 6 px right and 4 px down and reads what Vision makes of it.
-  func calibrate(_ image: CGImage) {
-    let w = image.width, h = image.height
-    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return }
-    ctx.draw(image, in: CGRect(x: 6, y: -4, width: w, height: h)) // CG's y is up: -4 moves it down
-    guard let moved = ctx.makeImage(), let r = OpticalFlow.raw(from: image, to: moved) else { return }
-    // The middle of the frame, clear of the strips the shift uncovers.
-    var xs: [Float] = [], ys: [Float] = []
-    for y in stride(from: r.h / 4, to: r.h * 3 / 4, by: 2) {
-      for x in stride(from: r.w / 4, to: r.w * 3 / 4, by: 2) {
-        xs.append(r.dx[y * r.w + x])
-        ys.append(r.dy[y * r.w + x])
-      }
-    }
-    let mx = median(xs) / 6, my = median(ys) / 4
-    guard abs(mx) > 0.05, abs(my) > 0.05 else {
-      print("optical flow: calibration read \(median(xs)), \(median(ys)) for a 6, 4 px shift; not used")
-      return
-    }
-    unit = (mx, my)
-    print("optical flow: \(r.w)x\(r.h) for a \(w)x\(h) frame; a 6, 4 px shift reads \(median(xs)), \(median(ys))")
-  }
-
-  /// Takes the next frame and measures the flow from the last one to it.
   func feed(_ image: CGImage) {
-    defer { self.previous = image }
-    field = nil
-    if unit == nil { calibrate(image) }
-    guard let unit, let previous else { return }
     let t0 = Date()
-    guard let r = OpticalFlow.raw(from: previous, to: image) else { return }
-    ms.append(Date().timeIntervalSince(t0) * 1000)
-    let sx = unit.x * Float(size.width), sy = unit.y * Float(size.height)
-    field = Field(w: r.w, h: r.h, dx: r.dx.map { $0 / sx }, dy: r.dy.map { $0 / sy })
+    previous = current
+    current = LiveFlow.frame(image)
+    frameMs.append(Date().timeIntervalSince(t0) * 1000)
   }
 
-  /// `outline` (last frame) carried to this frame by the pixels well inside it: their median
-  /// shift, and with `scaling`, how much they spread apart or closed in (the thing nearing or
-  /// leaving). The edge is left out: the background shows through there and moves differently.
+  /// `outline` (last frame) carried to this one, as the app carries it.
   func carry(_ outline: [CGPoint], scaling: Bool) -> [CGPoint]? {
-    guard let field, outline.count >= 3 else { return nil }
-    let r = LiveTracker.bounds(outline)
-    guard r.width > 0, r.height > 0 else { return nil }
-    let grid = 20
-    var inside: [(p: CGPoint, depth: CGFloat)] = []
-    for gy in 0..<grid {
-      for gx in 0..<grid {
-        let p = CGPoint(x: r.minX + (CGFloat(gx) + 0.5) / CGFloat(grid) * r.width,
-                        y: r.minY + (CGFloat(gy) + 0.5) / CGFloat(grid) * r.height)
-        guard LiveTracker.contains(outline, p) else { continue }
-        inside.append((p, LiveTracker.edgeDistance(outline, p, scale: size)))
-      }
-    }
-    let deepest = inside.map { $0.depth }.max() ?? 0
-    let samples = inside.filter { $0.depth >= deepest * 0.3 }.map { ($0.p, field.at($0.p)) }
-    guard samples.count >= 5 else { return nil }
-    let tx = CGFloat(median(samples.map { Float($0.1.x) })), ty = CGFloat(median(samples.map { Float($0.1.y) }))
-    let cx = samples.map { $0.0.x }.reduce(0, +) / CGFloat(samples.count)
-    let cy = samples.map { $0.0.y }.reduce(0, +) / CGFloat(samples.count)
-    var s: CGFloat = 1
-    if scaling {
-      // Each point's stretch away from the middle (in pixels, so x and y count the same).
-      let far = samples.map { hypot(($0.0.x - cx) * size.width, ($0.0.y - cy) * size.height) }.max() ?? 0
-      var stretch: [Float] = []
-      for (p, d) in samples {
-        let rx = (p.x - cx) * size.width, ry = (p.y - cy) * size.height
-        let r2 = rx * rx + ry * ry
-        guard r2 > (far * 0.3) * (far * 0.3) else { continue }
-        stretch.append(Float((rx * (d.x - tx) * size.width + ry * (d.y - ty) * size.height) / r2))
-      }
-      if stretch.count >= 5 { s = 1 + CGFloat(min(max(median(stretch), -0.08), 0.08)) }
-    }
-    return outline.map { CGPoint(x: cx + ($0.x - cx) * s + tx, y: cy + ($0.y - cy) * s + ty) }
+    guard let previous, let current else { return nil }
+    let t0 = Date()
+    defer { carryMs.append(Date().timeIntervalSince(t0) * 1000) }
+    return LiveFlow.carry(outline, from: previous, to: current, scaling: scaling, turning: scaling)
   }
 }
 
@@ -518,7 +406,7 @@ print("\(name): \(frames.count) frames \(W)x\(H), seed box \(seedBox), point \(s
 // next to it so it can be chosen on real footage rather than guessed. @8 is SAM on every third
 // frame (8 a second at 24 fps, about what a phone manages); @4 every sixth (a hot phone, or a
 // guide part waiting its turn).
-let flow = OpticalFlow(size: scale)
+let flow = OpticalFlow()
 let runners = [
   Runner("fixed", tracking: false, smoothing: nil, every: 1),
   Runner("tracked", tracking: true, smoothing: nil, every: 1),
@@ -576,7 +464,7 @@ func px(_ x: Double) -> String { x < 0 ? "-" : String(format: "%.1fpx", x) }
 
 var summary: [String: Any] = [
   "name": name, "frames": frameNames.count, "width": W, "height": H,
-  "encodeMs": mean(encodeMs), "flowMs": mean(flow.ms), "truthWobble": mean(truthWobble), "truthJerk": jerk(truthCentres),
+  "encodeMs": mean(encodeMs), "flowFrameMs": mean(flow.frameMs), "flowCarryMs": mean(flow.carryMs), "truthWobble": mean(truthWobble), "truthJerk": jerk(truthCentres),
   "seedBox": [seedBox.minX, seedBox.minY, seedBox.width, seedBox.height], "seedPoint": [seedPoint.x, seedPoint.y],
 ]
 var lines: [String] = []
@@ -591,7 +479,7 @@ for r in runners {
 }
 summary["runs"] = runs
 summary["frameNames"] = frameNames
-print("\(name): encode \(Int(mean(encodeMs))) ms a frame, optical flow \(Int(mean(flow.ms))) ms; the mask's own wobble \(pct(mean(truthWobble))), jerk \(px(jerk(truthCentres)))")
+print("\(name): encode \(Int(mean(encodeMs))) ms a frame; flow \(String(format: "%.1f", mean(flow.frameMs))) ms a frame + \(String(format: "%.1f", mean(flow.carryMs))) ms a carry; the mask's own wobble \(pct(mean(truthWobble))), jerk \(px(jerk(truthCentres)))")
 lines.forEach { print($0) }
 let data = try JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys])
 try data.write(to: outDir.appendingPathComponent("\(name).json"))

@@ -7,6 +7,7 @@ import CoreGraphics
 import CoreImage
 import CoreVideo
 import Foundation
+import ImageIO
 import simd
 
 private let context = CIContext(options: [.useSoftwareRenderer: false])
@@ -209,3 +210,55 @@ func checkTracker() -> Bool {
   return false
 }
 
+
+/// `image` drawn at `w` x `h`, moved `dx` px right and `dy` px down (top-left origin).
+private func drawn(_ image: CGImage, _ w: Int, _ h: Int, dx: CGFloat, dy: CGFloat) -> CGImage? {
+  guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+  ctx.interpolationQuality = .high
+  ctx.draw(image, in: CGRect(x: dx, y: -dy, width: CGFloat(w), height: CGFloat(h))) // CG's y is up
+  return ctx.makeImage()
+}
+
+/// LiveFlow on a real picture at the phone's flow size (360 across): a box over it, the
+/// picture moved 9 px left and 5 px down, must be carried 9 px left and 5 px down, the same
+/// size; and moved further than one window (17 px right, 11 px up), still found.
+func checkFlow(_ urls: [URL]) -> Bool {
+  guard let url = urls.first(where: { $0.lastPathComponent.contains("truck") }) ?? urls.first,
+        let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+        let full = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+    print("FAIL flow: no picture")
+    return false
+  }
+  let w = LiveFlow.width, h = max(Int(Double(full.height) * Double(w) / Double(full.width)), 1)
+  let box = [CGPoint(x: 0.3, y: 0.3), CGPoint(x: 0.7, y: 0.3), CGPoint(x: 0.7, y: 0.7), CGPoint(x: 0.3, y: 0.7)]
+  let ring = OutlineMath.resample(box, scale: CGSize(width: w, height: h))
+  let middle = { (p: [CGPoint]) in CGPoint(x: p.map(\.x).reduce(0, +) / CGFloat(p.count), y: p.map(\.y).reduce(0, +) / CGFloat(p.count)) }
+  var ok = true
+  for (sx, sy) in [(CGFloat(-9), CGFloat(5)), (17, -11)] {
+    guard let still = drawn(full, w, h, dx: 0, dy: 0), let moved = drawn(full, w, h, dx: sx, dy: sy),
+          let a = LiveFlow.frame(still), let b = LiveFlow.frame(moved) else {
+      print("FAIL flow: couldn't draw the picture")
+      return false
+    }
+    let t0 = millis()
+    guard let carried = LiveFlow.carry(ring, from: a, to: b) else {
+      print("FAIL flow: nothing carried for a \(sx), \(sy) px move")
+      ok = false
+      continue
+    }
+    let ms = millis() - t0
+    let m0 = middle(ring), m1 = middle(carried)
+    let dx = (m1.x - m0.x) * CGFloat(w), dy = (m1.y - m0.y) * CGFloat(h)
+    let grew = LiveTracker.area(carried) / LiveTracker.area(ring)
+    let line = String(format: "flow: %@ moved %.0f, %.0f px is carried %.2f, %.2f px (area x%.3f) in %.1f ms",
+                      url.lastPathComponent, sx, sy, dx, dy, grew, ms)
+    if abs(dx - sx) < 1, abs(dy - sy) < 1, abs(grew - 1) < 0.05 {
+      print(line)
+    } else {
+      print("FAIL " + line)
+      ok = false
+    }
+  }
+  return ok
+}

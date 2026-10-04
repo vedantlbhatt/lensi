@@ -66,7 +66,8 @@ jobs:
           cp -R app/modules/lensi-ar/ios/Models/yolo11n.mlmodelc models-all/
           swiftc -O -o eyes tools/eyes/main.swift tools/eyes/live.swift \
             app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift \
-            app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift
+            app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
+            app/modules/lensi-ar/ios/LiveFlow.swift
           LENSI_MODELS_DIR=models-all ./eyes eyes-in out/eyes 2>&1 | tee out/eyes.txt
       - uses: actions/cache@v4
         with:

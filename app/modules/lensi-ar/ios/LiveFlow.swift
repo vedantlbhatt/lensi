@@ -1,0 +1,252 @@
+import CoreGraphics
+import Foundation
+import simd
+
+/// Carries an outline from one frame to the next on its own pixels, between SAM's cuts.
+///
+/// Points well inside the outline are followed into the next frame with pyramidal
+/// Lucas-Kanade. The outline's edge is left out, because the background shows through there
+/// and moves differently. Each point is checked by following it back again: one that doesn't
+/// return to where it started was lost or covered, and is dropped. The outline then moves by
+/// the survivors' median motion, turns by their median turn, and grows or shrinks by their
+/// median spread (MedianFlow; Kalal, Mikolajczyk and Matas, 2010).
+///
+/// The result moves the way the thing moves, rather than at the speed SAM's last cut gave it,
+/// so SAM's next prompt lands on the thing. It runs on the CPU, on a grey copy of the frame
+/// `width` pixels across, and costs a few milliseconds.
+///
+/// Normalized upright image space (0...1, top-left origin) throughout. tools/track runs the
+/// same code over real footage, and tools/eyes checks it against known shifts.
+enum LiveFlow {
+  static let width = 360
+  static let levels = 4
+  /// Half the side of the window a point is matched by: 9 x 9 pixels.
+  static let window = 4
+  static let iterations = 20
+  /// A window with less texture than this (the smaller eigenvalue of its gradient matrix,
+  /// per pixel, 0-255 intensities) can't say where it went: flat paint, a blank wall.
+  static let minTexture: Float = 0.5
+
+  /// One frame, grey, as a pyramid (each level half the size of the last) with its gradients.
+  struct Frame {
+    struct Level {
+      let w: Int, h: Int
+      let pixels: [Float], gx: [Float], gy: [Float]
+    }
+    let levels: [Level]
+    var w: Int { levels[0].w }
+    var h: Int { levels[0].h }
+  }
+
+  /// `image` as a Frame, `width` pixels across.
+  static func frame(_ image: CGImage, width: Int = LiveFlow.width) -> Frame? {
+    let w = width, h = max(Int((Double(image.height) * Double(width) / Double(image.width)).rounded()), 1)
+    var grey = [UInt8](repeating: 0, count: w * h)
+    let drawn = grey.withUnsafeMutableBytes { raw -> Bool in
+      // Row 0 of the buffer is the top of the picture.
+      guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+      ctx.interpolationQuality = .medium
+      ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+      return true
+    }
+    guard drawn else { return nil }
+    var level = Frame.Level(w: w, h: h, pixels: grey.map { Float($0) }, gx: [], gy: [])
+    var out: [Frame.Level] = []
+    for i in 0..<levels {
+      let (gx, gy) = gradients(level.pixels, w: level.w, h: level.h)
+      out.append(Frame.Level(w: level.w, h: level.h, pixels: level.pixels, gx: gx, gy: gy))
+      if i < levels - 1 {
+        guard level.w >= 8, level.h >= 8 else { break }
+        level = half(level)
+      }
+    }
+    return Frame(levels: out)
+  }
+
+  /// Blurred ([1 2 1] / 4 each way) and every other pixel kept.
+  private static func half(_ l: Frame.Level) -> Frame.Level {
+    let w = l.w, h = l.h
+    var across = [Float](repeating: 0, count: w * h)
+    for y in 0..<h {
+      for x in 0..<w {
+        let a = l.pixels[y * w + max(x - 1, 0)], b = l.pixels[y * w + x], c = l.pixels[y * w + min(x + 1, w - 1)]
+        across[y * w + x] = (a + 2 * b + c) * 0.25
+      }
+    }
+    let hw = (w + 1) / 2, hh = (h + 1) / 2
+    var out = [Float](repeating: 0, count: hw * hh)
+    for y in 0..<hh {
+      for x in 0..<hw {
+        let sx = 2 * x, sy = 2 * y
+        let a = across[max(sy - 1, 0) * w + sx], b = across[sy * w + sx], c = across[min(sy + 1, h - 1) * w + sx]
+        out[y * hw + x] = (a + 2 * b + c) * 0.25
+      }
+    }
+    return Frame.Level(w: hw, h: hh, pixels: out, gx: [], gy: [])
+  }
+
+  /// Central differences, the edge repeated.
+  private static func gradients(_ p: [Float], w: Int, h: Int) -> ([Float], [Float]) {
+    var gx = [Float](repeating: 0, count: w * h), gy = [Float](repeating: 0, count: w * h)
+    for y in 0..<h {
+      for x in 0..<w {
+        gx[y * w + x] = (p[y * w + min(x + 1, w - 1)] - p[y * w + max(x - 1, 0)]) * 0.5
+        gy[y * w + x] = (p[min(y + 1, h - 1) * w + x] - p[max(y - 1, 0) * w + x]) * 0.5
+      }
+    }
+    return (gx, gy)
+  }
+
+  /// Bilinear, clamped to the picture.
+  @inline(__always)
+  private static func sample(_ p: UnsafeBufferPointer<Float>, _ w: Int, _ h: Int, _ x: Float, _ y: Float) -> Float {
+    let cx = min(max(x, 0), Float(w) - 1.0001), cy = min(max(y, 0), Float(h) - 1.0001)
+    let x0 = Int(cx), y0 = Int(cy)
+    let fx = cx - Float(x0), fy = cy - Float(y0)
+    let i = y0 * w + x0
+    return p[i] * (1 - fx) * (1 - fy) + p[i + 1] * fx * (1 - fy) + p[i + w] * (1 - fx) * fy + p[i + w + 1] * fx * fy
+  }
+
+  /// Where each point (pixels of `a`'s first level) is in `b`; nil where it can't be told.
+  static func track(_ points: [SIMD2<Float>], from a: Frame, to b: Frame) -> [SIMD2<Float>?] {
+    let n = points.count
+    var guess = [SIMD2<Float>](repeating: .zero, count: n)
+    var lost = [Bool](repeating: false, count: n)
+    let side = 2 * window + 1, count = side * side
+    var ia = [Float](repeating: 0, count: count), wx = [Float](repeating: 0, count: count), wy = [Float](repeating: 0, count: count)
+    let top = min(a.levels.count, b.levels.count) - 1
+    for lev in stride(from: top, through: 0, by: -1) {
+      let la = a.levels[lev], lb = b.levels[lev]
+      let s = Float(1 << lev)
+      la.pixels.withUnsafeBufferPointer { I in
+        la.gx.withUnsafeBufferPointer { IX in
+          la.gy.withUnsafeBufferPointer { IY in
+            lb.pixels.withUnsafeBufferPointer { J in
+              for k in 0..<n where !lost[k] {
+                let px = points[k].x / s, py = points[k].y / s
+                var gxx: Float = 0, gxy: Float = 0, gyy: Float = 0
+                var i = 0
+                for oy in -window...window {
+                  for ox in -window...window {
+                    let x = px + Float(ox), y = py + Float(oy)
+                    ia[i] = sample(I, la.w, la.h, x, y)
+                    let dx = sample(IX, la.w, la.h, x, y), dy = sample(IY, la.w, la.h, x, y)
+                    wx[i] = dx
+                    wy[i] = dy
+                    gxx += dx * dx
+                    gxy += dx * dy
+                    gyy += dy * dy
+                    i += 1
+                  }
+                }
+                let det = gxx * gyy - gxy * gxy
+                let smaller = (gxx + gyy) / 2 - (((gxx - gyy) / 2) * ((gxx - gyy) / 2) + gxy * gxy).squareRoot()
+                guard det > 0, smaller / Float(count) >= minTexture else {
+                  // Too flat to say at this scale: carry the guess down and let the finer levels try.
+                  if lev == 0 { lost[k] = true } else { guess[k] *= 2 }
+                  continue
+                }
+                var v = SIMD2<Float>.zero
+                for _ in 0..<iterations {
+                  var bx: Float = 0, by: Float = 0
+                  var i = 0
+                  for oy in -window...window {
+                    for ox in -window...window {
+                      let d = ia[i] - sample(J, lb.w, lb.h, px + Float(ox) + guess[k].x + v.x, py + Float(oy) + guess[k].y + v.y)
+                      bx += d * wx[i]
+                      by += d * wy[i]
+                      i += 1
+                    }
+                  }
+                  let step = SIMD2<Float>((gyy * bx - gxy * by) / det, (gxx * by - gxy * bx) / det)
+                  v += step
+                  if abs(step.x) < 0.01, abs(step.y) < 0.01 { break }
+                }
+                guess[k] = lev > 0 ? 2 * (guess[k] + v) : guess[k] + v
+              }
+            }
+          }
+        }
+      }
+    }
+    let w = Float(a.w - 1), h = Float(a.h - 1)
+    return (0..<n).map { k in
+      let p = points[k] + guess[k]
+      return lost[k] || !p.x.isFinite || !p.y.isFinite || p.x < 0 || p.x > w || p.y < 0 || p.y > h ? nil : p
+    }
+  }
+
+  /// `outline` in frame `a`, carried into frame `b`; nil when too few points inside it could
+  /// be followed to say (it's mostly off the picture, or flat, or covered).
+  static func carry(_ outline: [CGPoint], from a: Frame, to b: Frame, scaling: Bool = true, turning: Bool = true) -> [CGPoint]? {
+    guard outline.count >= 3 else { return nil }
+    let size = CGSize(width: a.w, height: a.h)
+    let r = LiveTracker.bounds(outline)
+    guard r.width > 0, r.height > 0 else { return nil }
+    // A grid over it; the points well inside (the deepest 70%) are the ones followed.
+    let grid = 12
+    var inside: [(p: CGPoint, depth: CGFloat)] = []
+    for gy in 0..<grid {
+      for gx in 0..<grid {
+        let p = CGPoint(x: r.minX + (CGFloat(gx) + 0.5) / CGFloat(grid) * r.width,
+                        y: r.minY + (CGFloat(gy) + 0.5) / CGFloat(grid) * r.height)
+        guard p.x >= 0, p.x <= 1, p.y >= 0, p.y <= 1, LiveTracker.contains(outline, p) else { continue }
+        inside.append((p, LiveTracker.edgeDistance(outline, p, scale: size)))
+      }
+    }
+    let deepest = inside.map { $0.depth }.max() ?? 0
+    let from = inside.filter { $0.depth >= deepest * 0.3 }.map { SIMD2<Float>(Float($0.p.x * size.width), Float($0.p.y * size.height)) }
+    guard from.count >= 5 else { return nil }
+    let there = track(from, from: a, to: b)
+    let found = there.compactMap { $0 }
+    guard found.count >= 5 else { return nil }
+    let back = track(found, from: b, to: a)
+    // Forward and back: a point that doesn't come home was lost; keep the better half.
+    var pairs: [(a: SIMD2<Float>, b: SIMD2<Float>, error: Float)] = []
+    var j = 0
+    for (k, t) in there.enumerated() {
+      guard let t else { continue }
+      defer { j += 1 }
+      guard let home = back[j] else { continue }
+      pairs.append((a: from[k], b: t, error: simd_distance(home, from[k])))
+    }
+    guard pairs.count >= 4 else { return nil }
+    let cut = max(median(pairs.map { $0.error }), 0.3)
+    let kept = pairs.filter { $0.error <= cut }
+    guard kept.count >= 4 else { return nil }
+    let tx = median(kept.map { $0.b.x - $0.a.x }), ty = median(kept.map { $0.b.y - $0.a.y })
+    // Spread and turn, from pairs of points far enough apart to say.
+    var ratios: [Float] = [], turns: [Float] = []
+    if scaling || turning {
+      for m in 0..<kept.count {
+        for n in (m + 1)..<kept.count {
+          let da = kept[n].a - kept[m].a, db = kept[n].b - kept[m].b
+          let la = simd_length(da)
+          guard la > 4 else { continue }
+          if scaling { ratios.append(simd_length(db) / la) }
+          if turning {
+            var t = atan2(db.y, db.x) - atan2(da.y, da.x)
+            if t > .pi { t -= 2 * .pi } else if t < -.pi { t += 2 * .pi }
+            turns.append(t)
+          }
+        }
+      }
+    }
+    let s = ratios.count >= 3 ? min(max(median(ratios), 0.92), 1.08) : 1
+    let turn = turns.count >= 3 ? min(max(median(turns), -0.17), 0.17) : 0
+    let c = kept.reduce(SIMD2<Float>.zero) { $0 + $1.a } / Float(kept.count)
+    let cr = cos(turn), sr = sin(turn)
+    return outline.map { q in
+      let dx = (Float(q.x * size.width) - c.x) * s, dy = (Float(q.y * size.height) - c.y) * s
+      return CGPoint(x: CGFloat(c.x + dx * cr - dy * sr + tx) / size.width,
+                     y: CGFloat(c.y + dx * sr + dy * cr + ty) / size.height)
+    }
+  }
+
+  static func median(_ v: [Float]) -> Float {
+    guard !v.isEmpty else { return 0 }
+    let s = v.sorted()
+    return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
+  }
+}

@@ -42,6 +42,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var tapTarget: simd_float3?
   /// Live outlines by what they're of: a guide tag's pin id, or `centreKey`.
   private var liveShapes: [String: LiveShape] = [:]
+  /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
+  private let flowQueue = DispatchQueue(label: "lensi.flow", qos: .userInitiated)
+  private var flowBusy = false
+  private var lastFlowTime: TimeInterval = 0
+  private var flowMs: Double = 0
+  /// Only touched on `flowQueue`: the last frame the flow saw (as LiveFlow sees it, with its
+  /// camera and capture time), and what makes the small copies.
+  private var flowPrevious: (frame: LiveFlow.Frame, camera: Selection, t: CFTimeInterval)?
+  private lazy var flowContext = CIContext(options: [.useSoftwareRenderer: false])
   private static let centreKey = "centre"
   /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
   var livePins = false
@@ -251,8 +260,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let layer: OutlineLayer
     /// OutlineMath.count points, in the world, as of `seen`.
     var world: [simd_float3]
-    /// When the frame they were cut from was captured (the same clock as CACurrentMediaTime).
+    /// When the frame they were cut from (or the flow last carried them to) was captured,
+    /// on the same clock as CACurrentMediaTime.
     var seen: CFTimeInterval
+    /// When SAM last cut it (an outline the flow carries still needs SAM to say it's right).
+    var cut: CFTimeInterval = 0
     /// Asked for since it was last found, and not found.
     var misses = 0
     /// How the thing itself moves (metres a second, steadied): between SAM's frames it's drawn
@@ -263,6 +275,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// Its last change of shape, so the next tells real turning or bending from edge noise.
     var lastChange: [simd_float3]?
     let follows: Bool
+    /// How far the flow has carried it, frame by frame (capture times, newest last, the last
+    /// second): a SAM cut that lands after the flow has moved on is brought along the same way.
+    var moves: [(t: CFTimeInterval, by: simd_float3)] = []
+    /// What the last display frame drew, and when: what's drawn eases onto where the outline
+    /// is (in about 60 ms) instead of jumping when a cut lands.
+    var drawn: [simd_float3]?
+    var drawnAt: CFTimeInterval = 0
 
     /// Where it is at `t`: its outline carried along by its own motion (at most 0.3 s ahead).
     func placed(at t: CFTimeInterval) -> [simd_float3] {
@@ -418,8 +437,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             NSLog("[lensi] live SAM failed: %@", failed)
           } else {
             let fastest = self.liveShapes.values.map { simd_length($0.velocity) }.max() ?? 0
-            NSLog("[lensi] live SAM %.0f ms a frame (encoder %.0f ms), %ld of %ld prompts found, %ld refused, fastest thing %.2f m/s, thermal %ld",
-                  self.samMs, self.samEncodeMs, results.count, prompts.count, refusals, fastest, ProcessInfo.processInfo.thermalState.rawValue)
+            NSLog("[lensi] live SAM %.0f ms a frame (encoder %.0f ms), %ld of %ld prompts found, %ld refused, fastest thing %.2f m/s, optical flow %.0f ms, thermal %ld",
+                  self.samMs, self.samEncodeMs, results.count, prompts.count, refusals, fastest, self.flowMs, ProcessInfo.processInfo.thermalState.rawValue)
           }
         }
         guard self.liveSegments else { return }
@@ -466,18 +485,29 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let key = prompt.key
       if let world = found[key] {
         if var shape = liveShapes[key], t - shape.seen < 2 {
+          // SAM takes a while: if the flow has carried the outline past this cut's frame, the
+          // cut is brought along the same way first.
+          var fresh = world
+          var at = t
+          if shape.seen > t {
+            let since = shape.moves.filter { $0.t > t }.reduce(simd_float3.zero) { $0 + $1.by }
+            fresh = world.map { $0 + since }
+            at = shape.seen
+          }
           // Blended into where it should be by now: a moving thing is followed, and its edge
           // settles unless it's really changing shape (tools/track measures this on real footage).
-          let steadied = OutlineMath.steady(shape.placed(at: t), world, previous: shape.lastChange)
+          let steadied = OutlineMath.steady(shape.placed(at: at), fresh, previous: shape.lastChange)
           let next = steadied.outline
           shape.lastChange = steadied.change
-          let dt = Float(t - shape.seen)
+          // Its speed, when the flow isn't measuring it.
+          let dt = Float(at - shape.seen)
           if dt > 0.01 {
             let v = (OutlineMath.centre(next) - OutlineMath.centre(shape.world)) / dt
             shape.velocity = shape.velocity * 0.4 + v * 0.6
           }
           shape.world = next
-          shape.seen = t
+          shape.seen = at
+          shape.cut = t
           shape.misses = 0
           liveShapes[key] = shape
         } else {
@@ -488,6 +518,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           // Under the tags.
           pinLayer.layer.insertSublayer(layer, at: 0)
           var shape = LiveShape(layer: layer, world: world, seen: t, follows: prompt.follows)
+          shape.cut = t
           if let pin = pins[key] {
             let offset = pin.world - OutlineMath.centre(world)
             shape.tagOffset = simd_length(offset) < 0.5 ? offset : .zero
@@ -505,6 +536,64 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     layoutLive()
   }
 
+  /// Between SAM's cuts each followed outline rides its own pixels: up to 30 times a second a
+  /// small grey copy of the frame is made, and every followed outline is moved the way the
+  /// points inside it moved since the last one (LiveFlow: Lucas-Kanade, their median). Without
+  /// it an outline coasts at the speed of SAM's last cut and jumps at the next, and a thing that
+  /// moves its own width between cuts (a bolt on a belt) is lost (tools/track measures both).
+  private func flowLive(_ frame: ARFrame) {
+    guard liveSegments, sam != nil, !flowBusy, frame.timestamp - lastFlowTime >= 1.0 / 30,
+          liveShapes.values.contains(where: { $0.follows }) else { return }
+    flowBusy = true
+    lastFlowTime = frame.timestamp
+    let buffer = frame.capturedImage
+    let camera = Selection(frame: frame, crop: CGRect(x: 0, y: 0, width: 1, height: 1))
+    let t = frame.timestamp
+    flowQueue.async { [weak self] in
+      guard let self else { return }
+      let started = CACurrentMediaTime()
+      // Upright and LiveFlow.width across.
+      let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+      let scale = CGFloat(LiveFlow.width) / upright.extent.width
+      let small = upright.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      let now = self.flowContext.createCGImage(small, from: small.extent).flatMap { LiveFlow.frame($0) }
+      let previous = self.flowPrevious
+      self.flowPrevious = now.map { (frame: $0, camera: camera, t: t) }
+      let ms = (CACurrentMediaTime() - started) * 1000
+      DispatchQueue.main.async {
+        self.flowBusy = false
+        self.flowMs = self.flowMs == 0 ? ms : self.flowMs * 0.8 + ms * 0.2
+        guard let now, let previous, t - previous.t < 0.25, self.liveSegments else { return }
+        self.carryLive(from: previous.frame, previous.camera, at: previous.t, to: now, camera, at: t)
+      }
+    }
+  }
+
+  /// One frame to the next (`a`, seen by camera `ca` at `ta`; `b`, by `cb` at `tb`), applied
+  /// to each followed outline: seen from `ca`, carried on the picture, laid back in the world
+  /// on a plane through its middle as `cb` sees it. The phone's own motion is in the picture's
+  /// too and cancels out in the round trip; what's left is the thing's.
+  private func carryLive(from a: LiveFlow.Frame, _ ca: Selection, at ta: CFTimeInterval,
+                         to b: LiveFlow.Frame, _ cb: Selection, at tb: CFTimeInterval) {
+    for (key, var shape) in liveShapes where shape.follows && shape.misses < 2 {
+      // A cut from a later frame already says where it is.
+      guard shape.seen <= ta + 0.001 else { continue }
+      let then = shape.placed(at: ta)
+      guard let seen = ca.upright(then), let moved = LiveFlow.carry(seen, from: a, to: b) else { continue }
+      let plane = cb.withPlane(through: OutlineMath.centre(then))
+      let world = moved.compactMap { plane.onPlane($0) }
+      guard world.count == moved.count else { continue }
+      let by = OutlineMath.centre(world) - OutlineMath.centre(then)
+      let dt = Float(tb - ta)
+      if dt > 0.005 { shape.velocity = shape.velocity * 0.5 + by / dt * 0.5 }
+      shape.world = world
+      shape.seen = tb
+      shape.moves.append((t: tb, by: by))
+      shape.moves.removeAll { tb - $0.t > 1 }
+      liveShapes[key] = shape
+    }
+  }
+
   /// Every display frame: each live outline drawn where its thing is now (carried along by
   /// its own motion between SAM's frames; the phone's is ARKit's). The current step's in the
   /// lens colour, the rest thin and white. It goes (fading) once SAM has missed it twice in
@@ -518,10 +607,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
-    for (key, shape) in liveShapes {
+    for (key, var shape) in liveShapes {
       let pin = pins[key]
       let gone = key == Self.centreKey ? guiding : pin == nil
-      let age = now - shape.seen
+      let age = now - shape.cut
       if gone || shape.misses >= 2 || age > Self.liveStale {
         retire(shape.layer)
         liveShapes[key] = nil
@@ -531,9 +620,27 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         shape.layer.isHidden = true
         continue
       }
+      // Eased onto where it is now rather than jumping when a cut lands; carried along with
+      // the thing meanwhile, so the easing never lags its motion. A jump of more than its own
+      // size (something else) is taken at once.
+      let target = shape.placed(at: now)
+      var drawn = target
+      if let last = shape.drawn, last.count == target.count, now - shape.drawnAt < 0.25 {
+        let dt = Float(now - shape.drawnAt)
+        let v = simd_length(shape.velocity) >= 0.02 ? shape.velocity : .zero
+        let carried = last.map { $0 + v * dt }
+        if simd_distance(OutlineMath.centre(carried), OutlineMath.centre(target)) < OutlineMath.spread(target) {
+          let k = 1 - exp(-dt / 0.06)
+          let lined = OutlineMath.align(target, to: carried).points
+          drawn = zip(carried, lined).map { $0 + ($1 - $0) * k }
+        }
+      }
+      shape.drawn = drawn
+      shape.drawnAt = now
+      liveShapes[key] = shape
       let path = UIBezierPath()
       var behind = false
-      for (i, w) in shape.placed(at: now).enumerated() {
+      for (i, w) in drawn.enumerated() {
         guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else {
           behind = true
           break
@@ -667,6 +774,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     recorder?.append(pixelBuffer: frame.capturedImage, time: frame.timestamp)
     if guideWatchId != nil { watchGuide(frame) }
     segmentLive(frame)
+    flowLive(frame)
     guard showDetections, !visionBusy, frame.timestamp - lastVisionTime > 0.066 else { return }
     visionBusy = true
     lastVisionTime = frame.timestamp
@@ -1520,6 +1628,24 @@ private struct Selection {
     s.planePoint = point
     s.planeNormal = simd_normalize(-simd_make_float3(transform.columns.2))
     return s
+  }
+
+  /// Where world points land in this camera's upright picture (0…1, the inverse of `ray`);
+  /// nil when any is behind it.
+  func upright(_ world: [simd_float3]) -> [CGPoint]? {
+    let toCamera = transform.inverse
+    let fx = intrinsics[0][0], fy = intrinsics[1][1]
+    let cx = intrinsics[2][0], cy = intrinsics[2][1]
+    var out: [CGPoint] = []
+    out.reserveCapacity(world.count)
+    for w in world {
+      let c = simd_mul(toCamera, simd_float4(w, 1))
+      guard c.z < -0.02 else { return nil }
+      let px = cx + fx * c.x / -c.z
+      let py = cy - fy * c.y / -c.z
+      out.append(CGPoint(x: 1 - CGFloat(py) / resolution.height, y: CGFloat(px) / resolution.width))
+    }
+    return out
   }
 
   func onPlane(_ upright: CGPoint) -> simd_float3? {
