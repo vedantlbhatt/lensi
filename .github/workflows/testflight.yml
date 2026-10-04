@@ -11,6 +11,10 @@ name: testflight
 # first step says so if it's missing.
 on:
   workflow_dispatch:
+  # Push a commit to the `testflight` branch to ship it (manual runs need this
+  # file on the default branch first).
+  push:
+    branches: [testflight]
 
 concurrency:
   group: testflight
