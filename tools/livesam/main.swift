@@ -1,0 +1,318 @@
+// Replays videos with ground-truth masks (DAVIS 2017 layout) through Lensi's
+// live segmentation and scores what would be on screen every frame.
+//
+//   swiftc -O -o livesam tools/livesam/main.swift \
+//     app/modules/lensi-ar/ios/{LiveSeg,SAMSegmenter,Detector}.swift
+//   LENSI_MODELS_DIR=<dir with LensiSAM*.mlmodelc> ./livesam --davis ~/DAVIS --seqs bear,dogs-jump \
+//     --mode ours --encoder-ms 25 --decoder-ms 8 [--render out/]
+//
+// SAM really runs (Core ML, this Mac); its answer is only used once the
+// simulated phone latency (encoder + decoder per prompt) has passed, which is
+// what the phone does: the camera keeps moving while SAM thinks.
+//
+// Modes:
+//   baseline  what camera-first did: SAM at a point, outline held where it was
+//             found until the next answer. Prompted with the true centre of each
+//             object every pass (an oracle, so it's a generous baseline).
+//   ours      LiveSegTracker: optical flow moves outlines every frame, SAM answers
+//             are carried forward and blended; prompts come from the track itself.
+//
+// Scores, per object and frame from the first frame on:
+//   J       IoU of what's on screen with the true mask (0 before the first answer)
+//   jitter  how much the outline changes frame to frame beyond how much the
+//           true mask changes: mean of max(0, (1-IoU(d_t,d_t-1)) - (1-IoU(g_t,g_t-1)))
+import CoreGraphics
+import Foundation
+import ImageIO
+import UniformTypeIdentifiers
+
+// MARK: - Args
+
+var opts: [String: String] = [:]
+let argv = Array(CommandLine.arguments.dropFirst())
+for i in stride(from: 0, to: argv.count - 1, by: 2) where argv[i].hasPrefix("--") {
+  opts[String(argv[i].dropFirst(2))] = argv[i + 1]
+}
+let davis = URL(fileURLWithPath: (opts["davis"] ?? "~/lensi-data/DAVIS").replacingOccurrences(of: "~", with: NSHomeDirectory()))
+let mode = opts["mode"] ?? "ours"
+let encoderMs = Double(opts["encoder-ms"] ?? "25")!
+let decoderMs = Double(opts["decoder-ms"] ?? "8")!
+let fps = Double(opts["fps"] ?? "30")!
+let stepFrames = Int(opts["step"] ?? "1")!
+let maxObjects = Int(opts["objects"] ?? "4")!
+let maxFrames = Int(opts["frames"] ?? "1000")!
+let seed = opts["seed"] ?? "box"
+let flowSide = Int(opts["flow-side"] ?? "480")!
+let renderDir = opts["render"].map { URL(fileURLWithPath: $0) }
+let seqs: [String] = {
+  if let s = opts["seqs"] { return s.split(separator: ",").map(String.init) }
+  let list = (try? String(contentsOf: davis.appendingPathComponent("ImageSets/2017/val.txt"), encoding: .utf8)) ?? ""
+  return list.split(separator: "\n").map(String.init)
+}()
+
+guard let sam = SAMSegmenter.shared else {
+  print("SAM models not found: set LENSI_MODELS_DIR")
+  exit(2)
+}
+
+// MARK: - IO
+
+func loadImage(_ url: URL) -> CGImage? {
+  guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+  return CGImageSourceCreateImageAtIndex(src, 0, nil)
+}
+
+func rgba(_ image: CGImage, width: Int, height: Int) -> [UInt8] {
+  var px = [UInt8](repeating: 0, count: width * height * 4)
+  px.withUnsafeMutableBytes { buf in
+    let ctx = CGContext(data: buf.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    ctx.interpolationQuality = .none
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+  }
+  return px
+}
+
+func flowFrame(_ image: CGImage) -> FlowFrame {
+  let s = Double(flowSide) / Double(max(image.width, image.height))
+  let w = Int(Double(image.width) * s), h = Int(Double(image.height) * s)
+  var px = [UInt8](repeating: 0, count: w * h)
+  px.withUnsafeMutableBytes { buf in
+    let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
+    ctx.interpolationQuality = .medium
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+  }
+  return FlowFrame(width: w, height: h, pixels: px.map { Float($0) })
+}
+
+/// DAVIS palette: object id -> RGB (the VOC colour map).
+func paletteColor(_ id: Int) -> (UInt8, UInt8, UInt8) {
+  var r = 0, g = 0, b = 0, c = id
+  for j in 0..<8 {
+    r |= ((c >> 0) & 1) << (7 - j)
+    g |= ((c >> 1) & 1) << (7 - j)
+    b |= ((c >> 2) & 1) << (7 - j)
+    c >>= 3
+  }
+  return (UInt8(r), UInt8(g), UInt8(b))
+}
+
+/// Ground truth at the metric grid: one label byte per cell.
+let gridW = 214, gridH = 120
+func labels(_ url: URL) -> [UInt8]? {
+  guard let img = loadImage(url) else { return nil }
+  let px = rgba(img, width: gridW, height: gridH)
+  var lut: [Int: UInt8] = [:]
+  for id in 0..<32 {
+    let (r, g, b) = paletteColor(id)
+    lut[Int(r) << 16 | Int(g) << 8 | Int(b)] = UInt8(id)
+  }
+  var out = [UInt8](repeating: 0, count: gridW * gridH)
+  for i in 0..<(gridW * gridH) {
+    out[i] = lut[Int(px[4 * i]) << 16 | Int(px[4 * i + 1]) << 8 | Int(px[4 * i + 2])] ?? 0
+  }
+  return out
+}
+
+func rasterNorm(_ poly: [CGPoint]) -> [Bool] {
+  guard poly.count >= 3 else { return [Bool](repeating: false, count: gridW * gridH) }
+  var buf = [UInt8](repeating: 0, count: gridW * gridH)
+  buf.withUnsafeMutableBytes { b in
+    let ctx = CGContext(data: b.baseAddress, width: gridW, height: gridH, bitsPerComponent: 8, bytesPerRow: gridW,
+                        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
+    ctx.translateBy(x: 0, y: CGFloat(gridH))
+    ctx.scaleBy(x: CGFloat(gridW), y: -CGFloat(gridH))
+    ctx.setFillColor(gray: 1, alpha: 1)
+    ctx.addLines(between: poly)
+    ctx.closePath()
+    ctx.fillPath()
+  }
+  return buf.map { $0 > 127 }
+}
+
+func iou(_ a: [Bool], _ b: [Bool]) -> Double {
+  var i = 0, u = 0
+  for k in 0..<a.count {
+    if a[k] && b[k] { i += 1 }
+    if a[k] || b[k] { u += 1 }
+  }
+  return u == 0 ? 1 : Double(i) / Double(u)
+}
+
+func bbox(_ m: [Bool]) -> CGRect? {
+  var minX = gridW, minY = gridH, maxX = -1, maxY = -1
+  for y in 0..<gridH { for x in 0..<gridW where m[y * gridW + x] {
+    minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+  } }
+  guard maxX >= 0 else { return nil }
+  return CGRect(x: CGFloat(minX) / CGFloat(gridW), y: CGFloat(minY) / CGFloat(gridH),
+                width: CGFloat(maxX - minX + 1) / CGFloat(gridW), height: CGFloat(maxY - minY + 1) / CGFloat(gridH))
+}
+
+/// The mask cell farthest inside (a cheap distance transform by erosion).
+func innerPoint(_ m: [Bool]) -> CGPoint? {
+  var cur = m
+  var last: [Bool]? = nil
+  while cur.contains(true) {
+    last = cur
+    var next = cur
+    for y in 0..<gridH { for x in 0..<gridW where cur[y * gridW + x] {
+      if x == 0 || y == 0 || x == gridW - 1 || y == gridH - 1 || !cur[y * gridW + x - 1] || !cur[y * gridW + x + 1]
+        || !cur[(y - 1) * gridW + x] || !cur[(y + 1) * gridW + x] { next[y * gridW + x] = false }
+    } }
+    cur = next
+  }
+  guard let l = last, let i = l.firstIndex(of: true) else { return nil }
+  return CGPoint(x: (CGFloat(i % gridW) + 0.5) / CGFloat(gridW), y: (CGFloat(i / gridW) + 0.5) / CGFloat(gridH))
+}
+
+func writePNG(_ image: CGImage, _ url: URL) {
+  guard let d = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+  CGImageDestinationAddImage(d, image, nil)
+  CGImageDestinationFinalize(d)
+}
+
+let colors: [(CGFloat, CGFloat, CGFloat)] = [(1, 0.35, 0.3), (0.18, 0.6, 1), (0.08, 0.72, 0.54), (0.55, 0.42, 1)]
+
+func render(_ image: CGImage, outlines: [(Int, [CGPoint])], truth: [(Int, [Bool])], to url: URL) {
+  let w = image.width, h = image.height
+  let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+  ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+  ctx.translateBy(x: 0, y: CGFloat(h))
+  ctx.scaleBy(x: 1, y: -1)
+  // Truth: faint dots on the mask's edge cells.
+  for (obj, m) in truth {
+    let c = colors[(obj - 1) % colors.count]
+    ctx.setFillColor(red: c.0, green: c.1, blue: c.2, alpha: 0.9)
+    for y in 1..<(gridH - 1) { for x in 1..<(gridW - 1) where m[y * gridW + x] {
+      if !m[y * gridW + x - 1] || !m[y * gridW + x + 1] || !m[(y - 1) * gridW + x] || !m[(y + 1) * gridW + x] {
+        let cx = (CGFloat(x) + 0.5) / CGFloat(gridW) * CGFloat(w), cy = (CGFloat(y) + 0.5) / CGFloat(gridH) * CGFloat(h)
+        ctx.fill(CGRect(x: cx - 1, y: cy - 1, width: 2, height: 2))
+      }
+    } }
+  }
+  for (obj, poly) in outlines where poly.count >= 3 {
+    let c = colors[(obj - 1) % colors.count]
+    let pts = poly.map { CGPoint(x: $0.x * CGFloat(w), y: $0.y * CGFloat(h)) }
+    ctx.addLines(between: pts)
+    ctx.closePath()
+    ctx.setFillColor(red: c.0, green: c.1, blue: c.2, alpha: 0.18)
+    ctx.setStrokeColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
+    ctx.setLineWidth(2.5)
+    ctx.drawPath(using: .fillStroke)
+  }
+  if let out = ctx.makeImage() { writePNG(out, url) }
+}
+
+// MARK: - Run
+
+struct SeqScore { var j: [Double] = []; var jitter: [Double] = []; var samMs: [Double] = []; var flowMs: [Double] = [] }
+var all = SeqScore()
+var perSeq: [[String: Any]] = []
+let frameMs = 1000 / fps
+
+for seq in seqs {
+  let imgDir = davis.appendingPathComponent("JPEGImages/480p/\(seq)")
+  let annDir = davis.appendingPathComponent("Annotations/480p/\(seq)")
+  let names = ((try? FileManager.default.contentsOfDirectory(atPath: imgDir.path)) ?? []).filter { $0.hasSuffix(".jpg") }.sorted()
+  guard !names.isEmpty else { print("no frames: \(seq)"); continue }
+  let frames = stride(from: 0, to: names.count, by: stepFrames).map { names[$0] }.prefix(maxFrames)
+  guard let first = labels(annDir.appendingPathComponent(frames[0].replacingOccurrences(of: ".jpg", with: ".png"))) else { continue }
+  let objects = Array(Set(first.filter { $0 > 0 }).map(Int.init).sorted().prefix(maxObjects))
+
+  let tracker = LiveSegTracker()
+  var shown: [Int: [CGPoint]] = [:] // baseline: last answer
+  var inflight: (ready: Int, results: [SegResult], baseline: [(Int, [CGPoint])])? = nil
+  var prevShown: [Int: [Bool]] = [:]
+  var prevTruth: [Int: [Bool]] = [:]
+  var score = SeqScore()
+
+  for (f, name) in frames.enumerated() {
+    guard let image = loadImage(imgDir.appendingPathComponent(name)),
+          let gt = labels(annDir.appendingPathComponent(name.replacingOccurrences(of: ".jpg", with: ".png"))) else { continue }
+    let truth = Dictionary(uniqueKeysWithValues: objects.map { o in (o, gt.map { Int($0) == o }) })
+
+    let t0 = CFAbsoluteTimeGetCurrent()
+    let flow = flowFrame(image)
+    if mode == "ours" { tracker.step(flow) }
+    score.flowMs.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+    if f == 0, mode == "ours" {
+      for o in objects {
+        guard let m = truth[o] else { continue }
+        if seed == "box", let b = bbox(m) { tracker.add(key: "\(o)", box: b) }
+        else if let p = innerPoint(m) { tracker.add(key: "\(o)", point: p) }
+      }
+    }
+
+    // A SAM answer that is ready by now.
+    if let job = inflight, job.ready <= f {
+      if mode == "ours" { tracker.apply(job.results, current: flow) }
+      else { for (o, p) in job.baseline { shown[o] = p } }
+      inflight = nil
+    }
+    // Start the next SAM pass on this frame.
+    if inflight == nil {
+      let s0 = CFAbsoluteTimeGetCurrent()
+      try? sam.prepare(image: image, id: "live", force: true)
+      var results: [SegResult] = []
+      var baseline: [(Int, [CGPoint])] = []
+      var prompts = 0
+      if mode == "ours" {
+        for job in tracker.jobs() {
+          prompts += 1
+          let mask = try? sam.segment(id: "live", points: job.points, labels: job.labels, box: job.box,
+                                      preferPart: job.preferPart, prior: job.prior)
+          let ok = (mask?.score ?? 0) >= 0.5 && (mask?.polygon.count ?? 0) > 2
+          results.append(SegResult(key: job.key, frame: job.frame, polygon: ok ? mask!.polygon : [], score: mask?.score ?? 0))
+        }
+      } else {
+        for o in objects {
+          guard let m = truth[o], let p = innerPoint(m) else { continue }
+          prompts += 1
+          if let mask = try? sam.segment(id: "live", points: [p], labels: [1], box: nil), mask.score >= 0.6, mask.polygon.count > 2 {
+            baseline.append((o, mask.polygon))
+          }
+        }
+      }
+      score.samMs.append((CFAbsoluteTimeGetCurrent() - s0) * 1000)
+      let latency = encoderMs + decoderMs * Double(prompts)
+      inflight = (f + max(1, Int(ceil(latency / frameMs))), results, baseline)
+    }
+
+    // What's on screen now.
+    var drawn: [(Int, [CGPoint])] = []
+    for o in objects {
+      let poly: [CGPoint] = mode == "ours" ? (tracker.polygon("\(o)") ?? []) : (shown[o] ?? [])
+      drawn.append((o, poly))
+      let d = rasterNorm(poly)
+      guard let g = truth[o] else { continue }
+      if g.contains(true) { score.j.append(iou(d, g)) }
+      if let pd = prevShown[o], let pg = prevTruth[o], pd.contains(true) || d.contains(true) {
+        let dc = 1 - iou(d, pd), gc = 1 - iou(g, pg)
+        score.jitter.append(max(0, dc - gc))
+      }
+      prevShown[o] = d
+      prevTruth[o] = g
+    }
+    if let dir = renderDir, f % 3 == 0 {
+      let d = dir.appendingPathComponent("\(seq)-\(mode)")
+      try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+      render(image, outlines: drawn, truth: objects.compactMap { o in truth[o].map { (o, $0) } },
+             to: d.appendingPathComponent(String(format: "%04d.png", f)))
+    }
+  }
+  func mean(_ a: [Double]) -> Double { a.isEmpty ? 0 : a.reduce(0, +) / Double(a.count) }
+  print(String(format: "%-20@ objs %d  J %.3f  jitter %.4f  sam %.0f ms  flow %.1f ms", seq as NSString, objects.count,
+               mean(score.j), mean(score.jitter), mean(score.samMs), mean(score.flowMs)))
+  perSeq.append(["seq": seq, "objects": objects.count, "J": mean(score.j), "jitter": mean(score.jitter)])
+  all.j += score.j; all.jitter += score.jitter; all.samMs += score.samMs; all.flowMs += score.flowMs
+}
+func mean(_ a: [Double]) -> Double { a.isEmpty ? 0 : a.reduce(0, +) / Double(a.count) }
+print(String(format: "ALL mode=%@ seed=%@ enc=%.0f dec=%.0f step=%d  J %.3f  jitter %.4f  (sam %.0f ms, flow %.1f ms on this Mac)",
+             mode, seed, encoderMs, decoderMs, stepFrames, mean(all.j), mean(all.jitter), mean(all.samMs), mean(all.flowMs)))
+if let out = opts["json"] {
+  let data = try JSONSerialization.data(withJSONObject: ["mode": mode, "J": mean(all.j), "jitter": mean(all.jitter), "seqs": perSeq], options: .prettyPrinted)
+  try data.write(to: URL(fileURLWithPath: out))
+}

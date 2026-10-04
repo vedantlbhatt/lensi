@@ -1,54 +1,45 @@
 [
   {
-    "shortDescription" : "MobileSAM TinyViT image encoder. Input: the image resized so its long side is 1024, drawn at the top-left of a 1024x1024 canvas filled with RGB (124, 116, 104). SAM pixel normalisation happens inside the model.",
     "metadataOutputVersion" : "3.0",
+    "shortDescription" : "EdgeSAM-3x image encoder (Lensi drop-in for LensiSAMEncoder)",
     "outputSchema" : [
       {
         "hasShapeFlexibility" : "0",
         "isOptional" : "0",
         "dataType" : "Float32",
         "formattedType" : "MultiArray (Float32 1 × 256 × 64 × 64)",
-        "shortDescription" : "SAM image embedding [1,256,64,64]",
+        "shortDescription" : "",
         "shape" : "[1, 256, 64, 64]",
         "name" : "image_embeddings",
         "type" : "MultiArray"
       }
     ],
-    "version" : "mobile_sam@f706ad9c4eb7",
+    "storagePrecision" : "Float16",
     "modelParameters" : [
 
     ],
-    "author" : "Lensi; MobileSAM by Chaoning Zhang et al. (Apache-2.0), SAM by Meta (Apache-2.0)",
     "specificationVersion" : 8,
-    "storagePrecision" : "Float16",
-    "license" : "Apache-2.0",
     "mlProgramOperationTypeHistogram" : {
-      "Ios17.reshape" : 106,
-      "Ios16.reduceMean" : 4,
-      "Ios16.softmax" : 10,
-      "Ios17.matmul" : 20,
-      "Ios17.transpose" : 86,
-      "Split" : 10,
-      "Ios17.add" : 44,
-      "Ios17.sliceByIndex" : 20,
-      "Pad" : 10,
-      "Ios17.layerNorm" : 20,
-      "Ios17.batchNorm" : 2,
-      "Ios17.cast" : 2,
-      "Ios17.sub" : 13,
-      "Ios17.conv" : 29,
+      "Ios17.mul" : 11,
       "Ios17.sqrt" : 2,
+      "Ios17.sub" : 3,
+      "Ios17.conv" : 130,
+      "Ios16.sigmoid" : 10,
+      "Ios16.upsampleBilinear" : 1,
+      "Ios17.add" : 75,
+      "Ios16.reduceMean" : 14,
+      "Ios16.relu" : 10,
       "Ios17.realDiv" : 2,
-      "Ios17.linear" : 40,
-      "Ios16.gelu" : 23,
+      "Ios16.gelu" : 27,
       "Ios17.pow" : 2,
-      "Ios17.mul" : 13
+      "Ios17.batchNorm" : 2,
+      "Ios17.cast" : 2
     },
     "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
     "stateSchema" : [
 
     ],
-    "isUpdatable" : "0",
     "availability" : {
       "macOS" : "14.0",
       "tvOS" : "17.0",
@@ -70,20 +61,15 @@
         "formattedType" : "Image (Color 1024 × 1024)",
         "hasSizeFlexibility" : "0",
         "type" : "Image",
-        "shortDescription" : "1024x1024 RGB, raw 0-255, image at top-left, mean-colour padding",
+        "shortDescription" : "",
         "name" : "image"
       }
     ],
     "userDefinedMetadata" : {
-      "pixel_std" : "58.395,57.12,57.375",
-      "com.github.apple.coremltools.version" : "9.0",
       "com.github.apple.coremltools.conversion_date" : "2026-10-03",
-      "mobile_sam_commit" : "f706ad9c4eb7f219c00d9050e46328518ffb65d2",
-      "com.github.apple.coremltools.source" : "torch==2.7.0",
-      "com.github.apple.coremltools.source_dialect" : "TorchScript",
-      "pixel_mean" : "123.675,116.28,103.53",
-      "image_size" : "1024",
-      "pad_rgb" : "124,116,104"
+      "com.github.apple.coremltools.source" : "torch==2.8.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
     },
     "generatedClassName" : "LensiSAMEncoder",
     "method" : "predict"

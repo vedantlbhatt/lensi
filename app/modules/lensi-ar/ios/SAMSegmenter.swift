@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import CoreML
 import CoreVideo
 import Foundation
@@ -87,6 +88,8 @@ final class SAMSegmenter: @unchecked Sendable {
   private let lock = NSLock()
   private var cache: [String: Prepared] = [:]
   private var recent: [String] = []
+  /// The encoder input `prepare(ciImage:)` reuses: one 1024x1024 BGRA buffer.
+  private var canvas: CVPixelBuffer?
 
   private init?() {
     guard let encoderURL = SAMSegmenter.modelURL("LensiSAMEncoder"),
@@ -146,6 +149,49 @@ final class SAMSegmenter: @unchecked Sendable {
     }
   }
 
+  /// `prepare(image:)` for a Core Image source, e.g. the camera buffer turned upright: drawn
+  /// into the encoder's canvas by `context` (on the GPU), without a CGImage in between.
+  func prepare(ciImage: CIImage, context: CIContext, id: String) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    let e = ciImage.extent
+    guard e.width >= 1, e.height >= 1, e.width.isFinite, e.height.isFinite else { throw SAMError.badImage }
+    let side = SAMSegmenter.side
+    let scale = Double(side) / Double(max(e.width, e.height))
+    let resizedWidth = Int(Double(e.width) * scale + 0.5)
+    let resizedHeight = Int(Double(e.height) * scale + 0.5)
+    if canvas == nil {
+      let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true]
+      var created: CVPixelBuffer?
+      guard CVPixelBufferCreate(kCFAllocatorDefault, side, side, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &created) == kCVReturnSuccess
+      else { throw SAMError.pixelBuffer }
+      canvas = created
+    }
+    guard let buffer = canvas else { throw SAMError.pixelBuffer }
+    // Core Image's origin is bottom-left, so the image goes at y = side - height to land in
+    // the buffer's top rows. Padding: the mean colour, like makeCanvas.
+    let sx = CGFloat(resizedWidth) / e.width, sy = CGFloat(resizedHeight) / e.height
+    let placed = ciImage
+      .transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+      .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+      .transformed(by: CGAffineTransform(translationX: 0, y: CGFloat(side - resizedHeight)))
+    let pad = SAMSegmenter.padBGRA
+    let background = CIImage(color: CIColor(red: CGFloat(pad[2]) / 255, green: CGFloat(pad[1]) / 255, blue: CGFloat(pad[0]) / 255))
+      .cropped(to: CGRect(x: 0, y: 0, width: side, height: side))
+    let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
+    context.render(placed.composited(over: background), to: buffer, bounds: CGRect(x: 0, y: 0, width: side, height: side), colorSpace: srgb)
+    let input = try MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(pixelBuffer: buffer)])
+    let output = try encoder.prediction(from: input)
+    guard let embeddings = output.featureValue(for: "image_embeddings")?.multiArrayValue else {
+      throw SAMError.badOutput("image_embeddings")
+    }
+    cache[id] = Prepared(embeddings: embeddings, resizedWidth: resizedWidth, resizedHeight: resizedHeight)
+    touch(id)
+    while recent.count > SAMSegmenter.cacheLimit {
+      cache[recent.removeFirst()] = nil
+    }
+  }
+
   /// points/box are normalized 0...1 in the image's own (upright) space, top-left origin.
   /// labels: 1 = on the object, 0 = not on it. At most 5 points (3 with a box) are used.
   /// A single positive point picks the best of SAM's three candidate masks; anything else
@@ -154,7 +200,12 @@ final class SAMSegmenter: @unchecked Sendable {
   /// `preferPart`: for a single tap, take the best candidate that is part-sized (a headlamp,
   /// not the whole car filling the photo) when there is one. SAM scores the whole object
   /// highest more often than not, which is the wrong answer to "what's this?".
-  func segment(id: String, points: [CGPoint], labels: [Int], box: CGRect?, preferPart: Bool = false) throws -> SAMMask {
+  ///
+  /// `prior`: the outline this prompt is following (normalized, a live track's shape in this
+  /// frame). Then the candidate that overlaps it most wins, so a tracked outline doesn't flip
+  /// between "the handle" and "the whole mug" from one frame to the next.
+  func segment(id: String, points: [CGPoint], labels: [Int], box: CGRect?, preferPart: Bool = false,
+               prior: [CGPoint]? = nil) throws -> SAMMask {
     lock.lock()
     defer { lock.unlock() }
     guard let prepared = cache[id] else { throw SAMError.notPrepared(id) }
@@ -164,11 +215,50 @@ final class SAMSegmenter: @unchecked Sendable {
     guard !used.isEmpty || box != nil else { throw SAMError.noPrompt }
     let (masks, scores) = try decode(used, box: box, prepared: prepared)
     var k = SAMSegmenter.chooseMask(scores, labels: used.map { $0.1 }, hasBox: box != nil)
-    if preferPart, box == nil, used.count == 1, used[0].1 == 1,
-       let part = SAMSegmenter.partCandidate(masks, scores: scores, prepared: prepared) {
+    if let prior, prior.count >= 3 {
+      k = SAMSegmenter.closestCandidate(masks, scores: scores, prior: prior, prepared: prepared) ?? k
+    } else if preferPart, box == nil, used.count == 1, used[0].1 == 1,
+              let part = SAMSegmenter.partCandidate(masks, scores: scores, prepared: prepared) {
       k = part
     }
     return try outline(masks, candidate: k, score: scores[k], prepared: prepared)
+  }
+
+  /// Of all four candidates, the one with the highest IoU with `prior` (normalized polygon),
+  /// among those scoring at least half the best score. Nil when none overlaps it at all.
+  private static func closestCandidate(_ masks: [Float], scores: [Float], prior: [CGPoint], prepared: Prepared) -> Int? {
+    let n = maskSide
+    let plane = n * n
+    let validW = min(n, max(1, Int((Double(prepared.resizedWidth) / 4).rounded(.up))))
+    let validH = min(n, max(1, Int((Double(prepared.resizedHeight) / 4).rounded(.up))))
+    var priorBits = [UInt8](repeating: 0, count: validW * validH)
+    priorBits.withUnsafeMutableBytes { buf in
+      guard let ctx = CGContext(data: buf.baseAddress, width: validW, height: validH, bitsPerComponent: 8, bytesPerRow: validW,
+                                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
+      ctx.translateBy(x: 0, y: CGFloat(validH))
+      ctx.scaleBy(x: CGFloat(validW), y: -CGFloat(validH))
+      ctx.setFillColor(gray: 1, alpha: 1)
+      ctx.addLines(between: prior)
+      ctx.closePath()
+      ctx.fillPath()
+    }
+    let top = scores.max() ?? 0
+    var best: (k: Int, iou: Float)?
+    for k in 0...3 where scores[k] >= top * 0.5 {
+      var inter = 0, union = 0
+      let base = k * plane
+      for y in 0..<validH {
+        let row = base + y * n
+        for x in 0..<validW {
+          let a = masks[row + x] > 0, b = priorBits[y * validW + x] > 127
+          if a && b { inter += 1 }
+          if a || b { union += 1 }
+        }
+      }
+      let iou = union > 0 ? Float(inter) / Float(union) : 0
+      if iou > (best?.iou ?? 0) { best = (k, iou) }
+    }
+    return best?.k
   }
 
   /// The best-scoring multimask candidate (1...3) whose area is part-sized: not a speck, and
@@ -276,25 +366,44 @@ final class SAMSegmenter: @unchecked Sendable {
       throw SAMError.badOutput("masks/scores")
     }
     // Contiguous row-major copies, whatever the output's dtype or strides: [1,4,256,256], [1,4].
-    let masks = MLShapedArray<Float>(converting: masksArray).scalars
-    let scores = MLShapedArray<Float>(converting: scoresArray).scalars
+    let masks = SAMSegmenter.floats(masksArray)
+    let scores = SAMSegmenter.floats(scoresArray)
     let plane = SAMSegmenter.maskSide * SAMSegmenter.maskSide
     guard scores.count == 4, masks.count == 4 * plane else { throw SAMError.badOutput("shape") }
     return (masks: masks, scores: scores)
   }
 
+  /// A contiguous float32 copy. The fast path is a memcpy; MLShapedArray's converting copy
+  /// takes ~12 ms for the 4x256x256 masks.
+  private static func floats(_ a: MLMultiArray) -> [Float] {
+    var contiguous = true
+    var expected = 1
+    for (dim, stride) in zip(a.shape.reversed(), a.strides.reversed()) {
+      if stride.intValue != expected { contiguous = false }
+      expected *= dim.intValue
+    }
+    if contiguous, a.dataType == .float32 {
+      return a.withUnsafeBufferPointer(ofType: Float.self) { Array($0.prefix(a.count)) }
+    }
+    return MLShapedArray<Float>(converting: a).scalars
+  }
+
   /// One candidate's largest region as a simplified outline, normalized to the prepared image.
   private func outline(_ masks: [Float], candidate k: Int, score: Float, prepared: Prepared) throws -> SAMMask {
-    let plane = SAMSegmenter.maskSide * SAMSegmenter.maskSide
-    let (binary, area) = try binaryMask(masks, offset: k * plane, prepared: prepared)
-    let workWidth = CGFloat(CVPixelBufferGetWidth(binary))
-    let workHeight = CGFloat(CVPixelBufferGetHeight(binary))
-    let contour = try largestContour(binary)
+    let n = SAMSegmenter.maskSide
+    // The image fills the top-left resized/4 cells of each 256x256 plane.
+    let validW = min(n, max(1, Int((Double(prepared.resizedWidth) / 4).rounded(.up))))
+    let validH = min(n, max(1, Int((Double(prepared.resizedHeight) / 4).rounded(.up))))
+    let (contour, area) = masks.withUnsafeBufferPointer {
+      MaskContour.largest($0, offset: k * n * n, stride: n, width: validW, height: validH)
+    }
     guard contour.count >= 3 else { return SAMMask(polygon: [], score: score, area: area) }
     let simplified = SAMSegmenter.simplifyClosed(
       contour, epsilon: SAMSegmenter.simplifyFraction * SAMSegmenter.perimeter(contour))
     guard simplified.count >= 3 else { return SAMMask(polygon: [], score: score, area: area) }
-    let polygon = simplified.map { CGPoint(x: $0.x / workWidth, y: $0.y / workHeight) }
+    // Cell units -> normalized: a cell is 4 canvas pixels; the image is resized wide.
+    let sx = 4 / CGFloat(prepared.resizedWidth), sy = 4 / CGFloat(prepared.resizedHeight)
+    let polygon = simplified.map { CGPoint(x: min(max($0.x * sx, 0), 1), y: min(max($0.y * sy, 0), 1)) }
     return SAMMask(polygon: polygon, score: score, area: area)
   }
 

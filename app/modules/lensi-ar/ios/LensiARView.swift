@@ -25,13 +25,26 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   var liveSegments = true {
     didSet { if !liveSegments { clearLiveOutlines() } }
   }
+  // Live segmentation (LiveSeg.swift). Optical flow moves every outline with
+  // its object on each camera frame (flowQueue); SAM re-cuts them as often as
+  // it can (samQueue) and its answers are carried forward to the frame on
+  // screen. The tracker is only touched on flowQueue.
+  private let flowQueue = DispatchQueue(label: "lensi.flow", qos: .userInteractive)
   private let samQueue = DispatchQueue(label: "lensi.sam-live", qos: .userInitiated)
   private let samContext = CIContext(options: [.useSoftwareRenderer: false])
+  private let segTracker = LiveSegTracker()
+  /// Main thread: a frame is in flight on flowQueue.
+  private var flowBusy = false
+  /// flowQueue: a SAM pass is in flight.
   private var samBusy = false
-  private var lastSamTime: TimeInterval = 0
+  /// Set once SAMSegmenter.shared has loaded (off the main thread).
+  private var samReady = false
   private var samMs: Double = 0
-  private var lastSamLog: TimeInterval = 0
-  /// Live outlines by what they're of: a guide tag's pin id, or `centreKey`.
+  private var flowMs: Double = 0
+  private var lastSegLog: CFTimeInterval = 0
+  /// flowQueue: frames the centre outline has been off the reticle.
+  private var centreOff = 0
+  /// Live outlines by what they're of: a guide tag's pin id, "focus:<id>", or `centreKey`.
   private var liveOutlines: [String: (layer: CAShapeLayer, seen: CFTimeInterval)] = [:]
   private static let centreKey = "centre"
   /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
@@ -127,7 +140,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     pinLayer.isUserInteractionEnabled = false
     addSubview(pinLayer)
     // Load SAM off the main thread now, not on the first camera frame.
-    DispatchQueue.global(qos: .userInitiated).async { _ = SAMSegmenter.shared }
+    DispatchQueue.global(qos: .userInitiated).async {
+      let ready = SAMSegmenter.shared != nil
+      DispatchQueue.main.async { self.samReady = ready }
+    }
 
     addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
   }
@@ -201,21 +217,26 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   // MARK: - Live segmentation
   //
-  // SAM on the camera feed, as often as the phone keeps up (the encoder on the
-  // Neural Engine, then one decoder pass per prompt). Prompts: where each guide
-  // tag's part is in this frame, so its outline is re-cut from wherever the
-  // phone is now; with no tags, the tracked object under the reticle; with
-  // nothing tracked, whatever is in the middle of the screen.
+  // What gets an outline: each visible guide tag's part (prompted where ARKit
+  // says its pin is in this frame); with no tags, the tracked object under the
+  // reticle; with nothing tracked, whatever is in the middle of the screen.
+  // Each is a track in `segTracker`, which follows it with optical flow every
+  // frame and blends in SAM's answers, so outlines glide with the camera.
+
+  private struct Seed {
+    var point: CGPoint?
+    var box: CGRect?
+    var preferPart = false
+  }
 
   private func segmentLive(_ frame: ARFrame) {
-    guard liveSegments, !samBusy, frame.timestamp - lastSamTime > 0.08, bounds.width > 0,
-          let sam = SAMSegmenter.shared else { return }
+    guard liveSegments, samReady, !flowBusy, bounds.width > 0, let sam = SAMSegmenter.shared else { return }
     let res = frame.camera.imageResolution
     let upright = CGSize(width: res.height, height: res.width)
-    var prompts: [(key: String, point: CGPoint?, box: CGRect?, part: Bool)] = []
+    var seeds: [String: Seed] = [:]
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
-      // The current step's part first; at most four a frame.
+      // The current step's part first; at most four.
       let toCamera = frame.camera.transform.inverse
       let order = guidePins.filter { !$0.label.isHidden && $0.label.pointing == nil }
         .sorted { ($0.label.emphasis == .focused ? 0 : 1) < ($1.label.emphasis == .focused ? 0 : 1) }
@@ -224,69 +245,104 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let q = frame.camera.projectPoint(pin.world, orientation: .portrait, viewportSize: upright)
         let p = CGPoint(x: q.x / upright.width, y: q.y / upright.height)
         guard p.x > 0.01, p.x < 0.99, p.y > 0.01, p.y < 0.99 else { continue }
-        prompts.append((pin.id, p, nil, true))
+        seeds[pin.id] = Seed(point: p, preferPart: true)
       }
     } else if let t = tracked.first(where: { $0.id == focusedId }) {
       let box = viewRectToUpright(t.shown, frame: frame).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-      if !box.isNull, box.width > 0.01, box.height > 0.01 { prompts.append((Self.centreKey, nil, box, false)) }
+      if !box.isNull, box.width > 0.01, box.height > 0.01 {
+        seeds["focus:\(t.id)"] = Seed(point: CGPoint(x: box.midX, y: box.midY), box: box)
+      }
     } else {
-      prompts.append((Self.centreKey, viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame), nil, false))
+      seeds[Self.centreKey] = Seed(point: viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame))
     }
-    guard !prompts.isEmpty else {
-      drawLive([], display: .identity)
-      return
-    }
-    samBusy = true
-    lastSamTime = frame.timestamp
+
+    flowBusy = true
     let buffer = frame.capturedImage
     let display = frame.displayTransform(for: .portrait, viewportSize: bounds.size)
+    flowQueue.async { [weak self] in
+      guard let self else { return }
+      let started = CACurrentMediaTime()
+      let tracker = self.segTracker
+      if let flow = FlowFrame.from(buffer, longSide: 480, rotateRight: true) {
+        tracker.step(flow)
+        self.syncTracks(seeds)
+        if !self.samBusy {
+          let anchors = seeds.compactMapValues { $0.box == nil ? $0.point : nil }
+          let jobs = tracker.jobs(anchors: anchors)
+          if !jobs.isEmpty { self.runSAM(jobs, buffer: buffer, sam: sam) }
+        }
+      }
+      let outlines = tracker.outlines()
+      let ms = (CACurrentMediaTime() - started) * 1000
+      self.flowMs = self.flowMs == 0 ? ms : self.flowMs * 0.9 + ms * 0.1
+      DispatchQueue.main.async {
+        self.flowBusy = false
+        self.drawLive(outlines, display: display)
+      }
+    }
+  }
+
+  /// flowQueue. Tracks for what should be outlined now; the rest go.
+  private func syncTracks(_ seeds: [String: Seed]) {
+    let tracker = segTracker
+    for key in tracker.keys where seeds[key] == nil { tracker.remove(key: key) }
+    // "Whatever is in the middle": once the outline has left the reticle for
+    // a moment, start over on what's there now.
+    if let centre = seeds[Self.centreKey]?.point, let poly = tracker.polygon(Self.centreKey) {
+      let path = CGMutablePath()
+      path.addLines(between: poly)
+      path.closeSubpath()
+      centreOff = path.contains(centre) ? 0 : centreOff + 1
+      if centreOff > 12 {
+        tracker.remove(key: Self.centreKey)
+        centreOff = 0
+      }
+    }
+    for (key, seed) in seeds where !tracker.has(key) {
+      tracker.remove(key: key)
+      tracker.add(key: key, point: seed.box == nil ? seed.point : nil, box: seed.box, preferPart: seed.preferPart)
+    }
+  }
+
+  /// flowQueue. One encoder pass on this frame and a decoder pass per job.
+  private func runSAM(_ jobs: [SegJob], buffer: CVPixelBuffer, sam: SAMSegmenter) {
+    samBusy = true
     samQueue.async { [weak self] in
       guard let self else { return }
       let started = CACurrentMediaTime()
-      var found: [(key: String, polygon: [CGPoint])] = []
-      if let image = self.liveImage(buffer) {
-        do {
-          try sam.prepare(image: image, id: "live", force: true)
-          for p in prompts {
-            let mask = try sam.segment(
-              id: "live", points: p.point.map { [$0] } ?? [], labels: p.point == nil ? [] : [1], box: p.box, preferPart: p.part)
-            if mask.score >= 0.6, mask.polygon.count > 2 { found.append((p.key, mask.polygon)) }
-          }
-        } catch {}
-      }
+      var results: [SegResult] = []
+      do {
+        try sam.prepare(ciImage: CIImage(cvPixelBuffer: buffer).oriented(.right), context: self.samContext, id: "live")
+        for job in jobs {
+          let mask = try sam.segment(id: "live", points: job.points, labels: job.labels, box: job.box,
+                                     preferPart: job.preferPart, prior: job.prior)
+          let ok = mask.score >= 0.5 && mask.polygon.count > 2
+          results.append(SegResult(key: job.key, frame: job.frame, polygon: ok ? mask.polygon : [], score: mask.score))
+        }
+      } catch {}
       let ms = (CACurrentMediaTime() - started) * 1000
-      DispatchQueue.main.async {
+      self.flowQueue.async {
+        self.segTracker.apply(results)
         self.samBusy = false
         self.samMs = self.samMs == 0 ? ms : self.samMs * 0.8 + ms * 0.2
         let now = CACurrentMediaTime()
-        if now - self.lastSamLog > 3 {
-          self.lastSamLog = now
-          NSLog("[lensi] live SAM %.0f ms a frame, %d outlines", self.samMs, found.count)
+        if now - self.lastSegLog > 3 {
+          self.lastSegLog = now
+          NSLog("[lensi] live SAM %.0f ms a pass (%d prompts), flow %.1f ms a frame", self.samMs, jobs.count, self.flowMs)
         }
-        self.drawLive(found, display: display)
       }
     }
   }
 
-  /// The frame upright, longest side 1024 (SAM's input), as a CGImage.
-  private func liveImage(_ buffer: CVPixelBuffer) -> CGImage? {
-    var image = CIImage(cvPixelBuffer: buffer).oriented(.right)
-    let longest = max(image.extent.width, image.extent.height)
-    if longest > 1024 {
-      let s = 1024 / longest
-      image = image.transformed(by: CGAffineTransform(scaleX: s, y: s))
-    }
-    let e = image.extent
-    return samContext.createCGImage(image, from: e.integral)
-  }
-
-  private func drawLive(_ found: [(key: String, polygon: [CGPoint])], display: CGAffineTransform) {
+  private func drawLive(_ outlines: [(key: String, polygon: [CGPoint], opacity: CGFloat)], display: CGAffineTransform) {
     let now = CACurrentMediaTime()
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    for f in found {
+    var drawn = Set<String>()
+    for o in outlines {
+      drawn.insert(o.key)
       let layer: CAShapeLayer
-      if let existing = liveOutlines[f.key]?.layer {
+      if let existing = liveOutlines[o.key]?.layer {
         layer = existing
       } else {
         layer = CAShapeLayer()
@@ -295,24 +351,24 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         pinLayer.layer.insertSublayer(layer, at: 0)
       }
       let path = UIBezierPath()
-      for (i, p) in f.polygon.enumerated() {
+      for (i, p) in Poly.smoothed(o.polygon).enumerated() {
         let n = CGPoint(x: p.y, y: 1 - p.x).applying(display)
         let v = zoomed(CGPoint(x: n.x * bounds.width, y: n.y * bounds.height))
         if i == 0 { path.move(to: v) } else { path.addLine(to: v) }
       }
       path.close()
-      let focused = pins[f.key]?.label.emphasis == .focused
-      let strong = focused || f.key == Self.centreKey
+      let focused = pins[o.key]?.label.emphasis == .focused
+      let strong = focused || !o.key.hasPrefix(Self.guideParent)
       let color: UIColor = focused ? accent : .white
       layer.path = path.cgPath
       layer.lineWidth = focused ? 2.5 : strong ? 2 : 1.5
       layer.strokeColor = color.withAlphaComponent(strong ? 1 : 0.75).cgColor
       layer.fillColor = color.withAlphaComponent(focused ? 0.14 : 0.07).cgColor
+      layer.opacity = Float(o.opacity)
       layer.isHidden = false
-      liveOutlines[f.key] = (layer, now)
+      liveOutlines[o.key] = (layer, now)
     }
-    // Not seen for a moment (left the frame, or SAM lost it): gone.
-    for (key, entry) in liveOutlines where now - entry.seen > 0.45 {
+    for (key, entry) in liveOutlines where !drawn.contains(key) {
       entry.layer.removeFromSuperlayer()
       liveOutlines[key] = nil
     }
@@ -322,6 +378,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private func clearLiveOutlines() {
     for entry in liveOutlines.values { entry.layer.removeFromSuperlayer() }
     liveOutlines.removeAll()
+    flowQueue.async { self.segTracker.removeAll() }
   }
 
   /// A live outline is being kept up for this pin (so its frozen one steps aside).
@@ -513,7 +570,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
     }
 
-    if showDetections && !(liveSegments && SAMSegmenter.shared != nil) {
+    if showDetections && !(liveSegments && samReady) {
       for t in tracked where t.id != newFocus?.id && t.missed == 0 {
         boxes.append(brackets(t.shown, length: 14))
       }
