@@ -177,10 +177,12 @@ export function ScrubStrip({
     .onUpdate((e) => move(e.x))
     .onFinalize(() => end());
 
-  // Scripted: the same handlers a finger drives.
+  // Scripted: the same handlers a finger drives, once. Not again when the strip's width changes
+  // (the unpin button beside it comes and goes): that started the finger over after every pin.
+  const measured = width > 0;
   useEffect(() => {
-    if (!demo?.length || width <= 0) return;
-    const at = (f: number) => PAD + f * (width - 2 * PAD);
+    if (!demo?.length || !measured) return;
+    const at = (f: number) => PAD + f * (widthRef.current - 2 * PAD);
     const steps: { t: number; run: () => void }[] = [{ t: 0, run: () => begin(at(demo[0])) }];
     let t = 900;
     demo.slice(1).forEach((f, j) => {
@@ -193,7 +195,7 @@ export function ScrubStrip({
     const timers = steps.map((x) => setTimeout(x.run, 600 + x.t));
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo, width]);
+  }, [demo, measured]);
 
   useEffect(() => () => disarm(), []);
 
