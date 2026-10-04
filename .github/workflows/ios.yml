@@ -74,46 +74,7 @@ jobs:
           key: davis-2017-480p-tracking-v1
       - name: Live SAM on real footage (tracked, scored against hand-drawn masks)
         if: always()
-        run: |
-          set -o pipefail
-          mkdir -p out/track footage
-          # DAVIS 2017 (CC BY-NC 4.0): real videos with the moving object drawn by hand in every frame.
-          SEQS="car-roundabout car-shadow drift-straight dog parkour"
-          if [ ! -d footage/DAVIS/JPEGImages ]; then
-            if curl -fsSL --max-time 600 -o davis.zip https://data.vision.ee.ethz.ch/csergi/share/davis/DAVIS-2017-trainval-480p.zip; then
-              for s in $SEQS; do unzip -q -o davis.zip "DAVIS/JPEGImages/480p/$s/*" "DAVIS/Annotations/480p/$s/*" -d footage || echo "no $s"; done
-            else
-              echo "DAVIS unavailable"
-            fi
-            rm -f davis.zip
-          fi
-          # Intel IoT Devkit sample video (CC BY 4.0): a car driving through a car park, from above.
-          curl -fsSL -o footage/car-detection.mp4 https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/car-detection.mp4 \
-            && python tools/track/frames.py footage/car-detection.mp4 footage/carpark 75 110 || echo "car park clip unavailable"
-          swiftc -O -o track tools/track/main.swift \
-            app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
-            app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift
-          for s in $SEQS; do
-            [ -d "footage/DAVIS/JPEGImages/480p/$s" ] || continue
-            LENSI_MODELS_DIR=models-all ./track "footage/DAVIS/JPEGImages/480p/$s" "footage/DAVIS/Annotations/480p/$s" out/track "$s" 2>&1 | tee -a out/track/summary.txt \
-              && python tools/track/render.py "footage/DAVIS/JPEGImages/480p/$s" "out/track/$s.json" out/track \
-              && python tools/track/render.py "footage/DAVIS/JPEGImages/480p/$s" "out/track/$s.json" out/track vision@8 \
-              && python tools/track/render.py "footage/DAVIS/JPEGImages/480p/$s" "out/track/$s.json" out/track visionT@8 || echo "FAIL $s"
-          done
-          # Two more from the same set: bolts going by on a conveyor belt (a real part on the move).
-          for v in bolt-detection bolt-multi-size-detection; do
-            curl -fsSL -o "footage/$v.mp4" "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/$v.mp4" || echo "$v unavailable"
-          done
-          [ -f footage/bolt-detection.mp4 ] && python tools/track/frames.py footage/bolt-detection.mp4 footage/bolt 38 63
-          [ -f footage/bolt-multi-size-detection.mp4 ] && python tools/track/frames.py footage/bolt-multi-size-detection.mp4 footage/bigbolt 1286 1362 2 960
-          for clip in "carpark 0.349,0.289,0.25,0.694" "bolt 0.488,0.352,0.25,0.125" "bigbolt 0.050,0.060,0.070,0.835"; do
-            set -- $clip
-            [ -d "footage/$1" ] || continue
-            LENSI_MODELS_DIR=models-all ./track "footage/$1" - out/track "$1" "$2" 2>&1 | tee -a out/track/summary.txt \
-              && python tools/track/render.py "footage/$1" "out/track/$1.json" out/track \
-              && python tools/track/render.py "footage/$1" "out/track/$1.json" out/track vision@8 \
-              && python tools/track/render.py "footage/$1" "out/track/$1.json" out/track visionT@8 || echo "FAIL $1"
-          done
+        run: bash tools/track/ci.sh flowS@8 flowG@8 flowS@4
       - name: Push tracking results to ci-track (without waiting for the app build)
         if: always()
         env:

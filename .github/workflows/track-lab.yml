@@ -1,0 +1,62 @@
+name: track-lab
+
+# Footage experiments for live SAM tracking (tools/track) without the app build: a push to
+# track-lab lands its results on the ci-track-lab branch in about ten minutes, and doesn't
+# cancel the full ios run on camera-first.
+
+on:
+  push:
+    branches: [track-lab]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: track-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  footage:
+    name: Live SAM on real footage
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tools/sam/requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/lensi-sam
+          key: lensi-sam-${{ hashFiles('tools/sam/convert.py', 'tools/sam/sam_common.py') }}
+      - name: Install
+        run: pip install -r tools/sam/requirements.txt
+      - name: Convert MobileSAM to Core ML
+        run: |
+          python tools/sam/convert.py --out build/sam
+          mkdir -p models-all
+          xcrun coremlcompiler compile build/sam/LensiSAMEncoder.mlpackage models-all/
+          xcrun coremlcompiler compile build/sam/LensiSAMDecoder.mlpackage models-all/
+          cp -R app/modules/lensi-ar/ios/Models/yolo11n.mlmodelc models-all/
+      - uses: actions/cache@v4
+        with:
+          path: footage/DAVIS
+          key: davis-2017-480p-tracking-v1
+      - name: Live SAM on real footage
+        run: bash tools/track/ci.sh flowS@8 flowG@8 flowS@4
+      - name: Push results to ci-track-lab
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          [ -d out/track ] && [ -n "$(ls out/track)" ] || exit 0
+          rm -rf ../ci-track && cp -R out/track ../ci-track && cd ../ci-track
+          echo "$SHA" > COMMIT.txt
+          git init -q && git checkout -q -b ci-track-lab && git add -A
+          git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "Tracking results for $SHA"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-track-lab
