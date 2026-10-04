@@ -257,6 +257,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// The shape follows its thing from frame to frame (a guide part, a tapped thing);
     /// the reticle's is just whatever is in the middle.
     let follows: Bool
+    /// Which cut to take as the thing (LiveTracker.asking: strict for a still thing).
+    var gate: LiveTracker.Gate = .loose
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -292,10 +294,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     func follow(_ key: String) -> LivePrompt? {
       guard let shape = liveShapes[key], shape.follows, shape.misses < 2 else { return nil }
       let now = shape.placed(at: frame.timestamp)
+      let asking = LiveTracker.asking(sizesPerSecond: CGFloat(shape.sizesPerSecond))
       guard let predicted = uprightPoints(now, camera: frame.camera, upright: upright),
             predicted.contains(where: { unit.contains($0) }),
-            let p = LiveTracker.prompt(for: predicted, scale: upright) else { return nil }
-      return LivePrompt(key: key, point: p.point, box: p.box, part: false, anchor: OutlineMath.centre(now), predicted: predicted, follows: true)
+            let p = LiveTracker.prompt(for: predicted, scale: upright, grow: asking.grow) else { return nil }
+      return LivePrompt(key: key, point: p.point, box: p.box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
+                        follows: true, gate: asking.gate)
     }
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
@@ -378,7 +382,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           // Evenly spaced (in pixels).
           let ring = OutlineMath.resample(mask.polygon, scale: upright)
           // Following a thing: a cut that doesn't fit where it should be is something else.
-          if let predicted = p.predicted, !LiveTracker.accepts(ring, predicted: predicted) {
+          if let predicted = p.predicted, !LiveTracker.accepts(ring, predicted: predicted, gate: p.gate) {
             refused += 1
             continue
           }

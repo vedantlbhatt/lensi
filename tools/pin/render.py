@@ -5,8 +5,9 @@
 The outlines are in the app's upright picture (the sensor image turned `.right`); the frames
 are drawn as the iPad recorded them (sideways), so each point is turned back: (x, y) upright
 is (y, 1 - x) in the recorded frame. Writes <name>.mp4 (the app), <name>-compare.mp4 (top: no
-ARKit, SAM at a fixed place in the picture; bottom: the app) and <name>-arkit-compare.mp4
-(top: ARKit alone, one cut at the start; bottom: the app).
+ARKit, SAM at a fixed place in the picture; bottom: the app), <name>-arkit-compare.mp4
+(top: ARKit alone, one cut at the start; bottom: the app) and <name>-loose-compare.mp4 (top:
+the app before the gate went by speed; bottom: the app).
 """
 import json
 import os
@@ -22,8 +23,9 @@ CAPTIONS = {
     "fixed": "No ARKit: SAM at the same place in the picture",
     "arkit": "ARKit alone: cut once, pinned in the world",
     "coast@8": "ARKit + SAM 7.5/s, coasting between cuts",
+    "loose@8": "Before: ARKit + SAM 7.5/s + point tracking, any cut taken",
+    "strict@8": "ARKit + SAM 7.5/s + point tracking, strict",
     "lensi@8": "The app: ARKit + SAM 7.5/s + point tracking",
-    "strict@8": "The app, strict: ARKit + SAM 7.5/s + point tracking",
 }
 
 
@@ -43,6 +45,7 @@ def main():
     pairs = {
         "compare": ("fixed", writer(os.path.join(out_dir, f"{name}-compare.mp4"), w, h * 2, fps)),
         "arkit-compare": ("arkit", writer(os.path.join(out_dir, f"{name}-arkit-compare.mp4"), w, h * 2, fps)),
+        "loose-compare": ("loose@8", writer(os.path.join(out_dir, f"{name}-loose-compare.mp4"), w, h * 2, fps)),
     }
     app_label = os.environ.get("PIN_APP", "lensi@8")
     app = runs[app_label]

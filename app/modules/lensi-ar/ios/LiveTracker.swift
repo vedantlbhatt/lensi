@@ -43,6 +43,19 @@ enum LiveTracker {
     static let strict = Gate(minIoU: 0.5, areaRatio: 0.6...1.67)
   }
 
+  /// Below this speed (in its own sizes a second) a thing counts as still. ARKit takes the
+  /// phone's motion out, so for the app it's the thing's own: a part on an engine is still
+  /// however the phone moves.
+  static let stillBelow: CGFloat = 0.5
+
+  /// How to ask SAM about a thing, and which cut to take: a still thing barely changes between
+  /// cuts, so a cut that strays from where it should be is something else (strict, within a
+  /// tight box); a thing that moves or bends really changes, and the strict gate would refuse it
+  /// (loose, within a wider box). tools/pin and tools/track measure both.
+  static func asking(sizesPerSecond speed: CGFloat) -> (grow: CGFloat, gate: Gate) {
+    speed < stillBelow ? (0.1, .strict) : (grow, .loose)
+  }
+
   /// Whether `cut` is the same thing as `predicted`: it overlaps it, and it's about the
   /// same size (it hasn't swallowed the background or shrunk to a speck).
   static func accepts(_ cut: [CGPoint], predicted: [CGPoint], gate: Gate = .loose) -> Bool {

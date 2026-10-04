@@ -10,10 +10,12 @@
 //              (what the app did before LiveFlow)
 //   flow@8     in between, carried on its own pixels instead (LiveFlow: points inside it
 //              followed frame to frame, their median motion, turn and scale)
-//   lensi@8    flow@8, and what's shown eased onto each new cut (three quarters of the way
-//              a frame, 30 ms) instead of jumping: what the phone draws
-//   strict@8   lensi@8 with SAM asked within a tighter box and only a close match taken
-//              (LiveTracker.Gate.strict; what tools/pin's ARKit recordings call for)
+//   loose@8    flow@8, and what's shown eased onto each new cut (three quarters of the way
+//              a frame, 30 ms) instead of jumping, any plausible cut taken
+//   lensi@8    the same, SAM asked by how fast the thing moves (LiveTracker.asking: strict
+//              for a still thing, loose for a moving one): what the phone draws
+//   strict@8   loose@8 with SAM asked within a tighter box and only a close match taken
+//              (LiveTracker.Gate.strict, which tools/pin's ARKit recordings called for)
 //   coast@4, lensi@4: SAM on every sixth frame (a hot phone, a guide part waiting its turn)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -236,6 +238,11 @@ final class Runner {
   /// How SAM is asked (LiveTracker.prompt's box growth) and which cuts are taken.
   let grow: CGFloat
   let gate: LiveTracker.Gate
+  /// Ask as the app does, by how fast the thing moves (LiveTracker.asking). With no ARKit
+  /// here the camera's motion is in it too: its speed in the picture stands in.
+  let bySpeed: Bool
+  /// How far its middle moves a frame, in pixels, steadied.
+  var speedPx: CGFloat = 0
   /// Ease a small correction (edge noise) more than a big one (it's really somewhere else):
   /// the share taken each frame grows with how far off what's shown is, for its size.
   let adaptiveGlide: Bool
@@ -257,7 +264,7 @@ final class Runner {
 
   init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int, follow: Bool = false, adaptive: Bool = false,
        moveOnly: Bool = false, flow: OpticalFlow? = nil, scaling: Bool = false, glide: CGFloat? = nil, adaptiveGlide: Bool = false,
-       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose) {
+       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false) {
     self.moveOnly = moveOnly
     self.label = label
     self.tracking = tracking
@@ -271,6 +278,7 @@ final class Runner {
     self.adaptiveGlide = adaptiveGlide
     self.grow = grow
     self.gate = gate
+    self.bySpeed = bySpeed
   }
 
   /// Where the outline is expected at frame f: the last one carried along by its motion
@@ -300,6 +308,8 @@ final class Runner {
     if let follower, follower.box != nil, f > 0, follower.track(image) == nil { anchorBox = nil }
     // So does the flow: the outline (and what's shown) move with the thing's pixels.
     if let flow, f > 0, let o = outline, let carried = flow.carry(o, scaling: scaling) {
+      let a = centre(o), b = centre(carried)
+      speedPx = speedPx * 0.7 + hypot((b.x - a.x) * scale.width, (b.y - a.y) * scale.height) * 0.3
       outline = carried
       lastFrame = f
       if let d = display { display = flow.carry(d, scaling: scaling) ?? carried }
@@ -308,6 +318,17 @@ final class Runner {
       let prediction = predicted(at: f)
       var points = [seedPoint]
       var box: CGRect? = seedBox
+      var grow = self.grow, gate = self.gate
+      if bySpeed, let prediction {
+        // Its speed in its own sizes a second (24 fps footage).
+        let c = centre(prediction)
+        let size = (prediction.map { pow(($0.x - c.x) * scale.width, 2) + pow(($0.y - c.y) * scale.height, 2) }
+          .reduce(0, +) / CGFloat(prediction.count)).squareRoot()
+        let perFrame = flow != nil ? speedPx : hypot(velocity.x * scale.width, velocity.y * scale.height)
+        let asking = LiveTracker.asking(sizesPerSecond: perFrame * 24 / max(size, 1))
+        grow = asking.grow
+        gate = asking.gate
+      }
       if tracking, let prediction, let p = LiveTracker.prompt(for: prediction, scale: scale, grow: grow) {
         points = [p.point]
         box = p.box
@@ -431,11 +452,14 @@ let runners = [
   Runner("lensi", tracking: true, smoothing: .standard, every: 1, adaptive: true),
   Runner("coast@8", tracking: true, smoothing: .standard, every: 3, adaptive: true),
   Runner("flow@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true),
-  Runner("lensi@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75),
+  Runner("loose@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75),
   Runner("strict@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75,
          grow: 0.1, gate: .strict),
+  Runner("lensi@8", tracking: true, smoothing: .standard, every: 3, adaptive: true, flow: flow, scaling: true, glide: 0.75,
+         bySpeed: true),
   Runner("coast@4", tracking: true, smoothing: .standard, every: 6, adaptive: true),
-  Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true, glide: 0.75),
+  Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true, glide: 0.75,
+         bySpeed: true),
 ]
 var truthWobble: [Double] = []
 var truthCentres: [CGPoint?] = []

@@ -120,6 +120,11 @@ struct LiveShape {
     self.follows = follows
   }
 
+  /// How fast the thing itself moves, in its own sizes a second (LiveTracker.asking).
+  var sizesPerSecond: Float {
+    simd_length(velocity) / max(OutlineMath.spread(world), 0.01)
+  }
+
   /// Where it is at `t`: its outline carried along by its own motion (at most 0.3 s ahead).
   func placed(at t: CFTimeInterval) -> [simd_float3] {
     guard simd_length(velocity) >= 0.02 else { return world }

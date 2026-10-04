@@ -9,10 +9,12 @@
 //   arkit     cut once, laid in the world, redrawn every frame from ARKit's pose alone
 //   coast@8   the app before LiveFlow: re-cut 7.5 times a second where ARKit and the
 //             thing's last motion say it is
-//   lensi@8   the app now: the same, carried on its own pixels between cuts (LiveFlow, the
-//             round trip through two cameras), drawn eased onto each cut
+//   loose@8   the same, carried on its own pixels between cuts (LiveFlow, the round trip
+//             through two cameras), drawn eased onto each cut, any plausible cut taken
 //   strict@8  the same, SAM asked within a tighter box and only a close match taken
-//             (LiveTracker.Gate.strict)
+//   lensi@8   the app now: strict for a thing that's still in the world, loose for one that
+//             moves (LiveTracker.asking, by the thing's own speed, which ARKit separates
+//             from the camera's)
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J); for how much of the outline is on the box at all (no SAM in that one: a
@@ -20,7 +22,7 @@
 // frame to the next, next to the 3D box's own (which is all camera motion: the thing is still).
 //
 //   swiftc -O -o pin tools/pin/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,LiveWorld,Analyzer,Detector}.swift
-//   LENSI_MODELS_DIR=<models> ./pin <scene dir> <out dir> <name> [frames, default 120]
+//   LENSI_MODELS_DIR=<models> ./pin <scene dir> <out dir> <name> [frames, default 90]
 //
 // <scene dir> holds an ARKitScenes raw scan: vga_wide/*.png (640x480, 30 fps),
 // vga_wide_intrinsics/*.pincam, lowres_wide.traj and <video>_3dod_annotation.json.
@@ -38,7 +40,7 @@ guard args.count >= 4 else {
 let sceneDir = URL(fileURLWithPath: args[1])
 let outDir = URL(fileURLWithPath: args[2])
 let name = args[3]
-let windowLength = args.count > 4 ? Int(args[4]) ?? 120 : 120
+let windowLength = args.count > 4 ? Int(args[4]) ?? 90 : 90
 try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
 // MARK: - The recording
@@ -166,12 +168,15 @@ for f in pngs {
 
 func bounds(_ p: [CGPoint]) -> CGRect { LiveTracker.bounds(p) }
 
-/// A box as this camera sees it (upright 0...1), when all of it is in front and in the picture.
+/// A box as this camera sees it (upright 0...1, cut to the picture), when all of it is in
+/// front, its middle well inside the picture and most of it (80%) in view.
 func seen(_ box: Box, by camera: FrozenCamera?) -> CGRect? {
-  guard let camera, let p = camera.upright(box.corners) else { return nil }
+  guard let camera, let p = camera.upright(box.corners), let c = camera.upright([box.centre])?.first,
+        c.x > 0.15, c.x < 0.85, c.y > 0.15, c.y < 0.85 else { return nil }
   let r = bounds(p)
-  guard r.minX > 0.01, r.minY > 0.01, r.maxX < 0.99, r.maxY < 0.99 else { return nil }
-  return r
+  let inView = r.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+  guard !inView.isNull, r.width > 0, r.height > 0, inView.width * inView.height >= 0.8 * r.width * r.height else { return nil }
+  return inView
 }
 
 // The stretch of `windowLength` frames, and the thing, where the camera moves the most while
@@ -190,7 +195,7 @@ for start in stride(from: 0, to: pngs.count - windowLength, by: 15) {
   for (i, box) in boxes.enumerated() {
     var fits = true
     for f in start..<(start + windowLength) {
-      guard let r = seen(box, by: cameras[f]), r.width * r.height > 0.03, r.width * r.height < 0.5 else {
+      guard let r = seen(box, by: cameras[f]), r.width * r.height > 0.02, r.width * r.height < 0.6 else {
         fits = false
         break
       }
@@ -348,6 +353,8 @@ final class Run {
   /// How SAM is asked (LiveTracker.prompt's box growth) and which cuts are taken.
   let grow: CGFloat
   let gate: LiveTracker.Gate
+  /// Ask as the app does: by the thing's own speed (LiveTracker.asking), not a fixed gate.
+  let bySpeed: Bool
   var onBox: [Double] = []
   var shape: LiveShape?
   var fixedPrompt: (point: CGPoint, box: CGRect)?
@@ -357,13 +364,14 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0
 
   init(_ label: String, every: Int, flow: Bool = false, arkit: Bool = true,
-       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose) {
+       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false) {
     self.label = label
     self.every = every
     self.flow = flow
     self.arkit = arkit
     self.grow = grow
     self.gate = gate
+    self.bySpeed = bySpeed
   }
 }
 
@@ -371,8 +379,9 @@ let runs = [
   Run("fixed", every: 1, arkit: false),
   Run("arkit", every: 0),
   Run("coast@8", every: 4),
-  Run("lensi@8", every: 4, flow: true),
+  Run("loose@8", every: 4, flow: true),
   Run("strict@8", every: 4, flow: true, grow: 0.1, gate: .strict),
+  Run("lensi@8", every: 4, flow: true, bySpeed: true),
 ]
 
 var reference: [[CGPoint]] = []
@@ -425,10 +434,17 @@ for (k, f) in window.enumerated() {
       if due {
         // Asked where it should be now (LensiARView.segmentLive's follow), or a first look.
         var point: CGPoint?, box: CGRect?, anchor: simd_float3?, predicted: [CGPoint]?
+        var gate = run.gate
         if let shape = run.shape, shape.misses < 2 {
           let now = shape.placed(at: t)
+          var grow = run.grow
+          if run.bySpeed {
+            let asking = LiveTracker.asking(sizesPerSecond: CGFloat(shape.sizesPerSecond))
+            grow = asking.grow
+            gate = asking.gate
+          }
           if let p = camera.upright(now), p.contains(where: { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0) }),
-             let prompt = LiveTracker.prompt(for: p, scale: size, grow: run.grow) {
+             let prompt = LiveTracker.prompt(for: p, scale: size, grow: grow) {
             point = prompt.point
             box = prompt.box
             anchor = OutlineMath.centre(now)
@@ -446,7 +462,7 @@ for (k, f) in window.enumerated() {
           var world: [simd_float3]?
           if m.score >= (predicted == nil ? 0.6 : 0.5), m.polygon.count > 2 {
             let ring = OutlineMath.resample(m.polygon, scale: size)
-            if let predicted, !LiveTracker.accepts(ring, predicted: predicted, gate: run.gate) {
+            if let predicted, !LiveTracker.accepts(ring, predicted: predicted, gate: gate) {
               run.refused += 1
             } else {
               let plane = camera.withPlane(through: anchor)
