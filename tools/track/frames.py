@@ -15,13 +15,14 @@ step = int(sys.argv[5]) if len(sys.argv) > 5 else 1
 width = int(sys.argv[6]) if len(sys.argv) > 6 else 0
 os.makedirs(out, exist_ok=True)
 cap = cv2.VideoCapture(src)
-cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+# Read from the start rather than seeking: seeking compressed video can land on another frame,
+# and then the seed box (measured on the real frame) is on the wrong thing.
 n = 0
-for i in range(start, end):
+for i in range(end):
     ok, img = cap.read()
     if not ok:
         break
-    if (i - start) % step:
+    if i < start or (i - start) % step:
         continue
     if width and img.shape[1] != width:
         img = cv2.resize(img, (width, round(img.shape[0] * width / img.shape[1])), interpolation=cv2.INTER_AREA)
