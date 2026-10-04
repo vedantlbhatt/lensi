@@ -21,6 +21,16 @@ enum LensiError: LocalizedError {
 /// with a top-left origin, which is what the JS side expects.
 final class Analyzer {
   let queue = DispatchQueue(label: "lensi.analyze", qos: .userInitiated)
+
+  /// A photo is being analysed right now. The live camera's SAM steps aside meanwhile: a
+  /// plan, a check or an answer is waiting on this, and they'd share the Neural Engine.
+  static var analyzing: Bool {
+    activeLock.lock()
+    defer { activeLock.unlock() }
+    return active > 0
+  }
+  private static var active = 0
+  private static let activeLock = NSLock()
   /// Loaded on first use, on `queue`: the module is created on the JS thread
   /// at launch, and compiling Core ML there would hold up the splash screen.
   private lazy var detector = Detector()
@@ -78,6 +88,14 @@ final class Analyzer {
   // MARK: Analysis
 
   func analyze(uri: String) throws -> [String: Any] {
+    Analyzer.activeLock.lock()
+    Analyzer.active += 1
+    Analyzer.activeLock.unlock()
+    defer {
+      Analyzer.activeLock.lock()
+      Analyzer.active -= 1
+      Analyzer.activeLock.unlock()
+    }
     let started = CACurrentMediaTime()
     let image = try image(for: uri)
     let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])

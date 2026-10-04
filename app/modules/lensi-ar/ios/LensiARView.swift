@@ -33,8 +33,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var lastSamLog: TimeInterval = 0
   /// Which of the other tags' parts gets re-cut next (one a frame, besides the current step's).
   private var samTurn = 0
+  /// Where the phone was for SAM's last frame: a still phone needs fewer.
+  private var lastSamPose: simd_float4x4?
   /// SAM once it has loaded (nil until then, and on a phone without the models).
   private var sam: SAMSegmenter?
+  /// What a tap asked to have outlined (when taps don't pin): a point in the world, so the
+  /// outline stays on it as the phone moves. Nil: whatever is in the middle of the screen.
+  private var tapTarget: simd_float3?
   /// Live outlines by what they're of: a guide tag's pin id, or `centreKey`.
   private var liveShapes: [String: LiveShape] = [:]
   private static let centreKey = "centre"
@@ -239,13 +244,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   private func segmentLive(_ frame: ARFrame) {
-    guard liveSegments, !samBusy, bounds.width > 0, let sam else { return }
-    // As often as the phone keeps up; less often once it runs hot.
-    let gap: TimeInterval
+    // Not while a photo is being analysed: a plan or an answer is waiting on that.
+    guard liveSegments, !samBusy, bounds.width > 0, let sam, !Analyzer.analyzing else { return }
+    // As often as the phone keeps up; less often once it runs hot, or while it's propped up
+    // and still (then only hands move in the picture, and 4 times a second follows them).
+    var gap: TimeInterval
     switch ProcessInfo.processInfo.thermalState {
     case .critical: gap = 0.6
     case .serious: gap = 0.25
     default: gap = 0.08
+    }
+    let pose = frame.camera.transform
+    if gap < 0.25, let last = lastSamPose {
+      let moved = simd_distance(simd_make_float3(pose.columns.3), simd_make_float3(last.columns.3))
+      let facing = simd_dot(simd_normalize(simd_make_float3(pose.columns.2)), simd_normalize(simd_make_float3(last.columns.2)))
+      if moved < 0.01, facing > 0.99985 { gap = 0.25 }
     }
     guard frame.timestamp - lastSamTime > gap else { return }
     let res = frame.camera.imageResolution
@@ -276,23 +289,40 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         prompts.append(LivePrompt(key: pin.id, point: at, box: box, part: box == nil, anchor: pin.world))
       }
     } else {
-      let look = GuideFrameContext(selection: Selection(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
-      if let t = tracked.first(where: { $0.id == focusedId }) {
+      // Depth under a prompt: a raycast, or the tracked points near its ray.
+      func depth(at p: CGPoint) -> simd_float3 {
+        GuideFrameContext(selection: Selection(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
+          .anchor(at: p, session: sceneView.session)
+      }
+      // A tapped thing, where it is in this frame (in front of the phone, in the picture).
+      var tapped: CGPoint?
+      if let target = tapTarget {
+        if simd_mul(frame.camera.transform.inverse, simd_float4(target, 1)).z < -0.05 {
+          let q = frame.camera.projectPoint(target, orientation: .portrait, viewportSize: upright)
+          let p = CGPoint(x: q.x / upright.width, y: q.y / upright.height)
+          if p.x > 0.01, p.x < 0.99, p.y > 0.01, p.y < 0.99 { tapped = p }
+        }
+        if tapped == nil { tapTarget = nil }
+      }
+      if let tapped, let target = tapTarget {
+        prompts.append(LivePrompt(key: Self.centreKey, point: tapped, box: nil, part: true, anchor: target))
+      } else if let t = tracked.first(where: { $0.id == focusedId }) {
         let box = viewRectToUpright(t.shown, frame: frame).intersection(unit)
         if !box.isNull, box.width > 0.01, box.height > 0.01 {
           let middle = CGPoint(x: box.midX, y: box.midY)
-          prompts.append(LivePrompt(key: Self.centreKey, point: nil, box: box, part: false, anchor: look.anchor(at: middle, session: sceneView.session)))
+          prompts.append(LivePrompt(key: Self.centreKey, point: nil, box: box, part: false, anchor: depth(at: middle)))
         }
       } else {
         let middle = viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame)
         if unit.contains(middle) {
-          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: false, anchor: look.anchor(at: middle, session: sceneView.session)))
+          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: false, anchor: depth(at: middle)))
         }
       }
     }
     guard !prompts.isEmpty else { return }
     samBusy = true
     lastSamTime = frame.timestamp
+    lastSamPose = pose
     let buffer = frame.capturedImage
     let camera = Selection(frame: frame, crop: unit)
     samQueue.async { [weak self] in
@@ -357,8 +387,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for key in asked {
       if let world = found[key] {
         if var shape = liveShapes[key] {
-          // Only a recent shape is worth blending into; an old one is just replaced.
-          shape.world = OutlineMath.smooth(now - shape.seen < 0.6 ? shape.world : nil, world)
+          // Blended into what's showing (a part that takes turns is re-cut about once a second).
+          shape.world = OutlineMath.smooth(now - shape.seen < 2 ? shape.world : nil, world)
           shape.seen = now
           shape.misses = 0
           liveShapes[key] = shape
@@ -377,8 +407,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   /// Every display frame: each live outline drawn where its part is now. The current step's
-  /// in the lens colour, the rest thin and white; gone once SAM loses it, its tag goes, or
-  /// it hasn't been re-cut for a while.
+  /// in the lens colour, the rest thin and white. It goes (fading) once SAM has missed it
+  /// twice in a row or its tag goes; one that's simply not been asked about lately (out of
+  /// view, or waiting its turn) stays where it is in the world for up to `liveStale`.
   private func layoutLive() {
     guard !liveShapes.isEmpty else { return }
     let now = CACurrentMediaTime()
@@ -391,8 +422,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let pin = pins[key]
       let gone = key == Self.centreKey ? guiding : pin == nil
       let age = now - shape.seen
-      if gone || shape.misses >= 2 || age > 1.5 {
-        shape.layer.removeFromSuperlayer()
+      if gone || shape.misses >= 2 || age > Self.liveStale {
+        retire(shape.layer)
         liveShapes[key] = nil
         continue
       }
@@ -421,10 +452,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let color: UIColor = focused ? accent : .white
       shape.layer.setOutline(path.cgPath)
       shape.layer.style(color, width: focused ? 2.5 : strong ? 2 : 1.5, stroke: strong ? 1 : 0.75, fill: focused ? 0.14 : 0.07)
-      // Fades if it hasn't been re-cut lately (the part left the frame, or SAM's lost it).
-      shape.layer.opacity = age < 0.8 ? 1 : Float(max(0, 1 - (age - 0.8) / 0.7))
       shape.layer.isHidden = false
     }
+  }
+
+  /// Not re-cut for this long (seconds), an outline is let go even if nothing said it's wrong.
+  private static let liveStale: CFTimeInterval = 4
+
+  /// A live outline SAM has lost fades out rather than blinking off.
+  private func retire(_ layer: CALayer) {
+    CATransaction.begin()
+    CATransaction.setDisableActions(false)
+    CATransaction.setAnimationDuration(0.2)
+    CATransaction.setCompletionBlock { layer.removeFromSuperlayer() }
+    layer.opacity = 0
+    CATransaction.commit()
   }
 
   private func clearLiveOutlines() {
@@ -432,10 +474,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     liveShapes.removeAll()
   }
 
-  /// A live outline is being kept up for this pin (so its frozen one steps aside).
+  /// A live outline is being kept up for this pin, so its frozen one steps aside (never both:
+  /// `layoutLive` drops a live one that's lost or stale, and the frozen one comes back).
   private func hasLiveOutline(_ pin: Pin) -> Bool {
-    guard let shape = liveShapes[pin.id] else { return false }
-    return shape.misses == 0 && CACurrentMediaTime() - shape.seen < 1.5
+    liveShapes[pin.id] != nil
   }
 
   // MARK: - Zoom
@@ -754,8 +796,28 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         return
       }
     }
-    guard livePins else { return }
+    guard livePins else {
+      outlineTapped(p)
+      return
+    }
     select(at: p)
+  }
+
+  /// A tap with nothing to pin: outline what's under the finger, live, until another tap or
+  /// it leaves the picture (then it's the middle of the screen again).
+  private func outlineTapped(_ point: CGPoint) {
+    guard liveSegments, let frame = sceneView.session.currentFrame else { return }
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    let at = viewToUpright(point, frame: frame)
+    guard unit.contains(at) else { return }
+    let look = GuideFrameContext(selection: Selection(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
+    tapTarget = look.anchor(at: at, session: sceneView.session)
+    // What's outlined now is something else: let it go, and cut the new one on the next frame.
+    if let old = liveShapes[Self.centreKey] {
+      retire(old.layer)
+      liveShapes[Self.centreKey] = nil
+    }
+    lastSamTime = 0
   }
 
   /// Picks the tracked object under `point` (or the focused one), freezes the
@@ -1208,6 +1270,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     guideFrameOrder.removeAll()
     guideWatchId = nil
     watch.reset()
+    tapTarget = nil
   }
 
   /// Twice a second, while the phone is steady and the watched part is in
