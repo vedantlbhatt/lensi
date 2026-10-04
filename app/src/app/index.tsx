@@ -41,6 +41,7 @@ import { getSettings, setSettings, useSettings } from '../lib/settings';
 import { useCaptureList } from '../lib/store';
 import type { EngineId } from '../lib/types';
 import { hush } from '../lib/narrate';
+import { applyUpdate, applyWhenAway, checkForUpdate, confirmLaunch, otaEnabled } from '../lib/ota';
 import { useVoice } from '../lib/voice';
 import { springs } from '../theme/motion';
 import { LENSES, lensInfo, type Lens } from '../theme/tokens';
@@ -435,6 +436,37 @@ export default function Camera() {
   const stripClear = useCallback(() => {
     camera.current?.scrub.clear();
     setPinIds([]);
+  }, []);
+
+  // Over the air (src/lib/ota.ts): newer JavaScript for this build is fetched at launch. It
+  // restarts into it straight away when nothing is in hand, else the next time the app goes
+  // to the background.
+  const otaIdle = !open && !memories && guideStatus === 'idle' && !scrubbing && !voice.listening;
+  const otaIdleRef = useRef(otaIdle);
+  otaIdleRef.current = otaIdle;
+  useEffect(() => {
+    if (!otaEnabled()) return;
+    let alive = true;
+    const confirm = setTimeout(confirmLaunch, 3000);
+    const check = setTimeout(() => {
+      checkForUpdate()
+        .then((u) => {
+          if (!alive || !u) return;
+          if (otaIdleRef.current) {
+            toast('Updating Lensi');
+            setTimeout(applyUpdate, 900);
+          } else {
+            toast('Lensi updated. It restarts next time you leave the app.');
+            applyWhenAway();
+          }
+        })
+        .catch((e) => console.warn('[lensi] update check failed', e));
+    }, 4000);
+    return () => {
+      alive = false;
+      clearTimeout(confirm);
+      clearTimeout(check);
+    };
   }, []);
 
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera

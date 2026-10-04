@@ -4,12 +4,15 @@ ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8 (an Admin team key).
   asc.py prepare          bundle ID registered, app record found, an internal
                           tester group (every App Store Connect user, every build)
   asc.py wait <build>     waits for that build to finish processing
+  asc.py devices          registers the iPhones in IPHONE_UDIDS that aren't yet, and
+                          lists the ones an ad hoc build (iphone.yml) will run on
 
 Apple's API can't create the app record itself; `prepare` stops with what to
 do when it's missing.
 """
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -123,5 +126,26 @@ def wait(build):
     print(f"build {build} is still processing; it shows up in TestFlight when Apple finishes")
 
 
+def devices():
+    want = [u for u in re.split(r"[\s,;]+", os.environ.get("IPHONE_UDIDS", "")) if u]
+    listed = lambda: call("GET", "/devices", params={"filter[platform]": "IOS", "filter[status]": "ENABLED", "limit": 200})["data"]
+    known = {d["attributes"]["udid"].lower() for d in listed()}
+    for i, udid in enumerate(want):
+        if udid.lower() in known:
+            continue
+        call("POST", "/devices", {"data": {"type": "devices", "attributes": {"name": f"Lensi iPhone {i + 1}", "udid": udid, "platform": "IOS"}}})
+        print(f"registered the iPhone {udid[:8]}...")
+    phones = [d for d in listed() if d["attributes"].get("deviceClass") in (None, "IPHONE", "IPAD", "IPOD")]
+    if not phones:
+        fail(
+            "No iPhone is registered with the team, and an ad hoc build only installs on registered ones. "
+            "Add the iPhone's UDID as the repository variable IPHONE_UDIDS (Settings > Secrets and variables > "
+            "Actions > Variables), then run this again."
+        )
+    for d in phones:
+        a = d["attributes"]
+        print(f"installs on: {a.get('name')} ({a.get('model') or a.get('deviceClass') or 'iOS'}, {a['udid'][:8]}...)")
+
+
 if __name__ == "__main__":
-    {"prepare": lambda: prepare(), "wait": lambda: wait(sys.argv[2])}[sys.argv[1]]()
+    {"prepare": lambda: prepare(), "wait": lambda: wait(sys.argv[2]), "devices": lambda: devices()}[sys.argv[1]]()

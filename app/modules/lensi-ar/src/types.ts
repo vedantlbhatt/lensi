@@ -161,6 +161,8 @@ export type LensiARModuleShape = {
   isSupported: boolean;
   /** A lensi:// URL handed over in the launch environment (scripted runs), if any. */
   launchURL?: string | null;
+  /** The native code this build was made from (tools/ota/runtime.py): over-the-air JavaScript is only for the same. */
+  runtime?: string | null;
   analyze(uri: string): Promise<Analysis>;
   /** Point prompt in normalized image coords. */
   segment(uri: string, x: number, y: number): Promise<Segment | null>;

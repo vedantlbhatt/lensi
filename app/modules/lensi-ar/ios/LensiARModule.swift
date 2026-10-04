@@ -26,6 +26,10 @@ public class LensiARModule: Module {
     // "Open in Lensi?" prompt that `simctl openurl` can raise.
     Constant("launchURL") { ProcessInfo.processInfo.environment["LENSI_URL"] }
 
+    // The native code this build was made from (tools/ota/runtime.py, put in the Info.plist by
+    // plugins/withOTA.js): over-the-air JavaScript is only for the same.
+    Constant("runtime") { Bundle.main.object(forInfoDictionaryKey: "LensiRuntime") as? String }
+
     // MARK: Eyes: Vision + YOLO (+ SAM) on a still image
 
     AsyncFunction("analyze") { (uri: String, promise: Promise) in

@@ -74,6 +74,7 @@ function emit(e: IntelligenceEvent) {
 export const LensiAR = {
   isSupported: false,
   launchURL: null as string | null,
+  runtime: null as string | null,
 
   addListener<K extends keyof LensiAREvents>(name: K, fn: LensiAREvents[K]) {
     (listeners[name] as Set<LensiAREvents[K]>).add(fn);
