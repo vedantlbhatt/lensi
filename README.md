@@ -97,6 +97,22 @@ cd server && npm test && npx tsc --noEmit
 
 CI also builds for the iOS 27 Simulator, drives scripted captures through deep links, and pushes screenshots, a screen recording of each run, device logs, the app's stderr and the exported share image to the `ci-results` branch. Three stock clips (Intel IoT Devkit sample videos, CC BY 4.0) go through the video pipeline there: `lensi:///?file=car-detection.mp4` opens a video from the app's Documents.
 
+### Following moving things, on real footage
+
+`tools/track` runs the app's own live-outline code (SAMSegmenter, LiveTracker, LiveFlow, OutlineMath) over real videos on CI's Mac, with no phone and no ARKit, and scores every frame against an outline drawn by hand (DAVIS 2017; the Intel clips have none and are judged by eye). J is the overlap with the hand-drawn outline; lurch is how far the outline's middle jumps from one frame to the next rather than gliding, next to the hand-drawn outline's own. SAM runs 8 times a second (every third frame of 24 fps footage, about what a phone manages):
+
+| clip | SAM at a fixed spot | before LiveFlow (coasting) | now (`lensi@8`) | hand-drawn lurch |
+|---|---|---|---|---|
+| car through a junction | J 39% | J 93%, lurch 3.9 px | J 93%, lurch 1.9 px | 0.7 px |
+| car round a roundabout | J 95% | J 92%, 7.4 px | J 92%, 6.2 px | 0.8 px |
+| drifting car | J 9% | J 74%, 24.3 px | J 82%, 20.8 px | 9.8 px |
+| dog | J 70% | J 78%, 17.5 px | J 82%, 10.4 px | 7.3 px |
+| parkour | J 13% | J 64%, 15.5 px | J 60%, 7.2 px | 3.7 px |
+| bolt on a belt | lost | 8.3 px | 0.6 px | |
+| bolt moving its width a cut | lost | lost at the second cut | held, 9.3 px | |
+
+At 4 cuts a second (a hot phone, or a guide part waiting its turn) coasting loses fast things (dog J 32%, drifting car 10%) and LiveFlow keeps them (73%, 53%). LiveFlow costs 2-3 ms a frame plus about 1 ms per outline on a Mac core. Not measured here: ARKit (the phone's own motion), SAM's speed on a phone's Neural Engine, heat. `bash tools/track/ci.sh` reproduces it on a Mac; results and videos land on the `ci-track` branch.
+
 ## Design
 
 - **Type:** SF Pro, the iPhone's own, in sentence case. No display faces, no monospace, no italics. (The web preview substitutes Inter.)
