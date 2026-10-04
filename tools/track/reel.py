@@ -117,7 +117,7 @@ def main():
             blocks.append(("No hand-drawn outline for this clip: judge by eye", 26, False, True))
         if k_now >= 0 and k_old >= 0:
             blocks.append((f"Lurch: {k_old:.1f} \u2192 {k_now:.1f} px a frame", 36, True, False))
-            own = f"; the hand-drawn outline's own is {k_true:.1f} px" if k_true >= 0 else ""
+            own = f"; the thing's own on screen is {k_true:.1f} px" if k_true >= 0 else ""
             blocks.append((f"How far its middle jumps rather than glides{own}", 22, False, True))
         png = os.path.join(tmp, f"card{n}.png")
         pace = "As filmed" if speed == 1 else f"{speed:g}x speed"
@@ -128,7 +128,8 @@ def main():
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", c)
         v = os.path.join(tmp, f"v{n}.mp4")
         run("ffmpeg", "-y", "-stream_loop", str(loops - 1), "-i", os.path.join(src, f"{clip}{suffix}.mp4" if suffix else f"{clip}{tag}{vs}-compare.mp4"),
-            "-vf", f"setpts={1 / speed:g}*PTS,scale={W}:{H},fps=30,format=yuv420p", "-an",
+            "-vf", f"setpts={1 / speed:g}*PTS,scale={W}:{H}:force_original_aspect_ratio=decrease,"
+                   f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0e0e10,fps=30,format=yuv420p", "-an",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", v)
         parts += [c, v]
     lst = os.path.join(tmp, "list.txt")
