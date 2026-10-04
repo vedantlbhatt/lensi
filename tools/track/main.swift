@@ -318,7 +318,7 @@ final class Runner {
       let prediction = predicted(at: f)
       var points = [seedPoint]
       var box: CGRect? = seedBox
-      var grow = self.grow, gate = self.gate
+      var grow = self.grow, gate = self.gate, how = smoothing
       if bySpeed, let prediction {
         // Its speed in its own sizes a second (24 fps footage).
         let c = centre(prediction)
@@ -328,6 +328,7 @@ final class Runner {
         let asking = LiveTracker.asking(sizesPerSecond: perFrame * 24 / max(size, 1))
         grow = asking.grow
         gate = asking.gate
+        how = asking.smoothing
       }
       if tracking, let prediction, let p = LiveTracker.prompt(for: prediction, scale: scale, grow: grow) {
         points = [p.point]
@@ -342,7 +343,7 @@ final class Runner {
       }
       if let c = cut {
         var next = c
-        if let smoothing, let prediction {
+        if let smoothing = how, let prediction {
           let px = { (p: CGPoint) in simd_float3(Float(p.x * scale.width), Float(p.y * scale.height), 0) }
           let blended: [simd_float3]
           if adaptive {

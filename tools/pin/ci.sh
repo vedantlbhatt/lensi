@@ -11,7 +11,7 @@
 set -o pipefail
 mkdir -p out/pin footage/arkit
 BASE=https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw/Validation
-IDS="${ARKIT_SCENES:-41069021 42444976 45261575 47331063 47895745}"
+IDS="${ARKIT_SCENES:-42444976 41069021 42899714 47331063 47333441 47429987 47895745 48458656}"
 swiftc -O -o pin tools/pin/main.swift \
   app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
   app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/LiveWorld.swift \

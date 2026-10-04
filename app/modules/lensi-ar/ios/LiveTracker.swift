@@ -48,12 +48,13 @@ enum LiveTracker {
   /// however the phone moves.
   static let stillBelow: CGFloat = 0.5
 
-  /// How to ask SAM about a thing, and which cut to take: a still thing barely changes between
-  /// cuts, so a cut that strays from where it should be is something else (strict, within a
-  /// tight box); a thing that moves or bends really changes, and the strict gate would refuse it
-  /// (loose, within a wider box). tools/pin and tools/track measure both.
-  static func asking(sizesPerSecond speed: CGFloat) -> (grow: CGFloat, gate: Gate) {
-    speed < stillBelow ? (0.1, .strict) : (grow, .loose)
+  /// How to ask SAM about a thing, which cut to take, and how to blend it in: a still thing
+  /// barely changes between cuts, so a cut that strays from where it should be is something
+  /// else (strict, within a tight box), and ARKit already says where it is (blended in gently);
+  /// a thing that moves or bends really changes, and the strict gate would refuse it (loose,
+  /// within a wider box, as OutlineMath.steady's standard). tools/pin and tools/track measure both.
+  static func asking(sizesPerSecond speed: CGFloat) -> (grow: CGFloat, gate: Gate, smoothing: OutlineMath.Smoothing) {
+    speed < stillBelow ? (0.1, .strict, .still) : (grow, .loose, .standard)
   }
 
   /// Whether `cut` is the same thing as `predicted`: it overlaps it, and it's about the

@@ -90,6 +90,9 @@ enum OutlineMath {
     /// Only the edge noise of a thing that holds its shape; motion and real shape change pass straight through.
     static let light = Smoothing(quiet: 0.05, keepQuiet: 0.5, small: 0.1, keepSmall: 0.25, still: 0.03, followStill: 0.6, followMoving: 1)
     static let minimal = Smoothing(quiet: 0.04, keepQuiet: 0.4, small: 0.04, keepSmall: 0, still: 0, followStill: 1, followMoving: 1)
+    /// A thing that's still in the world: ARKit already says where it is, so a cut mostly
+    /// refines its shape (as the view turns) and its edge noise is held down harder.
+    static let still = Smoothing(quiet: 0.15, keepQuiet: 0.8, small: 0.3, keepSmall: 0.6, still: 0.1, followStill: 0.35, followMoving: 0.8)
   }
 
   /// The outline to show next. Where it is and what shape it is are settled separately, so a

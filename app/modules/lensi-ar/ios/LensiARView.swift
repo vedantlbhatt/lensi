@@ -257,8 +257,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// The shape follows its thing from frame to frame (a guide part, a tapped thing);
     /// the reticle's is just whatever is in the middle.
     let follows: Bool
-    /// Which cut to take as the thing (LiveTracker.asking: strict for a still thing).
+    /// Which cut to take as the thing, and how to blend it in (LiveTracker.asking: strict and
+    /// gentle for a still thing).
     var gate: LiveTracker.Gate = .loose
+    var smoothing: OutlineMath.Smoothing = .standard
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -299,7 +301,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             predicted.contains(where: { unit.contains($0) }),
             let p = LiveTracker.prompt(for: predicted, scale: upright, grow: asking.grow) else { return nil }
       return LivePrompt(key: key, point: p.point, box: p.box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
-                        follows: true, gate: asking.gate)
+                        follows: true, gate: asking.gate, smoothing: asking.smoothing)
     }
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
@@ -457,7 +459,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let key = prompt.key
       if let world = found[key] {
         if var shape = liveShapes[key], t - shape.seen < 2 {
-          shape.take(world, at: t)
+          shape.take(world, at: t, how: prompt.smoothing)
           liveShapes[key] = shape
         } else {
           // New, or not seen for a while: start over.

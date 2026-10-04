@@ -181,7 +181,7 @@ func seen(_ box: Box, by camera: FrozenCamera?) -> CGRect? {
 
 // The stretch of `windowLength` frames, and the thing, where the camera moves the most while
 // one thing stays wholly in view at a workable size.
-var bestChoice: (start: Int, box: Int, travel: Float, turn: Float)?
+var bestChoice: (start: Int, box: Int, travel: Float, turn: Float, score: Float)?
 for start in stride(from: 0, to: pngs.count - windowLength, by: 15) {
   var travel: Float = 0, turn: Float = 0
   var ok = true
@@ -200,9 +200,15 @@ for start in stride(from: 0, to: pngs.count - windowLength, by: 15) {
         break
       }
     }
-    let score = travel + turn * 0.5
-    if fits, score > (bestChoice.map { $0.travel + $0.turn * 0.5 } ?? -1) {
-      bestChoice = (start: start, box: i, travel: travel, turn: turn)
+    // Solid fixtures first (the app's ground: sinks, toilets, appliances, cabinets); open
+    // frames and glass (tables, chairs) are hard for SAM itself, ARKit or not.
+    let solid: Set<String> = ["sink", "toilet", "washer", "dishwasher", "oven", "stove", "refrigerator", "cabinet",
+                              "bathtub", "tv_monitor", "fireplace", "shelf"]
+    let label = box.label.lowercased().replacingOccurrences(of: " ", with: "_")
+      .replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: "/", with: "_")
+    let score = (travel + turn * 0.5) * (solid.contains(label) ? 2 : 1)
+    if fits, score > (bestChoice.map { $0.score } ?? -1) {
+      bestChoice = (start: start, box: i, travel: travel, turn: turn, score: score)
     }
   }
 }
@@ -435,6 +441,7 @@ for (k, f) in window.enumerated() {
         // Asked where it should be now (LensiARView.segmentLive's follow), or a first look.
         var point: CGPoint?, box: CGRect?, anchor: simd_float3?, predicted: [CGPoint]?
         var gate = run.gate
+        var smoothing = OutlineMath.Smoothing.standard
         if let shape = run.shape, shape.misses < 2 {
           let now = shape.placed(at: t)
           var grow = run.grow
@@ -442,6 +449,7 @@ for (k, f) in window.enumerated() {
             let asking = LiveTracker.asking(sizesPerSecond: CGFloat(shape.sizesPerSecond))
             grow = asking.grow
             gate = asking.gate
+            smoothing = asking.smoothing
           }
           if let p = camera.upright(now), p.contains(where: { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0) }),
              let prompt = LiveTracker.prompt(for: p, scale: size, grow: grow) {
@@ -473,7 +481,7 @@ for (k, f) in window.enumerated() {
           // LensiARView.takeLive.
           if let world {
             if var shape = run.shape, t - shape.seen < 2, shape.misses < 2 {
-              shape.take(world, at: t)
+              shape.take(world, at: t, how: smoothing)
               run.shape = shape
             } else {
               run.shape = LiveShape(world: world, at: t, follows: true)

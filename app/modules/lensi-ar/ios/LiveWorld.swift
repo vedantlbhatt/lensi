@@ -136,7 +136,7 @@ struct LiveShape {
   /// should be by then: a moving thing is followed, and its edge settles unless it's really
   /// changing shape (OutlineMath.steady). SAM takes a while: if the flow has carried the
   /// outline past `t`, the cut is brought along the same way first.
-  mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval) {
+  mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval, how: OutlineMath.Smoothing = .standard) {
     var forwarded = fresh
     var at = t
     if seen > t {
@@ -144,7 +144,7 @@ struct LiveShape {
       forwarded = fresh.map { $0 + since }
       at = seen
     }
-    let steadied = OutlineMath.steady(placed(at: at), forwarded, previous: lastChange)
+    let steadied = OutlineMath.steady(placed(at: at), forwarded, previous: lastChange, how)
     let next = steadied.outline
     lastChange = steadied.change
     // Its speed, when the flow isn't measuring it.
