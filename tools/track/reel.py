@@ -105,7 +105,12 @@ def main():
         j_now, j_old = runs[label]["J"], runs[before]["J"]
         k_now, k_old, k_true = runs[label].get("jerk", -1), runs[before].get("jerk", -1), stats.get("truthJerk", -1)
         blocks = [(title, 44, True, False), (sub, 22, False, True)]
-        if j_now >= 0:
+        on_now, on_old = runs[label].get("onBox", -1), runs[before].get("onBox", -1)
+        if on_now >= 0 and on_old >= 0:
+            # tools/pin: how much of the outline is on the thing's hand-drawn 3D box (no SAM in it).
+            blocks.append((f"On the thing: {on_old * 100:.0f}% \u2192 {on_now * 100:.0f}%", 36, True, False))
+            blocks.append(("Share of the outline on its hand-drawn 3D box, every frame", 22, False, True))
+        elif j_now >= 0:
             blocks.append((f"On the thing: {j_old * 100:.0f}% \u2192 {j_now * 100:.0f}%", 36, True, False))
             blocks.append(("Overlap with the outline drawn by hand, every frame", 22, False, True))
         else:

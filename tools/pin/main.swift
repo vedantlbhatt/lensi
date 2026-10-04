@@ -218,6 +218,11 @@ guard let best = bestChoice else {
 }
 let thing = boxes[best.box]
 
+let window = Array(best.start..<(best.start + windowLength))
+print(String(format: "%@: the %@, frames %ld-%ld (%.1f s); the camera travels %.0f cm and turns %.0f degrees",
+             name, thing.label, window.first!, window.last!, pngs[window.last!].t - pngs[window.first!].t,
+             best.travel * 100, best.turn * 180 / .pi))
+
 /// Up, in the recording's world: the axis the hand-drawn boxes stand along (they're drawn
 /// upright), pointing from the things to the camera.
 func worldUp() -> simd_float3 {
@@ -242,10 +247,6 @@ let upInImage = window.compactMap { cameras[$0] }.reduce(simd_float2.zero) { sum
   let c = r.transpose * up
   return sum + simd_float2(c.x, c.y)
 }
-let window = Array(best.start..<(best.start + windowLength))
-print(String(format: "%@: the %@, frames %ld-%ld (%.1f s); the camera travels %.0f cm and turns %.0f degrees",
-             name, thing.label, window.first!, window.last!, pngs[window.last!].t - pngs[window.first!].t,
-             best.travel * 100, best.turn * 180 / .pi))
 
 // The pose convention, checked against the dataset's own projection (OpenCV axes, sideways
 // pixels), at the frame of the stretch nearest a recorded pose (the rest are interpolated):
