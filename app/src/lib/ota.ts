@@ -56,7 +56,7 @@ export function otaEnabled(): boolean {
 
 /** This JavaScript is running: AppDelegate's mark goes, so it isn't set aside next launch. */
 export function confirmLaunch() {
-  if (!otaEnabled()) return;
+  if (Platform.OS !== 'ios') return;
   try {
     const mark = new File(root(), 'launching');
     if (mark.exists) mark.delete();

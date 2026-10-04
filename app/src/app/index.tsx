@@ -453,9 +453,10 @@ export default function Camera() {
   const otaIdleRef = useRef(otaIdle);
   otaIdleRef.current = otaIdle;
   useEffect(() => {
-    if (!otaEnabled()) return;
-    let alive = true;
+    // Whatever JavaScript this is, it got going: an update it started from stays.
     const confirm = setTimeout(confirmLaunch, 3000);
+    if (!otaEnabled()) return () => clearTimeout(confirm);
+    let alive = true;
     const check = setTimeout(() => {
       checkForUpdate()
         .then((u) => {
