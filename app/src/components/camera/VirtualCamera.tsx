@@ -15,7 +15,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { DEMO_SCENES, setDemoQuestion, type DemoScene, type ZoomRange } from '../../../modules/lensi-ar/src';
-import { boxToView, fitRect, pointInPolygon, polygonArea, toView, type Fit } from '../../lib/geometry';
+import { boxToView, fitRect, smallestShapeAt, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
 import { assetPhoto, type Picked } from '../../lib/media';
 import { Grain } from '../../motion/Grain';
@@ -94,11 +94,8 @@ export const VirtualCamera = forwardRef<
       outlineAt: (x: number, y: number) => {
         if (guidePins?.parts.length) return;
         const at = { x: (x - fit.x) / fit.w, y: (y - fit.y) / fit.h };
-        const shapes = [...scene.parts.map((p) => p.polygon), scene.outline.polygon]
-          .map((poly) => poly.map(([px, py]) => ({ x: px, y: py })))
-          .filter((poly) => poly.length > 2 && pointInPolygon(at, poly))
-          .sort((a, b) => polygonArea(a) - polygonArea(b));
-        setTapped(shapes[0] ?? null);
+        const shapes = [...scene.parts.map((p) => p.polygon), scene.outline.polygon].map((poly) => poly.map(([px, py]) => ({ x: px, y: py })));
+        setTapped(smallestShapeAt(at, shapes));
       },
     }),
     [scene, fit.x, fit.y, fit.w, fit.h, guidePins?.parts.length],

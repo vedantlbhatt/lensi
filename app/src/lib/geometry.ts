@@ -86,6 +86,21 @@ export function pointInPolygon(p: Pt, poly: Pt[]): boolean {
 
 export const pointInBox = (p: Pt, b: Box) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 
+/** What a tap at `p` means among overlapping shapes: the smallest one it's inside (a tyre over the truck). */
+export function smallestShapeAt(p: Pt, shapes: Pt[][]): Pt[] | null {
+  let best: Pt[] | null = null;
+  let bestArea = Infinity;
+  for (const s of shapes) {
+    if (s.length < 3 || !pointInPolygon(p, s)) continue;
+    const a = polygonArea(s);
+    if (a < bestArea) {
+      best = s;
+      bestArea = a;
+    }
+  }
+  return best;
+}
+
 /** Ramer–Douglas–Peucker on an open polyline. */
 export function simplify(pts: Pt[], epsilon: number): Pt[] {
   if (pts.length < 3) return pts.slice();

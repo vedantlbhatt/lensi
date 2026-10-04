@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   arcControl,
   centroid,
+  smallestShapeAt,
   fitRect,
   layoutTags,
   outlinePath,
@@ -130,3 +131,14 @@ test('arc bulges upward', () => {
   const c2 = arcControl({ x: 100, y: 100 }, { x: 0, y: 100 });
   assert.ok(c2.y < 100);
 });
+
+test('a tap picks the smallest shape it is inside', () => {
+  const truck = [{ x: 0.1, y: 0.2 }, { x: 0.95, y: 0.2 }, { x: 0.95, y: 0.7 }, { x: 0.1, y: 0.7 }];
+  const tyre = [{ x: 0.62, y: 0.47 }, { x: 0.87, y: 0.47 }, { x: 0.87, y: 0.65 }, { x: 0.62, y: 0.65 }];
+  assert.equal(smallestShapeAt({ x: 0.78, y: 0.54 }, [truck, tyre]), tyre);
+  assert.equal(smallestShapeAt({ x: 0.3, y: 0.4 }, [truck, tyre]), truck);
+  assert.equal(smallestShapeAt({ x: 0.02, y: 0.05 }, [truck, tyre]), null);
+  // Degenerate shapes are never picked.
+  assert.equal(smallestShapeAt({ x: 0.5, y: 0.5 }, [[{ x: 0, y: 0 }, { x: 1, y: 1 }]]), null);
+});
+
