@@ -1,0 +1,110 @@
+name: testflight
+
+# Builds Lensi for iPhones on GitHub's Mac runners, signs it with the team's
+# App Store Connect API key (Xcode's cloud-managed certificates: no certificate
+# or profile is stored here) and sends it to TestFlight, where every App Store
+# Connect user on the team can install it.
+#
+# Needs repository secrets from an App Store Connect API team key with Admin
+# access: ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (the .p8 file's text). And
+# the app record in App Store Connect, which Apple's API can't create: the
+# first step says so if it's missing.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Build and send to TestFlight
+    runs-on: xcode-27
+    timeout-minutes: 110
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      BUNDLE_ID: com.vedantbhatt.lensi
+      TEAM_ID: A4YA8NU8Y8
+    steps:
+      - name: App Store Connect key
+        run: |
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::error::Add repository secrets ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API team key with Admin access)."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+          echo "KEY_PATH=$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" >> "$GITHUB_ENV"
+          python3 -m pip install --quiet --break-system-packages 'pyjwt[crypto]' 2>/dev/null || python3 -m pip install --quiet 'pyjwt[crypto]'
+      - uses: actions/checkout@v4
+      - name: Bundle ID, app record, testers
+        run: python3 .github/scripts/asc.py prepare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: npm ci
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+      - name: Prebuild
+        working-directory: app
+        env:
+          EXPO_NO_TELEMETRY: 1
+          CI: 1
+        run: npx expo prebuild --platform ios --no-install
+      - name: Pods
+        working-directory: app/ios
+        run: pod install || { echo "pod install failed; retrying once"; sleep 15; pod install; }
+      - name: Build number
+        working-directory: app
+        run: |
+          BUILD=$(( ${{ github.run_number }} + 100 ))
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" ios/Lensi/Info.plist
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          echo "version $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/Lensi/Info.plist) ($BUILD)"
+      - name: Archive (Release, iPhone)
+        working-directory: app
+        run: |
+          set -o pipefail
+          mkdir -p ../out
+          xcodebuild -workspace ios/Lensi.xcworkspace -scheme Lensi -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Lensi.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" COMPILER_INDEX_STORE_ENABLE=NO \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            archive > ../out/archive.log 2>&1 || { grep -E "error:|fatal error|Signing|signing|provision|certificate|Undefined symbol" ../out/archive.log | sort -u | head -80; exit 1; }
+          tail -3 ../out/archive.log
+      - name: Upload to TestFlight
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/export.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>A4YA8NU8Y8</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          mkdir -p out
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Lensi.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            > out/export.log 2>&1 || { tail -60 out/export.log; exit 1; }
+          tail -8 out/export.log
+      - name: Wait for TestFlight
+        run: python3 .github/scripts/asc.py wait "$BUILD"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: testflight-logs
+          path: out/
