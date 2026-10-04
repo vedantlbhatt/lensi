@@ -151,6 +151,16 @@ func checkOutlineMath() -> Bool {
   let (aligned, gap) = OutlineMath.align(turned, to: circle)
   expect(gap < 1e-5 && simd_distance(aligned[0], circle[0]) < 1e-6, "align: gap \(gap)")
   expect(abs(OutlineMath.spread(circle) - 0.1) < 1e-4, "spread: \(OutlineMath.spread(circle))")
+  // Run the other way round (as SAM's contours sometimes are): lined up the same way round.
+  let backwards = Array(turned.reversed())
+  let (unreversed, backGap) = OutlineMath.align(backwards, to: circle)
+  expect(backGap < 1e-5 && zip(unreversed, circle).allSatisfy { simd_distance($0, $1) < 1e-6 }, "align a ring run backwards: gap \(backGap)")
+  // ...so blending it in, eased or steadied, doesn't fold the outline in on itself.
+  var easing = LiveShape(world: circle, at: 0, follows: true)
+  _ = easing.draw(at: 0)
+  easing.take(backwards.map { $0 + simd_float3(0.002, 0, 0) }, at: 0.033)
+  let folded = (1...6).map { easing.draw(at: 0.033 + Double($0) / 60) }.map { OutlineMath.spread($0) }.min() ?? 0
+  expect(folded > 0.095, "a cut run backwards doesn't collapse what's drawn: smallest spread \(folded)")
 
   // Nudged a hair: blended (moves only part way). Somewhere else: replaced outright.
   // (2% of its size: jitter, so it only goes part way.)

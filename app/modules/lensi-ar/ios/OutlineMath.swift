@@ -35,25 +35,31 @@ enum OutlineMath {
     return out
   }
 
-  /// `new` started at whichever point lines it up best with `old` (same count, same winding),
-  /// and the RMS gap between them once lined up.
+  /// `new` started at whichever point lines it up best with `old` (same count), run the same way
+  /// round as `old`, and the RMS gap between them once lined up. SAM's contours don't always run
+  /// the same way round: lined up only by where they start, a cut that ran the other way paired
+  /// each point with one across the shape, and blending the two (`steady`, LiveShape.draw)
+  /// collapsed the outline towards its middle (tools/pin: J fell from 98% to 3% for a few frames).
   static func align(_ new: [simd_float3], to old: [simd_float3]) -> (points: [simd_float3], gap: Float) {
     let n = new.count
     guard n > 0, n == old.count else { return (new, .greatestFiniteMagnitude) }
-    var best = 0
+    let reversed = Array(new.reversed())
+    var best = (ring: new, shift: 0)
     var bestCost = Float.greatestFiniteMagnitude
-    for shift in 0..<n {
-      var cost: Float = 0
-      for i in 0..<n {
-        cost += simd_distance_squared(new[(i + shift) % n], old[i])
-        if cost >= bestCost { break }
-      }
-      if cost < bestCost {
-        bestCost = cost
-        best = shift
+    for ring in [new, reversed] {
+      for shift in 0..<n {
+        var cost: Float = 0
+        for i in 0..<n {
+          cost += simd_distance_squared(ring[(i + shift) % n], old[i])
+          if cost >= bestCost { break }
+        }
+        if cost < bestCost {
+          bestCost = cost
+          best = (ring, shift)
+        }
       }
     }
-    return ((0..<n).map { new[($0 + best) % n] }, (bestCost / Float(n)).squareRoot())
+    return ((0..<n).map { best.ring[($0 + best.shift) % n] }, (bestCost / Float(n)).squareRoot())
   }
 
   /// RMS distance of the points from their middle: how big the outline is, to judge a gap by.
