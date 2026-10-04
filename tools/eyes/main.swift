@@ -2,7 +2,8 @@
 // Detector and SAMSegmenter) over a folder of images on macOS, and writes one
 // JSON and one overlay PNG per image. Built and run by CI:
 //
-//   swiftc -O -o eyes tools/eyes/main.swift app/modules/lensi-ar/ios/{Analyzer,Detector,SAMSegmenter}.swift
+//   swiftc -O -o eyes tools/eyes/main.swift tools/eyes/live.swift \
+//     app/modules/lensi-ar/ios/{Analyzer,Detector,SAMSegmenter,OutlineMath}.swift
 //   LENSI_MODELS_DIR=<dir with *.mlmodelc> ./eyes <images dir> <out dir>
 import CoreGraphics
 import Foundation
@@ -125,3 +126,8 @@ for url in images {
 
 let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
 try data.write(to: outDir.appendingPathComponent("summary.json"))
+
+// The live camera's path into SAM, and the math that keeps live outlines steady (live.swift).
+let liveOK = checkLivePath(images)
+let mathOK = checkOutlineMath()
+if !liveOK || !mathOK { exit(1) }

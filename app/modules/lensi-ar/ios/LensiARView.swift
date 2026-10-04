@@ -26,13 +26,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     didSet { if !liveSegments { clearLiveOutlines() } }
   }
   private let samQueue = DispatchQueue(label: "lensi.sam-live", qos: .userInitiated)
-  private let samContext = CIContext(options: [.useSoftwareRenderer: false])
   private var samBusy = false
   private var lastSamTime: TimeInterval = 0
   private var samMs: Double = 0
+  private var samEncodeMs: Double = 0
   private var lastSamLog: TimeInterval = 0
+  /// Which of the other tags' parts gets re-cut next (one a frame, besides the current step's).
+  private var samTurn = 0
+  /// SAM once it has loaded (nil until then, and on a phone without the models).
+  private var sam: SAMSegmenter?
   /// Live outlines by what they're of: a guide tag's pin id, or `centreKey`.
-  private var liveOutlines: [String: (layer: CAShapeLayer, seen: CFTimeInterval)] = [:]
+  private var liveShapes: [String: LiveShape] = [:]
   private static let centreKey = "centre"
   /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
   var livePins = false
@@ -126,8 +130,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
     pinLayer.isUserInteractionEnabled = false
     addSubview(pinLayer)
-    // Load SAM off the main thread now, not on the first camera frame.
-    DispatchQueue.global(qos: .userInitiated).async { _ = SAMSegmenter.shared }
+    // Load SAM off the main thread now. Nothing on the main thread touches
+    // `SAMSegmenter.shared` itself: while it loads, that would wait for it.
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let loaded = SAMSegmenter.shared
+      DispatchQueue.main.async { self?.sam = loaded }
+    }
 
     addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
   }
@@ -206,128 +214,231 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   // tag's part is in this frame, so its outline is re-cut from wherever the
   // phone is now; with no tags, the tracked object under the reticle; with
   // nothing tracked, whatever is in the middle of the screen.
+  //
+  // Each outline SAM finds is laid in the world (on a plane through its part,
+  // facing the camera that saw it) and redrawn from there every display frame,
+  // so it stays on the part while the phone moves between SAM's frames; new
+  // cuts of the same shape are blended in rather than swapped (OutlineMath).
+
+  private struct LivePrompt {
+    let key: String
+    let point: CGPoint?
+    let box: CGRect?
+    let part: Bool
+    /// Where in the world the part is (its tag, or the depth found under the prompt).
+    let anchor: simd_float3
+  }
+
+  private struct LiveShape {
+    let layer: CAShapeLayer
+    /// OutlineMath.count points, in the world.
+    var world: [simd_float3]
+    var seen: CFTimeInterval
+    /// Asked for since it was last found, and not found.
+    var misses = 0
+  }
 
   private func segmentLive(_ frame: ARFrame) {
-    guard liveSegments, !samBusy, frame.timestamp - lastSamTime > 0.08, bounds.width > 0,
-          let sam = SAMSegmenter.shared else { return }
+    guard liveSegments, !samBusy, bounds.width > 0, let sam else { return }
+    // As often as the phone keeps up; less often once it runs hot.
+    let gap: TimeInterval
+    switch ProcessInfo.processInfo.thermalState {
+    case .critical: gap = 0.6
+    case .serious: gap = 0.25
+    default: gap = 0.08
+    }
+    guard frame.timestamp - lastSamTime > gap else { return }
     let res = frame.camera.imageResolution
     let upright = CGSize(width: res.height, height: res.width)
-    var prompts: [(key: String, point: CGPoint?, box: CGRect?, part: Bool)] = []
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    var prompts: [LivePrompt] = []
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
-      // The current step's part first; at most four a frame.
       let toCamera = frame.camera.transform.inverse
-      let order = guidePins.filter { !$0.label.isHidden && $0.label.pointing == nil }
-        .sorted { ($0.label.emphasis == .focused ? 0 : 1) < ($1.label.emphasis == .focused ? 0 : 1) }
-      for pin in order.prefix(4) {
-        guard simd_mul(toCamera, simd_float4(pin.world, 1)).z < -0.05 else { continue }
+      // Tags whose part is on screen, in front of the phone.
+      let inView: [(pin: Pin, at: CGPoint)] = guidePins.compactMap { (pin: Pin) -> (pin: Pin, at: CGPoint)? in
+        guard !pin.label.isHidden, pin.label.pointing == nil,
+              simd_mul(toCamera, simd_float4(pin.world, 1)).z < -0.05 else { return nil }
         let q = frame.camera.projectPoint(pin.world, orientation: .portrait, viewportSize: upright)
         let p = CGPoint(x: q.x / upright.width, y: q.y / upright.height)
-        guard p.x > 0.01, p.x < 0.99, p.y > 0.01, p.y < 0.99 else { continue }
-        prompts.append((pin.id, p, nil, true))
+        return p.x > 0.01 && p.x < 0.99 && p.y > 0.01 && p.y < 0.99 ? (pin, p) : nil
       }
-    } else if let t = tracked.first(where: { $0.id == focusedId }) {
-      let box = viewRectToUpright(t.shown, frame: frame).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-      if !box.isNull, box.width > 0.01, box.height > 0.01 { prompts.append((Self.centreKey, nil, box, false)) }
+      // The current step's part every frame; the others take turns, one a frame.
+      let focused = inView.filter { $0.pin.label.emphasis == .focused }
+      let others = inView.filter { $0.pin.label.emphasis != .focused }
+      var chosen = Array(focused.prefix(1))
+      let extra = focused.isEmpty ? 2 : 1
+      for i in 0..<min(extra, others.count) { chosen.append(others[(samTurn + i) % others.count]) }
+      samTurn += extra
+      for (pin, at) in chosen {
+        // The plan's own outline of the part, seen from here, keeps SAM on the same part.
+        let box = uprightBox(pin.guideOutline, camera: frame.camera, upright: upright)
+        prompts.append(LivePrompt(key: pin.id, point: at, box: box, part: box == nil, anchor: pin.world))
+      }
     } else {
-      prompts.append((Self.centreKey, viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame), nil, false))
+      let look = GuideFrameContext(selection: Selection(frame: frame, crop: unit), points: frame.rawFeaturePoints?.points ?? [])
+      if let t = tracked.first(where: { $0.id == focusedId }) {
+        let box = viewRectToUpright(t.shown, frame: frame).intersection(unit)
+        if !box.isNull, box.width > 0.01, box.height > 0.01 {
+          let middle = CGPoint(x: box.midX, y: box.midY)
+          prompts.append(LivePrompt(key: Self.centreKey, point: nil, box: box, part: false, anchor: look.anchor(at: middle, session: sceneView.session)))
+        }
+      } else {
+        let middle = viewToUpright(CGPoint(x: bounds.midX, y: bounds.midY * 0.92), frame: frame)
+        if unit.contains(middle) {
+          prompts.append(LivePrompt(key: Self.centreKey, point: middle, box: nil, part: false, anchor: look.anchor(at: middle, session: sceneView.session)))
+        }
+      }
     }
-    guard !prompts.isEmpty else {
-      drawLive([], display: .identity)
-      return
-    }
+    guard !prompts.isEmpty else { return }
     samBusy = true
     lastSamTime = frame.timestamp
     let buffer = frame.capturedImage
-    let display = frame.displayTransform(for: .portrait, viewportSize: bounds.size)
+    let camera = Selection(frame: frame, crop: unit)
     samQueue.async { [weak self] in
-      guard let self else { return }
       let started = CACurrentMediaTime()
-      var found: [(key: String, polygon: [CGPoint])] = []
-      if let image = self.liveImage(buffer) {
-        do {
-          try sam.prepare(image: image, id: "live", force: true)
-          for p in prompts {
-            let mask = try sam.segment(
-              id: "live", points: p.point.map { [$0] } ?? [], labels: p.point == nil ? [] : [1], box: p.box, preferPart: p.part)
-            if mask.score >= 0.6, mask.polygon.count > 2 { found.append((p.key, mask.polygon)) }
-          }
-        } catch {}
+      var encodeMs: Double = 0
+      var found: [String: [simd_float3]] = [:]
+      do {
+        try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "live")
+        encodeMs = (CACurrentMediaTime() - started) * 1000
+        for p in prompts {
+          let mask = try sam.segment(
+            id: "live", points: p.point.map { [$0] } ?? [], labels: p.point == nil ? [] : [1], box: p.box, preferPart: p.part)
+          guard mask.score >= 0.6, mask.polygon.count > 2 else { continue }
+          // Evenly spaced (in pixels), then onto the part's plane in the world.
+          let plane = camera.withPlane(through: p.anchor)
+          let ring = OutlineMath.resample(mask.polygon, scale: upright)
+          let world = ring.compactMap { plane.onPlane($0) }
+          if world.count == ring.count { found[p.key] = world }
+        }
+      } catch {
+        NSLog("[lensi] live SAM failed: %@", error.localizedDescription)
       }
       let ms = (CACurrentMediaTime() - started) * 1000
+      let results = found, encoded = encodeMs
       DispatchQueue.main.async {
+        guard let self else { return }
         self.samBusy = false
         self.samMs = self.samMs == 0 ? ms : self.samMs * 0.8 + ms * 0.2
+        self.samEncodeMs = self.samEncodeMs == 0 ? encoded : self.samEncodeMs * 0.8 + encoded * 0.2
         let now = CACurrentMediaTime()
         if now - self.lastSamLog > 3 {
           self.lastSamLog = now
-          NSLog("[lensi] live SAM %.0f ms a frame, %d outlines", self.samMs, found.count)
+          NSLog("[lensi] live SAM %.0f ms a frame (encoder %.0f ms), %ld of %ld prompts found, thermal %ld",
+                self.samMs, self.samEncodeMs, results.count, prompts.count, ProcessInfo.processInfo.thermalState.rawValue)
         }
-        self.drawLive(found, display: display)
+        guard self.liveSegments else { return }
+        self.takeLive(results, asked: prompts.map(\.key), now: now)
       }
     }
   }
 
-  /// The frame upright, longest side 1024 (SAM's input), as a CGImage.
-  private func liveImage(_ buffer: CVPixelBuffer) -> CGImage? {
-    var image = CIImage(cvPixelBuffer: buffer).oriented(.right)
-    let longest = max(image.extent.width, image.extent.height)
-    if longest > 1024 {
-      let s = 1024 / longest
-      image = image.transformed(by: CGAffineTransform(scaleX: s, y: s))
+  /// The box around `world` (a part's outline) as this camera sees it, a little grown,
+  /// upright 0…1; nil when it's behind the phone, a speck, or most of the picture.
+  private func uprightBox(_ world: [simd_float3], camera: ARCamera, upright: CGSize) -> CGRect? {
+    guard world.count >= 3 else { return nil }
+    let toCamera = camera.transform.inverse
+    var points: [CGPoint] = []
+    for w in world {
+      guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else { return nil }
+      let q = camera.projectPoint(w, orientation: .portrait, viewportSize: upright)
+      points.append(CGPoint(x: q.x / upright.width, y: q.y / upright.height))
     }
-    let e = image.extent
-    return samContext.createCGImage(image, from: e.integral)
+    let r = bounding(points)
+    let grown = r.insetBy(dx: -r.width * 0.1, dy: -r.height * 0.1).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    guard !grown.isNull, grown.width > 0.02, grown.height > 0.02, grown.area < 0.6 else { return nil }
+    return grown
   }
 
-  private func drawLive(_ found: [(key: String, polygon: [CGPoint])], display: CGAffineTransform) {
+  /// SAM's answers for one frame: found shapes are blended into what's shown; asked-for
+  /// ones it didn't find count a miss (two in a row and they go).
+  private func takeLive(_ found: [String: [simd_float3]], asked: [String], now: CFTimeInterval) {
+    for key in asked {
+      if let world = found[key] {
+        if var shape = liveShapes[key] {
+          // Only a recent shape is worth blending into; an old one is just replaced.
+          shape.world = OutlineMath.smooth(now - shape.seen < 0.6 ? shape.world : nil, world)
+          shape.seen = now
+          shape.misses = 0
+          liveShapes[key] = shape
+        } else {
+          let layer = CAShapeLayer()
+          layer.lineJoin = .round
+          layer.isHidden = true
+          // Under the tags.
+          pinLayer.layer.insertSublayer(layer, at: 0)
+          liveShapes[key] = LiveShape(layer: layer, world: world, seen: now)
+        }
+      } else {
+        liveShapes[key]?.misses += 1
+      }
+    }
+    layoutLive()
+  }
+
+  /// Every display frame: each live outline drawn where its part is now. The current step's
+  /// in the lens colour, the rest thin and white; gone once SAM loses it, its tag goes, or
+  /// it hasn't been re-cut for a while.
+  private func layoutLive() {
+    guard !liveShapes.isEmpty else { return }
     let now = CACurrentMediaTime()
+    let toCamera = sceneView.session.currentFrame?.camera.transform.inverse
+    let guiding = pins.values.contains { $0.parentId == Self.guideParent }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    for f in found {
-      let layer: CAShapeLayer
-      if let existing = liveOutlines[f.key]?.layer {
-        layer = existing
-      } else {
-        layer = CAShapeLayer()
-        layer.lineJoin = .round
-        // Under the tags.
-        pinLayer.layer.insertSublayer(layer, at: 0)
+    defer { CATransaction.commit() }
+    for (key, shape) in liveShapes {
+      let pin = pins[key]
+      let gone = key == Self.centreKey ? guiding : pin == nil
+      let age = now - shape.seen
+      if gone || shape.misses >= 2 || age > 1.5 {
+        shape.layer.removeFromSuperlayer()
+        liveShapes[key] = nil
+        continue
+      }
+      guard let toCamera, pin.map({ !$0.label.isHidden && $0.label.pointing == nil }) ?? true else {
+        shape.layer.isHidden = true
+        continue
       }
       let path = UIBezierPath()
-      for (i, p) in f.polygon.enumerated() {
-        let n = CGPoint(x: p.y, y: 1 - p.x).applying(display)
-        let v = zoomed(CGPoint(x: n.x * bounds.width, y: n.y * bounds.height))
+      var behind = false
+      for (i, w) in shape.world.enumerated() {
+        guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else {
+          behind = true
+          break
+        }
+        let q = sceneView.projectPoint(SCNVector3(w.x, w.y, w.z))
+        let v = zoomed(CGPoint(x: CGFloat(q.x), y: CGFloat(q.y)))
         if i == 0 { path.move(to: v) } else { path.addLine(to: v) }
       }
+      guard !behind else {
+        shape.layer.isHidden = true
+        continue
+      }
       path.close()
-      let focused = pins[f.key]?.label.emphasis == .focused
-      let strong = focused || f.key == Self.centreKey
+      let focused = pin?.label.emphasis == .focused
+      let strong = focused || key == Self.centreKey
       let color: UIColor = focused ? accent : .white
-      layer.path = path.cgPath
-      layer.lineWidth = focused ? 2.5 : strong ? 2 : 1.5
-      layer.strokeColor = color.withAlphaComponent(strong ? 1 : 0.75).cgColor
-      layer.fillColor = color.withAlphaComponent(focused ? 0.14 : 0.07).cgColor
-      layer.isHidden = false
-      liveOutlines[f.key] = (layer, now)
+      shape.layer.path = path.cgPath
+      shape.layer.lineWidth = focused ? 2.5 : strong ? 2 : 1.5
+      shape.layer.strokeColor = color.withAlphaComponent(strong ? 1 : 0.75).cgColor
+      shape.layer.fillColor = color.withAlphaComponent(focused ? 0.14 : 0.07).cgColor
+      // Fades if it hasn't been re-cut lately (the part left the frame, or SAM's lost it).
+      shape.layer.opacity = age < 0.8 ? 1 : Float(max(0, 1 - (age - 0.8) / 0.7))
+      shape.layer.isHidden = false
     }
-    // Not seen for a moment (left the frame, or SAM lost it): gone.
-    for (key, entry) in liveOutlines where now - entry.seen > 0.45 {
-      entry.layer.removeFromSuperlayer()
-      liveOutlines[key] = nil
-    }
-    CATransaction.commit()
   }
 
   private func clearLiveOutlines() {
-    for entry in liveOutlines.values { entry.layer.removeFromSuperlayer() }
-    liveOutlines.removeAll()
+    for shape in liveShapes.values { shape.layer.removeFromSuperlayer() }
+    liveShapes.removeAll()
   }
 
   /// A live outline is being kept up for this pin (so its frozen one steps aside).
   private func hasLiveOutline(_ pin: Pin) -> Bool {
-    guard let entry = liveOutlines[pin.id] else { return false }
-    return CACurrentMediaTime() - entry.seen < 0.45
+    guard let shape = liveShapes[pin.id] else { return false }
+    return shape.misses == 0 && CACurrentMediaTime() - shape.seen < 1.5
   }
 
   // MARK: - Zoom
@@ -513,7 +624,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
     }
 
-    if showDetections && !(liveSegments && SAMSegmenter.shared != nil) {
+    if showDetections && !(liveSegments && sam != nil) {
       for t in tracked where t.id != newFocus?.id && t.missed == 0 {
         boxes.append(brackets(t.shown, length: 14))
       }
@@ -539,6 +650,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     focusedId = newFocus?.id
 
     layoutPins()
+    layoutLive()
   }
 
   private func brackets(_ r: CGRect, length: CGFloat) -> UIBezierPath {

@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import CoreML
 import CoreVideo
 import Foundation
@@ -87,6 +88,13 @@ final class SAMSegmenter: @unchecked Sendable {
   private let lock = NSLock()
   private var cache: [String: Prepared] = [:]
   private var recent: [String] = []
+  /// Live camera frames: the GPU context that draws them and the canvas they're drawn into.
+  private lazy var ciContext = CIContext(options: [.useSoftwareRenderer: false, .cacheIntermediates: false])
+  private var liveBuffer: CVPixelBuffer?
+  private static let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
+  /// `padBGRA` as a Core Image color.
+  private static let padColor = CIColor(red: 124 / 255, green: 116 / 255, blue: 104 / 255, alpha: 1, colorSpace: srgb)
+    ?? CIColor(red: 124 / 255, green: 116 / 255, blue: 104 / 255)
 
   private init?() {
     guard let encoderURL = SAMSegmenter.modelURL("LensiSAMEncoder"),
@@ -118,8 +126,7 @@ final class SAMSegmenter: @unchecked Sendable {
   // MARK: - API
 
   /// Runs the encoder once per image (cache by an id string). `image` must already be upright;
-  /// an id that is still cached is not encoded again, unless `force` (the live camera reuses
-  /// one id for every frame).
+  /// an id that is still cached is not encoded again, unless `force`.
   func prepare(image: CGImage, id: String, force: Bool = false) throws {
     lock.lock()
     defer { lock.unlock() }
@@ -129,11 +136,47 @@ final class SAMSegmenter: @unchecked Sendable {
     }
     let w = image.width, h = image.height
     guard w > 0, h > 0 else { throw SAMError.badImage }
-    // SAM's ResizeLongestSide.get_preprocess_shape.
-    let scale = Double(SAMSegmenter.side) / Double(max(w, h))
-    let resizedWidth = Int(Double(w) * scale + 0.5)
-    let resizedHeight = Int(Double(h) * scale + 0.5)
+    let (resizedWidth, resizedHeight) = SAMSegmenter.resized(Double(w), Double(h))
     let canvas = try makeCanvas(image, width: resizedWidth, height: resizedHeight)
+    try encode(canvas, resizedWidth: resizedWidth, resizedHeight: resizedHeight, id: id)
+  }
+
+  /// The live camera: a frame straight from its pixel buffer (ARKit's YCbCr), turned upright by
+  /// `orientation` and drawn into the encoder's canvas on the GPU. Same canvas as
+  /// `prepare(image:)` on the same picture, without the CGImage round trip or a new 4 MB buffer
+  /// every frame. Always encodes.
+  func prepare(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, id: String) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    let upright = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+    let e = upright.extent
+    guard e.width > 0, e.height > 0 else { throw SAMError.badImage }
+    let (resizedWidth, resizedHeight) = SAMSegmenter.resized(Double(e.width), Double(e.height))
+    let side = CGFloat(SAMSegmenter.side)
+    let sx = CGFloat(resizedWidth) / e.width, sy = CGFloat(resizedHeight) / e.height
+    // Lanczos, like the photo path's high-quality draw (edges clamped so the border doesn't
+    // darken); then into the top-left corner: Core Image's origin is bottom-left, and a pixel
+    // buffer's first row is the top.
+    let scaled = upright.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+      .clampedToExtent()
+      .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: sy, kCIInputAspectRatioKey: sx / sy])
+    let top = CGRect(x: 0, y: side - CGFloat(resizedHeight), width: CGFloat(resizedWidth), height: CGFloat(resizedHeight))
+    let placed = scaled.transformed(by: CGAffineTransform(translationX: 0, y: side - CGFloat(resizedHeight))).cropped(to: top)
+    let canvasRect = CGRect(x: 0, y: 0, width: side, height: side)
+    let picture = placed.composited(over: CIImage(color: SAMSegmenter.padColor).cropped(to: canvasRect))
+    let canvas = try liveCanvas()
+    ciContext.render(picture, to: canvas, bounds: canvasRect, colorSpace: SAMSegmenter.srgb)
+    try encode(canvas, resizedWidth: resizedWidth, resizedHeight: resizedHeight, id: id)
+  }
+
+  /// SAM's ResizeLongestSide.get_preprocess_shape.
+  private static func resized(_ w: Double, _ h: Double) -> (Int, Int) {
+    let scale = Double(SAMSegmenter.side) / max(w, h)
+    return (Int(w * scale + 0.5), Int(h * scale + 0.5))
+  }
+
+  /// Encodes a prepared 1024x1024 canvas and caches its embeddings. Call with `lock` held.
+  private func encode(_ canvas: CVPixelBuffer, resizedWidth: Int, resizedHeight: Int, id: String) throws {
     let input = try MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(pixelBuffer: canvas)])
     let output = try encoder.prediction(from: input)
     guard let embeddings = output.featureValue(for: "image_embeddings")?.multiArrayValue else {
@@ -144,6 +187,25 @@ final class SAMSegmenter: @unchecked Sendable {
     while recent.count > SAMSegmenter.cacheLimit {
       cache[recent.removeFirst()] = nil
     }
+  }
+
+  /// The one canvas the live camera draws every frame into (calls are serialized by `lock`,
+  /// and the encoder is done with it when `prediction` returns).
+  private func liveCanvas() throws -> CVPixelBuffer {
+    if let reused = liveBuffer { return reused }
+    let side = SAMSegmenter.side
+    let attrs: [CFString: Any] = [
+      kCVPixelBufferCGImageCompatibilityKey: true,
+      kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+      kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
+      kCVPixelBufferMetalCompatibilityKey: true,
+    ]
+    var created: CVPixelBuffer?
+    guard CVPixelBufferCreate(kCFAllocatorDefault, side, side, kCVPixelFormatType_32BGRA,
+                              attrs as CFDictionary, &created) == kCVReturnSuccess,
+          let buffer = created else { throw SAMError.pixelBuffer }
+    liveBuffer = buffer
+    return buffer
   }
 
   /// points/box are normalized 0...1 in the image's own (upright) space, top-left origin.

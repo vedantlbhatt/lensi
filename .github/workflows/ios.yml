@@ -64,8 +64,9 @@ jobs:
           done
           cp -R out/models/*.mlmodelc models-all/
           cp -R app/modules/lensi-ar/ios/Models/yolo11n.mlmodelc models-all/
-          swiftc -O -o eyes tools/eyes/main.swift \
-            app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift app/modules/lensi-ar/ios/SAMSegmenter.swift
+          swiftc -O -o eyes tools/eyes/main.swift tools/eyes/live.swift \
+            app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift \
+            app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift
           LENSI_MODELS_DIR=models-all ./eyes eyes-in out/eyes 2>&1 | tee out/eyes.txt
       - name: Verify with Core ML (CPU)
         run: python tools/sam/verify_coreml.py --models build/sam --compute-units CPU_ONLY 2>&1 | tee out/verify-cpu.txt
