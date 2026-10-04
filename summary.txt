@@ -1,0 +1,41 @@
+workers: 150 frames 640x360, 12 things, SAM encode 184 ms
+   0 person from frame   0, drawn 150 frames,  32 cuts, 0 refused, still missing at the end: no
+   1 person from frame   0, drawn 150 frames,  31 cuts, 0 refused, still missing at the end: no
+   2 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   3 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   4 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   5 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   6 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   7 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   8 - from frame   0, drawn 150 frames,  37 cuts, 9 refused, still missing at the end: no
+   9 - from frame   0, drawn 150 frames,  37 cuts, 7 refused, still missing at the end: yes
+  10 - from frame  50, drawn 100 frames,  22 cuts, 1 refused, still missing at the end: no
+  11 - from frame  50, drawn 100 frames,  25 cuts, 0 refused, still missing at the end: no
+wrote /Users/runner/work/lensi/lensi/out/strip/workers.json (1725 KB)
+aisle: 150 frames 640x360, 12 things, SAM encode 159 ms
+   0 person from frame   0, drawn 150 frames,  37 cuts, 23 refused, still missing at the end: yes
+   1 person from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   2 person from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   3 person from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   4 bowl from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   5 bowl from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   6 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   7 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   8 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+   9 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+  10 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+  11 - from frame   0, drawn 150 frames,  37 cuts, 0 refused, still missing at the end: no
+wrote /Users/runner/work/lensi/lensi/out/strip/aisle.json (1962 KB)
+bottles: 121 frames 640x360, 11 things, SAM encode 159 ms
+   0 bottle from frame   0, drawn 121 frames,  30 cuts, 0 refused, still missing at the end: no
+   1 bottle from frame   0, drawn 121 frames,  27 cuts, 0 refused, still missing at the end: no
+   2 - from frame   0, drawn 121 frames,  30 cuts, 0 refused, still missing at the end: no
+   3 - from frame   0, drawn 121 frames,  30 cuts, 11 refused, still missing at the end: no
+   4 - from frame   0, drawn 121 frames,  30 cuts, 0 refused, still missing at the end: no
+   5 person from frame  40, drawn  81 frames,   1 cuts, 0 refused, still missing at the end: no
+   6 bottle from frame  40, drawn  81 frames,  17 cuts, 0 refused, still missing at the end: no
+   7 - from frame  40, drawn  81 frames,   1 cuts, 0 refused, still missing at the end: no
+   8 - from frame  40, drawn  81 frames,   0 cuts, 0 refused, still missing at the end: no
+   9 person from frame  80, drawn  41 frames,  10 cuts, 10 refused, still missing at the end: yes
+  10 person from frame  80, drawn  41 frames,   6 cuts, 0 refused, still missing at the end: no
+wrote /Users/runner/work/lensi/lensi/out/strip/bottles.json (1088 KB)
