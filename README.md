@@ -55,7 +55,7 @@ npm install
 npx expo run:ios --device
 ```
 
-- **Simulator:** `npx expo run:ios`. The simulator has no ARKit, so the app shows a *virtual camera* over public demo scenes (swipe sideways to switch). Vision and SAM still run on the real stills.
+- **Simulator:** `npx expo run:ios`. The simulator has no ARKit, so the app shows a *virtual camera* over public demo scenes (swipe sideways to switch). Vision and SAM still run on the real stills. Three scenes are moving footage (`workers`, `aisle`, `bottles`: Intel's CC BY sample videos), so the strip can be tried on things that move. What the strip offers in them was found and followed frame by frame by the app's own Swift ([`tools/strip`](tools/strip/main.swift), on CI), and a pin rides its thing's track.
 - **Web preview (UI and motion only):** `npm run web`. It uses the virtual camera, scripted model answers and simulated speech.
 - **Scripted runs:** `lensi:///?demo=truck&lens=guide&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F` captures a demo scene and runs it. Add `export=1` to also render the share image, `tap=0.3,0.33` to tap the print there once it's labelled, `brain=vision` to force the eyes-only brain, or `file=clip.mp4` (from the app's Documents) with `moment=0` to read a video and then a second keyframe. On the live camera, `scene=truck` picks the Simulator's scene, `guide=<task>` starts a guided job as if it were said, `scrub=0.05,0.35,0.6` lands a finger on the strip, slides through those points (0–1 across it) and holds on the last, which pins that thing, and `zoom=2.7` turns the zoom dial there and leaves it up. CI hands the same URL over at launch (`SIMCTL_CHILD_LENSI_URL=… xcrun simctl launch …`), which avoids the "Open in Lensi?" prompt that `simctl openurl` can raise.
 
