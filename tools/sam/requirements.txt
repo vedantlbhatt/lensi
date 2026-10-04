@@ -1,0 +1,10 @@
+# Conversion + evaluation (Linux or macOS, Python 3.11). coremltools 9.0 is tested up to torch 2.7.0.
+# On Linux the PyPI torch wheel pulls CUDA libraries (~3 GB); they are unused but harmless.
+torch==2.7.0
+torchvision==0.22.0
+coremltools==9.0
+timm==1.0.15  # MobileSAM's TinyViT imports timm.models.layers
+numpy>=1.26,<2.3
+pillow>=10.1
+opencv-python-headless==4.11.0.86
+# verify_coreml.py (macOS) only needs: coremltools==9.0 numpy pillow

@@ -7,3 +7,5 @@ app/ios/
 app/android/
 app/.expo/
 server/dist/
+
+__pycache__/

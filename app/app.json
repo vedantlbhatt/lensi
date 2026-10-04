@@ -12,7 +12,7 @@
       "bundleIdentifier": "com.vedantbhatt.lensi",
       "appleTeamId": "A4YA8NU8Y8",
       "infoPlist": {
-        "NSCameraUsageDescription": "Lensi uses the camera to recognize and annotate what you point at.",
+        "NSCameraUsageDescription": "Lensi uses the camera to see and annotate what you point it at.",
         "UIRequiredDeviceCapabilities": [
           "arkit"
         ],
@@ -20,8 +20,12 @@
           "NSAllowsLocalNetworking": true,
           "NSAllowsArbitraryLoads": true
         },
-        "NSLocalNetworkUsageDescription": "Lensi talks to your development server on the local network."
-      }
+        "NSLocalNetworkUsageDescription": "Lensi talks to your development server on the local network.",
+        "NSMicrophoneUsageDescription": "Lensi listens while you hold the mic so you can ask about what the camera sees, and records sound with videos.",
+        "NSSpeechRecognitionUsageDescription": "Lensi turns what you ask into text on this iPhone.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "config": {}
     },
     "plugins": [
       [
@@ -32,10 +36,43 @@
           }
         }
       ],
-      "expo-router"
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Lensi opens photos and videos you pick so it can annotate them.",
+          "cameraPermission": "Lensi uses the camera to see and annotate what you point it at.",
+          "microphonePermission": "Lensi listens while you hold the mic so you can ask about what the camera sees, and records sound with videos."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Lensi saves annotated images to your library when you ask it to.",
+          "savePhotosPermission": "Lensi saves annotated images to your library when you ask it to.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      "expo-video",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B0B0C",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 120
+        }
+      ],
+      "./plugins/withSceneLifecycle",
+      "./plugins/withOTA"
     ],
     "experiments": {
       "typedRoutes": false
+    },
+    "backgroundColor": "#0B0B0C",
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "backgroundColor": "#0B0B0C"
     }
   }
 }

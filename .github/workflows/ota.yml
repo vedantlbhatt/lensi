@@ -1,0 +1,64 @@
+name: ota
+
+# Over the air: each push's JavaScript, published for iPhones already running a build of the
+# same native code (src/lib/ota.ts fetches it at launch and restarts into it). A change to
+# native code (Swift, native packages, the app config) is a new runtime, which only a new
+# build picks up (iphone.yml). Files go on the `ota` branch, served by raw.githubusercontent.com.
+on:
+  push:
+    branches: [main, camera-first]
+    paths:
+      - 'app/**'
+      - 'tools/ota/**'
+      - 'tools/sam/**'
+      - '.github/workflows/ota.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish the JavaScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # One writer to the ota branch at a time (iphone.yml writes its install manifest there too).
+    concurrency:
+      group: ota-branch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: npm ci
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+      - name: Bundle for iOS
+        working-directory: app
+        env:
+          EXPO_NO_TELEMETRY: 1
+          CI: 1
+          EXPO_PUBLIC_LENSI_UPDATE: ${{ github.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/export"
+          npx expo export:embed --platform ios --dev false --entry-file index.js --minify true \
+            --bundle-output "$RUNNER_TEMP/export/main.jsbundle" --assets-dest "$RUNNER_TEMP/export"
+      - name: Publish on the ota branch
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/site"
+          if git ls-remote --exit-code --heads origin ota >/dev/null; then
+            git fetch -q --depth 1 origin ota:refs/remotes/origin/ota
+            git archive refs/remotes/origin/ota | tar -x -C "$RUNNER_TEMP/site"
+          fi
+          python3 tools/ota/publish.py "$RUNNER_TEMP/export" "$RUNNER_TEMP/site" "$GITHUB_SHA" "$(git log -1 --format=%s)" | tee -a "$GITHUB_STEP_SUMMARY"
+          cd "$RUNNER_TEMP/site"
+          git init -q -b ota
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Over the air: ${GITHUB_SHA::7}"
+          # Generated, and only the newest of each runtime matters: one commit, replaced each time.
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ota

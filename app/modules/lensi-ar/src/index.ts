@@ -1,40 +1,35 @@
-import { requireNativeModule, requireNativeView } from 'expo';
-import type { Ref } from 'react';
-import type { ViewProps } from 'react-native';
+import { NativeModule, requireNativeModule, requireNativeView } from 'expo';
 
-export type SelectEvent = {
-  id: string;
-  /** On-device YOLO label, if the tap landed on a detected object. */
-  label: string | null;
-  confidence: number;
-  /** Base64 JPEG of the subject crop (longest side ≤ 640). */
-  image: string;
-};
+import type { LensiAREvents, LensiARModuleShape, LensiARViewProps } from './types';
 
-export type TrackingEvent = {
-  state: 'normal' | 'limited' | 'unavailable';
-  reason: '' | 'excessiveMotion' | 'insufficientFeatures' | 'initializing' | 'relocalizing' | 'unknown';
-};
+export * from './types';
+export type { DemoScene, VideoThing, VideoTracks } from './demo';
+export { DEMO_SCENES, sceneForUri } from './demo';
 
-export type LensiARViewRef = {
-  capture(): Promise<void>;
-  setPin(id: string, title: string, color?: string | null): Promise<void>;
-  /** x and y are 0…1 inside the crop sent with onSelect. */
-  addCallout(parentId: string, id: string, x: number, y: number, text: string): Promise<void>;
-  removePin(id: string): Promise<void>;
-  clearPins(): Promise<void>;
-};
+declare class LensiARNative extends NativeModule<LensiAREvents> implements LensiARModuleShape {
+  isSupported: boolean;
+  launchURL?: string | null;
+  runtime?: string | null;
+  analyze: LensiARModuleShape['analyze'];
+  segment: LensiARModuleShape['segment'];
+  intelligenceStatus: LensiARModuleShape['intelligenceStatus'];
+  intelligencePrewarm: LensiARModuleShape['intelligencePrewarm'];
+  intelligenceStart: LensiARModuleShape['intelligenceStart'];
+  intelligenceCancel: LensiARModuleShape['intelligenceCancel'];
+  speechRequestPermission: LensiARModuleShape['speechRequestPermission'];
+  speechStart: LensiARModuleShape['speechStart'];
+  speechStop: LensiARModuleShape['speechStop'];
+  setKeepAwake: LensiARModuleShape['setKeepAwake'];
+}
 
-export type LensiARViewProps = ViewProps & {
-  ref?: Ref<LensiARViewRef>;
-  showDetections?: boolean;
-  onSelect?: (e: { nativeEvent: SelectEvent }) => void;
-  onFocusChange?: (e: { nativeEvent: { label: string | null } }) => void;
-  onTrackingChange?: (e: { nativeEvent: TrackingEvent }) => void;
-  onPinTap?: (e: { nativeEvent: { id: string } }) => void;
-};
-
-const LensiAR = requireNativeModule<{ isSupported: boolean }>('LensiAR');
-
+export const LensiAR = requireNativeModule<LensiARNative>('LensiAR');
 export const isSupported: boolean = LensiAR.isSupported;
+/** No ARKit (e.g. the Simulator): the app shows a virtual camera over the demo scenes. */
+export const isVirtual = !LensiAR.isSupported;
 export const LensiARView = requireNativeView<LensiARViewProps>('LensiAR');
+
+/** Web preview hook; the real recogniser hears the real question. */
+export function setDemoQuestion(_q: string) {}
+
+/** Web preview hook (scripted hands-free turns); a no-op on a device. */
+export function setDemoTalk(_lines: string[]) {}

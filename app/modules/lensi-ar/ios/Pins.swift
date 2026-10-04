@@ -16,31 +16,56 @@ extension UIColor {
   }
 }
 
-/// The pill that floats over an anchored point. Title only: the detail lives
-/// in the app's sheet so the camera view stays readable.
+/// The tag that sits on an anchored point. Title only: the detail lives in the
+/// app's sheet so the camera view stays readable.
 final class PinLabel: UIView {
+  /// Live guide: the current step's part stands out; the others step back.
+  enum Emphasis { case normal, focused, dimmed }
+
   private let label = UILabel()
-  private let dots = UILabel()
+  /// Live guide, the part out of view: an arrow on the tag points the way to it.
+  private let arrow = UIImageView(image: UIImage(systemName: "arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .heavy)))
   var color: UIColor { didSet { apply() } }
+  var emphasis: Emphasis = .normal { didSet { if emphasis != oldValue { apply() } } }
   let isCallout: Bool
+
+  /// Screen-space direction to the part, in radians (0 = right, π/2 = down);
+  /// nil while the part is in view.
+  var pointing: CGFloat? {
+    didSet {
+      if (pointing == nil) != (oldValue == nil) { sizeToFitContent() }
+      if let a = pointing { arrow.transform = CGAffineTransform(rotationAngle: a + .pi / 2) }
+    }
+  }
 
   init(text: String, color: UIColor, isCallout: Bool) {
     self.color = color
     self.isCallout = isCallout
     super.init(frame: .zero)
-    layer.cornerRadius = isCallout ? 11 : 15
+    layer.cornerRadius = isCallout ? 7 : 10
     layer.cornerCurve = .continuous
-    label.font = .systemFont(ofSize: isCallout ? 13 : 16, weight: isCallout ? .medium : .semibold)
-    label.textColor = .white
+    layer.shadowColor = UIColor.black.cgColor
+    layer.shadowOpacity = 0.3
+    layer.shadowRadius = 8
+    layer.shadowOffset = CGSize(width: 0, height: 3)
+    label.font = isCallout ? UIFont.systemFont(ofSize: 13, weight: .semibold) : UIFont.systemFont(ofSize: 16, weight: .bold)
     label.text = text
     addSubview(label)
+    arrow.tintColor = .black
+    arrow.contentMode = .center
+    arrow.isHidden = true
+    addSubview(arrow)
     apply()
   }
 
   required init?(coder: NSCoder) { fatalError() }
 
+  /// Titles sit on the lens pen; callouts are white tags (the focused one on
+  /// the pen). Text is always black.
   private func apply() {
-    backgroundColor = isCallout ? UIColor(white: 0.08, alpha: 0.82) : color
+    backgroundColor = !isCallout || emphasis == .focused ? color : .white
+    label.textColor = .black
+    alpha = emphasis == .dimmed ? 0.55 : 1
   }
 
   var text: String {
@@ -56,12 +81,56 @@ final class PinLabel: UIView {
     let pad: CGFloat = isCallout ? 9 : 12
     let size = label.sizeThatFits(CGSize(width: 220, height: 40))
     let w = min(size.width, 220)
-    bounds = CGRect(x: 0, y: 0, width: w + pad * 2, height: isCallout ? 22 : 30)
-    label.frame = CGRect(x: pad, y: 0, width: w, height: bounds.height)
+    let h: CGFloat = isCallout ? 26 : 32
+    // Room for the arrow ahead of the name while it points off screen.
+    let lead: CGFloat = pointing == nil ? 0 : 17
+    bounds = CGRect(x: 0, y: 0, width: w + pad * 2 + lead, height: h)
+    arrow.isHidden = pointing == nil
+    arrow.bounds = CGRect(x: 0, y: 0, width: 14, height: 14)
+    arrow.center = CGPoint(x: pad + 6, y: h / 2)
+    label.frame = CGRect(x: pad + lead, y: 0, width: w, height: h)
   }
 }
 
-/// A world-anchored annotation: a dot on the thing, a leader line and a pill.
+/// A part's outline over a faint dark halo, so it still reads where the part is as pale as
+/// the line (a white outline on a white door). The layer itself draws the halo; `line`, a
+/// sublayer, draws the outline on top.
+final class OutlineLayer: CAShapeLayer {
+  let line = CAShapeLayer()
+
+  override init() {
+    super.init()
+    fillColor = nil
+    strokeColor = UIColor.black.withAlphaComponent(0.32).cgColor
+    lineJoin = .round
+    line.lineJoin = .round
+    addSublayer(line)
+  }
+
+  /// Core Animation's copies (presentation layers).
+  override init(layer: Any) {
+    super.init(layer: layer)
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is not used")
+  }
+
+  func setOutline(_ shape: CGPath) {
+    path = shape
+    line.path = shape
+  }
+
+  /// The current step's part in the lens colour; the rest thin and white.
+  func style(_ color: UIColor, width: CGFloat, stroke: CGFloat, fill: CGFloat) {
+    lineWidth = width + 2.5
+    line.lineWidth = width
+    line.strokeColor = color.withAlphaComponent(stroke).cgColor
+    line.fillColor = color.withAlphaComponent(fill).cgColor
+  }
+}
+
+/// A world-anchored annotation: a tag on the thing, and its outline when it has one.
 final class Pin {
   let id: String
   let parentId: String?
@@ -71,8 +140,14 @@ final class Pin {
   let line = CAShapeLayer()
   /// Segmentation outline captured at creation, in view space.
   var outline: CAShapeLayer?
+  /// Live guide: the part's shape laid in the world, and the layer that draws
+  /// it (only while its step is up).
+  var guideOutline: [simd_float3] = []
+  var guideShape: OutlineLayer?
   var outlineScreenOrigin: CGPoint = .zero
   var outlineDistance: Float = 1
+  /// The zoom it was drawn at; it scales with the zoom from there.
+  var outlineZoom: CGFloat = 1
   var side: CGFloat = 1
 
   init(id: String, parentId: String?, world: simd_float3, text: String, color: UIColor) {
@@ -106,6 +181,7 @@ final class Pin {
     dot.isHidden = hidden
     line.isHidden = hidden
     outline?.isHidden = hidden
+    if hidden { guideShape?.isHidden = true }
   }
 
   func removeFromSuperview() {
@@ -113,12 +189,14 @@ final class Pin {
     dot.removeFromSuperlayer()
     line.removeFromSuperlayer()
     outline?.removeFromSuperlayer()
+    guideShape?.removeFromSuperlayer()
   }
 
+  /// Fades in from slightly small and stops: no spring, no overshoot.
   func popIn() {
-    label.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+    label.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
     label.alpha = 0
-    UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.62, initialSpringVelocity: 0.8) {
+    UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
       self.label.transform = .identity
       self.label.alpha = 1
     }

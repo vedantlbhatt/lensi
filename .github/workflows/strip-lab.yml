@@ -1,0 +1,51 @@
+name: strip-lab
+
+# The strip on moving footage (tools/strip): runs the app's own discovery and pin-following
+# code over the virtual camera's demo videos (app/assets/demo/video) and pushes what each thing's
+# outline is in every frame to the ci-strip branch, which the virtual camera plays under its
+# strip. Push to the strip-lab branch to run it.
+on:
+  push:
+    branches: [strip-lab]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  strip:
+    name: Follow everything the strip finds
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Frames of the demo videos
+        run: |
+          python3 -m pip install --quiet --break-system-packages opencv-python-headless 2>/dev/null || python3 -m pip install --quiet opencv-python-headless
+          for v in workers aisle bottles; do
+            python3 tools/track/frames.py "app/assets/demo/video/$v.mp4" "footage/$v" 0 100000
+            echo "$v: $(ls footage/$v | wc -l) frames"
+          done
+      - name: Build tools/strip
+        run: |
+          swiftc -O -o strip tools/strip/main.swift \
+            app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
+            app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/LiveWorld.swift app/modules/lensi-ar/ios/LiveSeg.swift \
+            app/modules/lensi-ar/ios/Detector.swift
+      - name: Follow what the strip would find
+        run: |
+          set -o pipefail
+          mkdir -p out/strip
+          for v in workers aisle bottles; do
+            LENSI_MODELS_DIR=app/modules/lensi-ar/ios/Models ./strip "footage/$v" "out/strip/$v.json" 15 4 2>&1 | tee -a out/strip/summary.txt
+          done
+      - name: Push to ci-strip
+        if: always()
+        run: |
+          [ -d out/strip ] || exit 0
+          cd out/strip
+          git init -q -b ci-strip
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "strip-lab ${GITHUB_SHA::7}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-strip

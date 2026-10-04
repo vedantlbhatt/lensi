@@ -13,21 +13,38 @@ struct Detection {
 /// Runs everything that has to be instant on the phone: YOLO object detection
 /// on the Neural Engine and subject segmentation for the tap highlight.
 final class Detector {
+  /// The Neural Engine and GPU on a phone; CPU only in the Simulator, where a
+  /// virtualised GPU can't compile Core ML networks ("On-device compilation
+  /// within a VM only supports CPU").
+  static var computeUnits: MLComputeUnits {
+    #if targetEnvironment(simulator)
+    return .cpuOnly
+    #else
+    return .all
+    #endif
+  }
+
   private var yolo: VNCoreMLRequest?
   let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
   init() {
     guard let url = Detector.modelURL() else { return }
     let config = MLModelConfiguration()
-    config.computeUnits = .all
+    config.computeUnits = Detector.computeUnits
     guard let model = try? MLModel(contentsOf: url, configuration: config),
           let vnModel = try? VNCoreMLModel(for: model) else { return }
     let request = VNCoreMLRequest(model: vnModel)
-    request.imageCropAndScaleOption = .scaleFill
+    // Letterbox, as YOLO was trained: stretching a 16:9 frame into the square input
+    // made a row of water bottles 1.8x thinner, and the detector called them knives.
+    request.imageCropAndScaleOption = .scaleFit
     yolo = request
   }
 
   private static func modelURL() -> URL? {
+    if let dir = ProcessInfo.processInfo.environment["LENSI_MODELS_DIR"] {
+      let url = URL(fileURLWithPath: dir).appendingPathComponent("yolo11n.mlmodelc")
+      if FileManager.default.fileExists(atPath: url.path) { return url }
+    }
     // Static frameworks copy resource bundles into the main app bundle.
     for host in [Bundle.main, Bundle(for: Detector.self)] {
       if let bundleURL = host.url(forResource: "LensiARModels", withExtension: "bundle"),
@@ -43,6 +60,18 @@ final class Detector {
     guard let request = yolo else { return [] }
     let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .right)
     do { try handler.perform([request]) } catch { return [] }
+    return Detector.detections(request)
+  }
+
+  /// Same detector on an already-upright still image.
+  func detect(cgImage: CGImage) -> [Detection] {
+    guard let request = yolo else { return [] }
+    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+    do { try handler.perform([request]) } catch { return [] }
+    return Detector.detections(request)
+  }
+
+  private static func detections(_ request: VNCoreMLRequest) -> [Detection] {
     let results = request.results as? [VNRecognizedObjectObservation] ?? []
     return results.compactMap { obs in
       guard let top = obs.labels.first, top.confidence >= 0.35 else { return nil }
