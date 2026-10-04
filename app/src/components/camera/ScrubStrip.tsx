@@ -183,12 +183,12 @@ export function ScrubStrip({
     const at = (f: number) => PAD + f * (width - 2 * PAD);
     const steps: { t: number; run: () => void }[] = [{ t: 0, run: () => begin(at(demo[0])) }];
     let t = 900;
-    for (const f of demo.slice(1)) {
-      // Slide there over a third of a second.
-      const from = demo[steps.length - 1] ?? demo[0];
+    demo.slice(1).forEach((f, j) => {
+      // Slide there from the stop before, over a third of a second.
+      const from = demo[j];
       for (let k = 1; k <= 8; k++) steps.push({ t: t + k * 40, run: () => move(at(from + ((f - from) * k) / 8)) });
       t += 700;
-    }
+    });
     steps.push({ t: t + HOLD_MS + 900, run: end });
     const timers = steps.map((x) => setTimeout(x.run, 600 + x.t));
     return () => timers.forEach(clearTimeout);

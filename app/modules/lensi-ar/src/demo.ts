@@ -3,6 +3,8 @@
 // OpenCV samples, Apache-2.0), cropped to a portrait camera frame. Outlines
 // were traced with GrabCut; the scripts stand in for a model on the web only.
 
+import { DEMO_VIDEO } from './demoVideos';
+
 type P = [number, number];
 type Outline = { size: [number, number]; box: [number, number, number, number]; polygon: P[] };
 
@@ -13,6 +15,15 @@ const OUTLINES: Record<string, Outline> = {
   groceries: { size: [600, 800], box: [0.3356, 0.27, 0.6533, 0.37], polygon: [[0.9511, 0.2717], [0.82, 0.2733], [0.8111, 0.3317], [0.7556, 0.3533], [0.7022, 0.355], [0.6644, 0.3383], [0.5422, 0.335], [0.5267, 0.3783], [0.3489, 0.3733], [0.3533, 0.4533], [0.3356, 0.5783], [0.3511, 0.6317], [0.4667, 0.6383], [0.4956, 0.6083], [0.5156, 0.6083], [0.5511, 0.6367], [0.6756, 0.6283], [0.6822, 0.6], [0.7822, 0.6333], [0.9178, 0.6283], [0.9711, 0.59], [0.9867, 0.365]] },
   fruits: { size: [720, 960], box: [0.0, 0.07, 0.7311, 0.9], polygon: [[0.0, 0.07], [0.0, 0.6683], [0.0467, 0.715], [0.0689, 0.8383], [0.18, 0.9167], [0.2778, 0.9583], [0.5533, 0.965], [0.6133, 0.9167], [0.6822, 0.8917], [0.66, 0.8083], [0.7289, 0.6833], [0.6244, 0.4333], [0.6311, 0.39], [0.5756, 0.3333], [0.5111, 0.1333], [0.4756, 0.0883], [0.32, 0.11], [0.2956, 0.1433], [0.2, 0.185], [0.1267, 0.1567], [0.0467, 0.07]] },
 };
+
+/**
+ * A thing tools/strip followed through a demo video with the app's own code (tools/strip/pack.py
+ * packs it): from frame `start` on, its outline in every frame, `points` uint16 x,y pairs a
+ * frame (0-65535 across the picture), base64. `label` is YOLO's name for it, when it's one of
+ * YOLO's things.
+ */
+export type VideoThing = { label: string | null; start: number; data: string };
+export type VideoTracks = { clip: string; fps: number; frames: number; size: [number, number]; every: number; points: number; things: VideoThing[] };
 
 export type DemoScene = {
   key: string;
@@ -36,7 +47,33 @@ export type DemoScene = {
     question: string;
     suggestions: string[];
   };
+  /**
+   * A moving scene: the clip (15 fps, played on a loop), and everything the strip finds in it,
+   * followed frame by frame by the app's own code (tools/strip; null until it has run).
+   */
+  video?: { source: number; tracks: VideoTracks | null };
 };
+
+/** A video scene's whole picture as its outline (nothing in particular is the subject). */
+const WHOLE: Outline = { size: [640, 360], box: [0, 0, 1, 1], polygon: [[0, 0], [1, 0], [1, 1], [0, 1]] };
+
+/** Footage: Intel IoT Devkit sample videos (CC BY 4.0), cut to 10 s at 640x360, 15 fps. */
+function videoScene(key: string, caption: string, title: string, source: number, poster: number, tracks: VideoTracks | null, labels: string[]): DemoScene {
+  return {
+    key,
+    caption,
+    asset: poster,
+    width: 640,
+    height: 360,
+    outline: WHOLE,
+    parts: [],
+    text: [],
+    objects: [],
+    labels,
+    script: { title, summary: '', callouts: [], facts: [], steps: [], question: `What's in the ${title.toLowerCase()}?`, suggestions: [] },
+    video: { source, tracks },
+  };
+}
 
 export const DEMO_SCENES: DemoScene[] = [
   {
@@ -218,6 +255,13 @@ export const DEMO_SCENES: DemoScene[] = [
     },
   },
 ];
+
+// Moving scenes, for the strip: a finger slides between things that move and pins one.
+DEMO_SCENES.push(
+  videoScene('workers', 'Warehouse floor, moving', 'Warehouse floor', DEMO_VIDEO.workers, require('../../../assets/demo/video/workers.jpg'), require('../../../assets/demo/video/workers.tracks.json'), ['warehouse', 'person', 'safety vest']),
+  videoScene('aisle', 'A store aisle, moving', 'Store aisle', DEMO_VIDEO.aisle, require('../../../assets/demo/video/aisle.jpg'), require('../../../assets/demo/video/aisle.tracks.json'), ['store', 'person', 'shelf']),
+  videoScene('bottles', 'Bottles being moved', 'Bottles', DEMO_VIDEO.bottles, require('../../../assets/demo/video/bottles.jpg'), require('../../../assets/demo/video/bottles.tracks.json'), ['bottle', 'water', 'hand']),
+);
 
 export function sceneForUri(uri: string): DemoScene | null {
   const u = uri.toLowerCase();

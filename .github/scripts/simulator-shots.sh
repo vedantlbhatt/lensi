@@ -127,6 +127,10 @@ scenario 10-live-guide 40 "lensi:///?scene=truck&guide=How%20do%20I%20check%20th
 # middle, holds still for 1.5 s and lets go; the thing it stopped on stays pinned (the
 # Simulator's camera picks among the scene's real SAM shapes; a phone runs SAM live).
 scenario 10c-slide-to-pin 16 "lensi:///?scene=cars&scrub=0.05,0.35,0.6"
+# The same on moving footage: the store-aisle clip plays under the strip, which offers what
+# tools/strip followed through it with the app's own Swift; the person held on stays pinned
+# while they walk.
+scenario 10f-slide-to-pin-video 18 "lensi:///?scene=aisle&scrub=0.05,0.6,0.88"
 # The zoom dial: turned to 2.7x and left up, so the shot shows the dial itself.
 scenario 10d-zoom-dial 12 "lensi:///?scene=truck&zoom=2.7"
 # Over the air, the whole path: this build fetches the JavaScript ota.yml published for its

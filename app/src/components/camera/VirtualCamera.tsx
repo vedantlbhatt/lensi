@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import Animated, {
@@ -14,7 +15,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { DEMO_SCENES, setDemoQuestion, type DemoScene, type ZoomRange } from '../../../modules/lensi-ar/src';
+import { DEMO_SCENES, setDemoQuestion, type DemoScene, type VideoTracks, type ZoomRange } from '../../../modules/lensi-ar/src';
 import { boxToView, centroid, fitRect, pointInPolygon, polygonIoU, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
 import type { Pt } from '../../lib/types';
@@ -26,11 +27,76 @@ import type { CameraHandle, VirtualGuidePins } from './CameraSurface';
 
 export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom' | 'scrub'>;
 
-/** Something the strip can pick on a demo scene, in scene coordinates (0-1). */
-type Thing = { label: string; polygon: Pt[] };
+/**
+ * Something the strip can pick on a demo scene, in scene coordinates (0-1). On a video scene it's
+ * one of the tracked things (`track`), and its outline is wherever that is in the frame showing.
+ */
+type Thing = { label: string; polygon: Pt[]; track?: number };
 type Pinned = Thing & { id: string };
 /** The strip while a finger is on it: the things it found, the highlighted one, the ones pinned this time. */
 type Strip = { things: Thing[]; index: number; pinned: number[] };
+
+/** YOLO's name, as the strip shows it. */
+const nameOf = (label: string | null) => (label ? label.charAt(0).toUpperCase() + label.slice(1) : null);
+
+const decoded = new Map<string, Uint16Array>();
+/** A tracked thing's outline in frame `f` of a video scene (tools/strip/pack.py's format), or null before it's found. */
+function outlineAt(tracks: VideoTracks, i: number, f: number): Pt[] | null {
+  const th = tracks.things[i];
+  if (!th || f < th.start) return null;
+  let words = decoded.get(th.data);
+  if (!words) {
+    const bin = atob(th.data);
+    const bytes = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+    words = new Uint16Array(bytes.buffer, 0, bytes.length >> 1);
+    decoded.set(th.data, words);
+  }
+  const n = tracks.points;
+  const at = (f - th.start) * n * 2;
+  if (at + n * 2 > words.length) return null;
+  const pts: Pt[] = [];
+  for (let k = 0; k < n; k++) pts.push({ x: words[at + 2 * k] / 65535, y: words[at + 2 * k + 1] / 65535 });
+  return pts;
+}
+
+/**
+ * A video scene's footage: it plays on a loop, and says which frame is showing (the tracks are
+ * frame by frame).
+ */
+function SceneVideo({ source, fit, fps, frames, onFrame }: { source: number; fit: Fit; fps: number; frames: number; onFrame: (f: number) => void }) {
+  const player = useVideoPlayer(source, (p) => {
+    p.loop = true;
+    p.muted = true;
+    p.play();
+  });
+  // Again once the view is up: on the web the player only drives the video elements it has.
+  useEffect(() => {
+    player.play();
+  }, [player]);
+  useEffect(() => {
+    let raf = 0;
+    let last = -1;
+    const tick = () => {
+      const f = Math.min(frames - 1, Math.max(0, Math.floor((player.currentTime || 0) * fps)));
+      if (f !== last) {
+        last = f;
+        onFrame(f);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [player, fps, frames, onFrame]);
+  return (
+    <VideoView
+      player={player}
+      style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }}
+      contentFit="fill"
+      nativeControls={false}
+    />
+  );
+}
 
 /**
  * What the strip can pick on a demo scene: its parts (real MobileSAM shapes), each named by the
@@ -98,6 +164,15 @@ export const VirtualCamera = forwardRef<
     onZoomRange?.(ZOOM);
   }, [onZoomRange]);
   const scene = DEMO_SCENES[index];
+  const video = scene.video;
+  const tracks = video?.tracks ?? null;
+  // Which frame of a video scene is showing.
+  const [frame, setFrame] = useState(0);
+  const frameRef = useRef(0);
+  const onFrame = useCallback((f: number) => {
+    frameRef.current = f;
+    setFrame(f);
+  }, []);
   // Scripted runs pick the scene (lensi:///?scene=truck).
   useEffect(() => {
     const i = DEMO_SCENES.findIndex((s) => s.key === sceneKey);
@@ -113,8 +188,15 @@ export const VirtualCamera = forwardRef<
   }, [scene, onScene]);
 
   // Zoom scales the scene about the screen's centre; tags and outlines are
-  // placed on the zoomed scene but keep their size.
-  const cover = fitRect(scene.width, scene.height, width, height, 'cover');
+  // placed on the zoomed scene but keep their size. A video (landscape footage) is shown across
+  // the screen and a little more, above the chrome, the way a phone held upright shows a wide
+  // shot; a still fills the screen.
+  const cover = video
+    ? (() => {
+        const s = (width / scene.width) * 1.3;
+        return { x: (width - scene.width * s) / 2, y: height * 0.37 - (scene.height * s) / 2, w: scene.width * s, h: scene.height * s };
+      })()
+    : fitRect(scene.width, scene.height, width, height, 'cover');
   const fit = {
     x: width / 2 + (cover.x - width / 2) * zoom,
     y: height / 2 + (cover.y - height / 2) * zoom,
@@ -134,6 +216,19 @@ export const VirtualCamera = forwardRef<
       scrub: {
         // The scene's things whose middle is on screen between `top` and `bottom`, left to right.
         start: async (top: number, bottom: number) => {
+          if (video) {
+            // The tracked things where they are in the frame showing now.
+            const f = frameRef.current;
+            const here = (tracks?.things ?? [])
+              .map((th, i) => ({ i, label: nameOf(th.label), polygon: tracks ? outlineAt(tracks, i, f) : null }))
+              .filter((t): t is { i: number; label: string | null; polygon: Pt[] } => !!t.polygon)
+              .map((t) => ({ ...t, at: toView(centroid(t.polygon), fit) }))
+              .filter((t) => t.at.x > 0 && t.at.x < width && t.at.y > top && t.at.y < bottom)
+              .sort((a, b) => a.at.x - b.at.x || a.at.y - b.at.y)
+              .slice(0, 14);
+            putStrip({ things: here.map((t) => ({ label: t.label ?? 'Thing', polygon: t.polygon, track: t.i })), index: -1, pinned: [] });
+            return here.map((t) => ({ label: t.label }));
+          }
           const found = sceneThings(scene)
             .map((t) => ({ ...t, at: toView(centroid(t.polygon), fit) }))
             .filter((t) => t.at.x > 0 && t.at.x < width && t.at.y > top && t.at.y < bottom)
@@ -152,7 +247,9 @@ export const VirtualCamera = forwardRef<
           if (!s || !t) return null;
           putStrip({ ...s, pinned: [...s.pinned, i] });
           // Pinned before (an earlier touch): it stays the one pin.
-          const same = pinnedRef.current.find((p) => polygonIoU(p.polygon, t.polygon) > 0.8);
+          const same = pinnedRef.current.find((p) =>
+            t.track !== undefined ? p.track === t.track : p.track === undefined && polygonIoU(p.polygon, t.polygon) > 0.8,
+          );
           if (same) return same.id;
           const id = `pin-${Date.now().toString(36)}-${i}`;
           putPinned([...pinnedRef.current, { ...t, id }]);
@@ -163,8 +260,10 @@ export const VirtualCamera = forwardRef<
       },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scene, fit.x, fit.y, fit.w, fit.h, width],
+    [scene, fit.x, fit.y, fit.w, fit.h, width, tracks],
   );
+  // On a video scene a picked or pinned thing is wherever its track is in this frame.
+  const shapeOf = (t: Thing): Pt[] | null => (t.track !== undefined && tracks ? outlineAt(tracks, t.track, frame) : t.polygon);
 
   const drift = useSharedValue(0);
   useEffect(() => {
@@ -191,29 +290,36 @@ export const VirtualCamera = forwardRef<
 
   return (
     <View style={StyleSheet.absoluteFill} collapsable={false}>
-      <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
-        <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
+      <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, !video && kb]}>
+        {video ? (
+          <SceneVideo source={video.source} fit={fit} fps={tracks?.fps ?? 15} frames={tracks?.frames ?? 150} onFrame={onFrame} />
+        ) : (
+          <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
+        )}
         {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
         {/* The strip's things while a finger is on it: the highlighted one in the lens colour, the rest faint. */}
-        {strip?.things.map((t, i) =>
-          strip.pinned.includes(i) ? null : (
+        {strip?.things.map((t, i) => {
+          const shape = shapeOf(t);
+          return strip.pinned.includes(i) || !shape ? null : (
             <GuideOutline
               key={`s-${i}-${t.label}`}
-              part={{ id: `s${i}`, label: t.label, at: { x: 0.5, y: 0.5 }, outline: t.polygon }}
+              part={{ id: `s${i}`, label: t.label, at: { x: 0.5, y: 0.5 }, outline: shape }}
               fit={fit}
               pen={pen}
               focused={i === strip.index}
               faint={i !== strip.index}
             />
-          ),
-        )}
-        {/* Pinned things: outlined in the lens colour, named just above. */}
-        {pinned.map((p) => (
-          <GuideOutline key={p.id} part={{ id: p.id, label: p.label, at: { x: 0.5, y: 0.5 }, outline: p.polygon }} fit={fit} pen={pen} focused />
-        ))}
-        {pinned.map((p) => (
-          <PinTag key={`t-${p.id}`} pin={p} fit={fit} pen={pen} screenW={width} />
-        ))}
+          );
+        })}
+        {/* Pinned things: outlined in the lens colour, named just above, wherever they've gone. */}
+        {pinned.map((p) => {
+          const shape = shapeOf(p);
+          return shape ? <GuideOutline key={p.id} part={{ id: p.id, label: p.label, at: { x: 0.5, y: 0.5 }, outline: shape }} fit={fit} pen={pen} focused /> : null;
+        })}
+        {pinned.map((p) => {
+          const shape = shapeOf(p);
+          return shape ? <PinTag key={`t-${p.id}`} pin={{ ...p, polygon: shape }} fit={fit} pen={pen} screenW={width} /> : null;
+        })}
         {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}
         {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}
       </Animated.View>

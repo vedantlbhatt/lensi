@@ -17,7 +17,7 @@ import type {
 } from './types';
 
 export * from './types';
-export type { DemoScene } from './demo';
+export type { DemoScene, VideoThing, VideoTracks } from './demo';
 export { DEMO_SCENES, sceneForUri };
 
 type Listener<K extends keyof LensiAREvents> = LensiAREvents[K];

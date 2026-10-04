@@ -3,7 +3,7 @@ import { NativeModule, requireNativeModule, requireNativeView } from 'expo';
 import type { LensiAREvents, LensiARModuleShape, LensiARViewProps } from './types';
 
 export * from './types';
-export type { DemoScene } from './demo';
+export type { DemoScene, VideoThing, VideoTracks } from './demo';
 export { DEMO_SCENES, sceneForUri } from './demo';
 
 declare class LensiARNative extends NativeModule<LensiAREvents> implements LensiARModuleShape {
