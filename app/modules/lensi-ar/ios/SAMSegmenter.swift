@@ -118,11 +118,12 @@ final class SAMSegmenter: @unchecked Sendable {
   // MARK: - API
 
   /// Runs the encoder once per image (cache by an id string). `image` must already be upright;
-  /// an id that is still cached is not encoded again.
-  func prepare(image: CGImage, id: String) throws {
+  /// an id that is still cached is not encoded again, unless `force` (the live camera reuses
+  /// one id for every frame).
+  func prepare(image: CGImage, id: String, force: Bool = false) throws {
     lock.lock()
     defer { lock.unlock() }
-    if cache[id] != nil {
+    if !force, cache[id] != nil {
       touch(id)
       return
     }

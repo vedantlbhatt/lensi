@@ -77,6 +77,8 @@ export type LensiARViewProps = ViewProps & {
   ref?: Ref<LensiARViewRef>;
   /** Draw live detection brackets. */
   showDetections?: boolean;
+  /** SAM on the live camera feed: guide parts, else the tracked thing, else the middle of the screen. */
+  liveSegments?: boolean;
   /** Taps pin objects in world space (live mode) instead of being ignored. */
   livePins?: boolean;
   /** Pen colour for the focused bracket and new pins, #RRGGBB. */

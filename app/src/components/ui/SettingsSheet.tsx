@@ -115,7 +115,7 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
             <Text style={styles.section}>Behaviour</Text>
             <Row label="Read steps aloud" value={s.narrate} onChange={(v) => setSettings({ narrate: v })} pen={pen} />
             <Row label="Keep listening during a job" value={s.handsFree} onChange={(v) => setSettings({ handsFree: v })} pen={pen} />
-            <Row label="Live brackets on the camera" value={s.liveBrackets} onChange={(v) => setSettings({ liveBrackets: v })} pen={pen} />
+            <Row label="Live outlines on the camera" value={s.liveBrackets} onChange={(v) => setSettings({ liveBrackets: v })} pen={pen} />
             <Row label="Haptics" value={s.haptics} onChange={(v) => setSettings({ haptics: v })} pen={pen} />
 
             <Text style={styles.section}>Server URL</Text>

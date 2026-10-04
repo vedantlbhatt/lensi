@@ -433,6 +433,7 @@ export default function Camera() {
             ref={camera}
             pen={pen}
             brackets={settings.liveBrackets && !guideLens}
+            liveOutlines={settings.liveBrackets}
             livePins={live}
             paused={!!open || memories}
             onFocusChange={setFocus}

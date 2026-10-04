@@ -54,6 +54,8 @@ export const CameraSurface = forwardRef<
   {
     pen: string;
     brackets: boolean;
+    /** SAM outlines on the live camera (the virtual one outlines its scene's subject). */
+    liveOutlines: boolean;
     livePins: boolean;
     paused: boolean;
     onFocusChange?: (label: string | null) => void;
@@ -178,6 +180,7 @@ export const CameraSurface = forwardRef<
         ref={virtual}
         pen={props.pen}
         brackets={props.brackets && !props.paused}
+        liveOutlines={props.liveOutlines && !props.paused}
         onScene={props.onScene}
         onZoomRange={props.onZoomRange}
         guidePins={props.guidePins}
@@ -190,6 +193,7 @@ export const CameraSurface = forwardRef<
       ref={native}
       style={StyleSheet.absoluteFill}
       showDetections={props.brackets && !props.paused}
+      liveSegments={props.liveOutlines && !props.paused}
       livePins={props.livePins}
       accentColor={props.pen}
       paused={props.paused}

@@ -114,6 +114,10 @@ public class LensiARModule: Module {
         view.showDetections = value
       }
 
+      Prop("liveSegments") { (view: LensiARView, value: Bool) in
+        view.liveSegments = value
+      }
+
       Prop("livePins") { (view: LensiARView, value: Bool) in
         view.livePins = value
       }

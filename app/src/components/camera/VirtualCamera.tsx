@@ -38,12 +38,13 @@ export const VirtualCamera = forwardRef<
   {
     pen: string;
     brackets: boolean;
+    liveOutlines?: boolean;
     onScene?: (s: DemoScene) => void;
     onZoomRange?: (r: ZoomRange) => void;
     guidePins?: VirtualGuidePins;
     sceneKey?: string;
   }
->(function VirtualCamera({ pen, brackets, onScene, onZoomRange, guidePins, sceneKey }, ref) {
+>(function VirtualCamera({ pen, brackets, liveOutlines, onScene, onZoomRange, guidePins, sceneKey }, ref) {
   const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -112,30 +113,35 @@ export const VirtualCamera = forwardRef<
       <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
         <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
         {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
+        {/* Live outline of what's in view, as the phone's live SAM draws it (the scene's real SAM outline). */}
+        {liveOutlines && !guidePins?.parts.length ? (
+          <GuideOutline key={`live-${scene.key}`} part={{ id: 'live', label: '', at: { x: 0.5, y: 0.5 }, outline: scene.outline.polygon.map(([x, y]) => ({ x, y })) }} fit={fit} pen={pen} focused={false} strong />
+        ) : null}
         {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}
         {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}
       </Animated.View>
       <Grain opacity={0.05} />
-      {brackets && !guidePins?.parts.length ? <Brackets key={`b-${scene.key}`} x={b.x} y={b.y} w={b.w} h={b.h} pen={pen} /> : null}
+      {brackets && !liveOutlines && !guidePins?.parts.length ? <Brackets key={`b-${scene.key}`} x={b.x} y={b.y} w={b.w} h={b.h} pen={pen} /> : null}
     </View>
   );
 });
 
 /** A part's outline: the current step's in the lens colour, the rest thin and white. */
-function GuideOutline({ part, fit, pen, focused }: { part: GuidePart; fit: Fit; pen: string; focused: boolean }) {
+function GuideOutline({ part, fit, pen, focused, strong }: { part: GuidePart; fit: Fit; pen: string; focused: boolean; strong?: boolean }) {
   if (!part.outline) return null;
   const points = part.outline.map((q) => toView(q, fit)).map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ');
   const color = focused ? pen : '#FFFFFF';
+  const bold = focused || strong;
   return (
     <Animated.View entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
       <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
         <Polygon
           points={points}
           fill={color}
-          fillOpacity={focused ? 0.14 : 0.06}
+          fillOpacity={focused ? 0.14 : bold ? 0.07 : 0.06}
           stroke={color}
-          strokeOpacity={focused ? 1 : 0.75}
-          strokeWidth={focused ? 2.5 : 1.5}
+          strokeOpacity={bold ? 1 : 0.75}
+          strokeWidth={focused ? 2.5 : bold ? 2 : 1.5}
           strokeLinejoin="round"
         />
       </Svg>
