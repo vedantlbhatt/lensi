@@ -92,6 +92,44 @@ final class PinLabel: UIView {
   }
 }
 
+/// A part's outline over a faint dark halo, so it still reads where the part is as pale as
+/// the line (a white outline on a white door). The layer itself draws the halo; `line`, a
+/// sublayer, draws the outline on top.
+final class OutlineLayer: CAShapeLayer {
+  let line = CAShapeLayer()
+
+  override init() {
+    super.init()
+    fillColor = nil
+    strokeColor = UIColor.black.withAlphaComponent(0.32).cgColor
+    lineJoin = .round
+    line.lineJoin = .round
+    addSublayer(line)
+  }
+
+  /// Core Animation's copies (presentation layers).
+  override init(layer: Any) {
+    super.init(layer: layer)
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is not used")
+  }
+
+  func setOutline(_ shape: CGPath) {
+    path = shape
+    line.path = shape
+  }
+
+  /// The current step's part in the lens colour; the rest thin and white.
+  func style(_ color: UIColor, width: CGFloat, stroke: CGFloat, fill: CGFloat) {
+    lineWidth = width + 2.5
+    line.lineWidth = width
+    line.strokeColor = color.withAlphaComponent(stroke).cgColor
+    line.fillColor = color.withAlphaComponent(fill).cgColor
+  }
+}
+
 /// A world-anchored annotation: a tag on the thing, and its outline when it has one.
 final class Pin {
   let id: String
@@ -105,7 +143,7 @@ final class Pin {
   /// Live guide: the part's shape laid in the world, and the layer that draws
   /// it (only while its step is up).
   var guideOutline: [simd_float3] = []
-  var guideShape: CAShapeLayer?
+  var guideShape: OutlineLayer?
   var outlineScreenOrigin: CGPoint = .zero
   var outlineDistance: Float = 1
   /// The zoom it was drawn at; it scales with the zoom from there.

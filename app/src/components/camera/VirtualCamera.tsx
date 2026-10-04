@@ -25,8 +25,12 @@ import type { CameraHandle, VirtualGuidePins } from './CameraSurface';
 
 export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom'>;
 
-/** The virtual camera "zooms" its scene the way the real one does: 0.5x to 10x. */
-const ZOOM: ZoomRange = { min: 0.5, max: 10, zoom: 1 };
+/**
+ * The virtual camera crops into its scene the way the real one does above 1x. There's no
+ * 0.5x: a still photo has nothing wider to show (it would only shrink into a black frame),
+ * the same as a phone without an ultra-wide camera.
+ */
+const ZOOM: ZoomRange = { min: 1, max: 10, zoom: 1 };
 
 /**
  * Stand-in camera for the Simulator and the web preview: the demo scenes,
@@ -126,22 +130,28 @@ export const VirtualCamera = forwardRef<
   );
 });
 
-/** A part's outline: the current step's in the lens colour, the rest thin and white. */
+/**
+ * A part's outline: the current step's in the lens colour, the rest thin and white, each
+ * over a faint dark halo so it still reads where the part is as pale as the line (the same
+ * look as the phone's live outlines).
+ */
 function GuideOutline({ part, fit, pen, focused, strong }: { part: GuidePart; fit: Fit; pen: string; focused: boolean; strong?: boolean }) {
   if (!part.outline) return null;
   const points = part.outline.map((q) => toView(q, fit)).map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ');
   const color = focused ? pen : '#FFFFFF';
   const bold = focused || strong;
+  const width = focused ? 2.5 : bold ? 2 : 1.5;
   return (
     <Animated.View entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
       <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+        <Polygon points={points} fill="none" stroke="#000000" strokeOpacity={0.32} strokeWidth={width + 2.5} strokeLinejoin="round" />
         <Polygon
           points={points}
           fill={color}
           fillOpacity={focused ? 0.14 : bold ? 0.07 : 0.06}
           stroke={color}
           strokeOpacity={bold ? 1 : 0.75}
-          strokeWidth={focused ? 2.5 : bold ? 2 : 1.5}
+          strokeWidth={width}
           strokeLinejoin="round"
         />
       </Svg>

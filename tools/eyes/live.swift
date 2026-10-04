@@ -54,7 +54,7 @@ private func iou(_ a: [CGPoint], _ b: [CGPoint]) -> Double {
 
 private func median(_ xs: [Double]) -> Double { xs.sorted()[xs.count / 2] }
 
-private func clock() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1e6 }
+private func millis() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1e6 }
 
 /// The live path on up to `limit` pictures. Prompts: the middle and two off-middle points.
 func checkLivePath(_ urls: [URL], limit: Int = 5) -> Bool {
@@ -70,9 +70,9 @@ func checkLivePath(_ urls: [URL], limit: Int = 5) -> Bool {
     guard let upright = try? Analyzer.loadUpright(uri: url.absoluteString) else { continue }
     let name = url.deletingPathExtension().lastPathComponent
     do {
-      var t = clock()
+      var t = millis()
       try sam.prepare(image: upright, id: "photo", force: true)
-      photoMs.append(clock() - t)
+      photoMs.append(millis() - t)
       let photo = try prompts.map { try sam.segment(id: "photo", points: [$0], labels: [1], box: nil) }
       for (format, tag) in [(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, "420f"), (kCVPixelFormatType_32BGRA, "bgra")] {
         guard let buffer = sensorBuffer(upright, format: format) else {
@@ -82,9 +82,9 @@ func checkLivePath(_ urls: [URL], limit: Int = 5) -> Bool {
         // A few runs: the first one pays for building the GPU pipeline.
         var times: [Double] = []
         for _ in 0..<4 {
-          t = clock()
+          t = millis()
           try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "live")
-          times.append(clock() - t)
+          times.append(millis() - t)
         }
         liveMs[tag, default: []].append(median(times))
         for (i, p) in prompts.enumerated() {

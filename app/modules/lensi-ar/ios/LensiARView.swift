@@ -230,7 +230,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   private struct LiveShape {
-    let layer: CAShapeLayer
+    let layer: OutlineLayer
     /// OutlineMath.count points, in the world.
     var world: [simd_float3]
     var seen: CFTimeInterval
@@ -363,8 +363,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           shape.misses = 0
           liveShapes[key] = shape
         } else {
-          let layer = CAShapeLayer()
-          layer.lineJoin = .round
+          let layer = OutlineLayer()
           layer.isHidden = true
           // Under the tags.
           pinLayer.layer.insertSublayer(layer, at: 0)
@@ -420,10 +419,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let focused = pin?.label.emphasis == .focused
       let strong = focused || key == Self.centreKey
       let color: UIColor = focused ? accent : .white
-      shape.layer.path = path.cgPath
-      shape.layer.lineWidth = focused ? 2.5 : strong ? 2 : 1.5
-      shape.layer.strokeColor = color.withAlphaComponent(strong ? 1 : 0.75).cgColor
-      shape.layer.fillColor = color.withAlphaComponent(focused ? 0.14 : 0.07).cgColor
+      shape.layer.setOutline(path.cgPath)
+      shape.layer.style(color, width: focused ? 2.5 : strong ? 2 : 1.5, stroke: strong ? 1 : 0.75, fill: focused ? 0.14 : 0.07)
       // Fades if it hasn't been re-cut lately (the part left the frame, or SAM's lost it).
       shape.layer.opacity = age < 0.8 ? 1 : Float(max(0, 1 - (age - 0.8) / 0.7))
       shape.layer.isHidden = false
@@ -1150,9 +1147,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     guard world.count >= 3 else { return }
     pin.guideOutline = world
     if pin.guideShape == nil {
-      let shape = CAShapeLayer()
-      shape.lineWidth = 2.5
-      shape.lineJoin = .round
+      let shape = OutlineLayer()
       shape.isHidden = true
       // Under the tags.
       pinLayer.layer.insertSublayer(shape, at: 0)
@@ -1182,12 +1177,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
     }
     path.close()
-    shape.path = path.cgPath
+    shape.setOutline(path.cgPath)
     let focused = pin.label.emphasis == .focused
-    let color: UIColor = focused ? accent : .white
-    shape.lineWidth = focused ? 2.5 : 1.5
-    shape.strokeColor = color.withAlphaComponent(focused ? 1 : 0.75).cgColor
-    shape.fillColor = color.withAlphaComponent(focused ? 0.14 : 0.06).cgColor
+    shape.style(focused ? accent : .white, width: focused ? 2.5 : 1.5, stroke: focused ? 1 : 0.75, fill: focused ? 0.14 : 0.06)
     shape.isHidden = false
   }
 
