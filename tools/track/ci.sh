@@ -31,7 +31,7 @@ done
 
 swiftc -O -o track tools/track/main.swift \
   app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
-  app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift || exit 1
+  app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/LiveSeg.swift app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift || exit 1
 
 # One clip: <frames> <masks or -> <name> [seed box]
 clip() {

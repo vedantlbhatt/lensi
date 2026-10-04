@@ -192,7 +192,7 @@ final class BoxFollower {
 
 /// The app's LiveFlow fed frame by frame: each frame as LiveFlow sees it (grey, 360 across),
 /// shared by every runner that carries its outline from the last frame to this one.
-final class OpticalFlow {
+final class PixelFlow {
   private var previous: LiveFlow.Frame?
   private(set) var current: LiveFlow.Frame?
   /// Milliseconds to make each frame, and for each carry.
@@ -230,7 +230,7 @@ final class Runner {
   let moveOnly: Bool
   /// Carry the outline from each frame to the next on its own pixels (optical flow), and
   /// with `scaling` let it grow and shrink with them.
-  let flow: OpticalFlow?
+  let flow: PixelFlow?
   let scaling: Bool
   /// Ease what's shown this much of the way to the outline each frame, rather than jumping
   /// when SAM's cut lands (what's shown rides the flow too, so it doesn't lag the motion).
@@ -263,7 +263,7 @@ final class Runner {
   var centres: [CGPoint?] = []
 
   init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int, follow: Bool = false, adaptive: Bool = false,
-       moveOnly: Bool = false, flow: OpticalFlow? = nil, scaling: Bool = false, glide: CGFloat? = nil, adaptiveGlide: Bool = false,
+       moveOnly: Bool = false, flow: PixelFlow? = nil, scaling: Bool = false, glide: CGFloat? = nil, adaptiveGlide: Bool = false,
        grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false) {
     self.moveOnly = moveOnly
     self.label = label
@@ -334,7 +334,8 @@ final class Runner {
         points = [p.point]
         box = p.box
       }
-      let mask = try sam.segment(id: "frame", points: points, labels: [1], box: box)
+      // As the app asks: following, the candidate that overlaps where it should be wins.
+      let mask = try sam.segment(id: "frame", points: points, labels: [1], box: box, prior: tracking ? prediction : nil)
       cuts += 1
       var cut = mask.polygon.count > 2 && mask.score >= 0.5 ? OutlineMath.resample(mask.polygon, scale: scale) : nil
       if tracking, let c = cut, let prediction, !LiveTracker.accepts(c, predicted: prediction, gate: gate) {
@@ -446,7 +447,7 @@ print("\(name): \(frames.count) frames \(W)x\(H), seed box \(seedBox), point \(s
 // next to it so it can be chosen on real footage rather than guessed. @8 is SAM on every third
 // frame (8 a second at 24 fps, about what a phone manages); @4 every sixth (a hot phone, or a
 // guide part waiting its turn).
-let flow = OpticalFlow()
+let flow = PixelFlow()
 let runners = [
   Runner("fixed", tracking: false, smoothing: nil, every: 1),
   Runner("tracked", tracking: true, smoothing: nil, every: 1),

@@ -491,7 +491,7 @@ for (k, f) in window.enumerated() {
           anchor = thing.centre
         }
         if let point, let anchor {
-          let m = try sam.segment(id: "frame", points: [point], labels: [1], box: box)
+          let m = try sam.segment(id: "frame", points: [point], labels: [1], box: box, prior: predicted)
           run.cuts += 1
           var world: [simd_float3]?
           if m.score >= (predicted == nil ? 0.6 : 0.5), m.polygon.count > 2 {

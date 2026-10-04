@@ -366,8 +366,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "live")
         encodeMs = (CACurrentMediaTime() - started) * 1000
         for p in prompts {
+          // Following a thing: of SAM's candidates, the one that overlaps where it should be wins,
+          // so the outline doesn't flip between "the handle" and "the whole mug" (from smooth-seg).
           let mask = try sam.segment(
-            id: "live", points: p.point.map { [$0] } ?? [], labels: p.point == nil ? [] : [1], box: p.box, preferPart: p.part)
+            id: "live", points: p.point.map { [$0] } ?? [], labels: p.point == nil ? [] : [1], box: p.box, preferPart: p.part,
+            prior: p.predicted)
           guard mask.score >= (p.predicted == nil ? 0.6 : 0.5), mask.polygon.count > 2 else { continue }
           // Evenly spaced (in pixels).
           let ring = OutlineMath.resample(mask.polygon, scale: upright)
