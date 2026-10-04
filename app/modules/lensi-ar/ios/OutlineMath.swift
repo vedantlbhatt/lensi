@@ -68,14 +68,31 @@ enum OutlineMath {
     points.isEmpty ? .zero : points.reduce(simd_float3.zero, +) / Float(points.count)
   }
 
+  /// How hard an outline is steadied. Shape: when a new cut differs from the last (both
+  /// centred, lined up) by less than `quiet` of its size, that's noise and `keepQuiet` of the
+  /// old shape is kept; under `small`, `keepSmall`; past that the new shape stands. Position:
+  /// a move under `still` of its size is jitter and the outline goes `followStill` of the way;
+  /// otherwise `followMoving`. A jump of more than its own size is something else: replaced.
+  /// tools/track measures these against hand-drawn masks on real footage.
+  struct Smoothing {
+    var quiet: Float
+    var keepQuiet: Float
+    var small: Float
+    var keepSmall: Float
+    var still: Float
+    var followStill: Float
+    var followMoving: Float
+
+    /// What the app uses.
+    static let standard = Smoothing(quiet: 0.1, keepQuiet: 0.65, small: 0.25, keepSmall: 0.4, still: 0.15, followStill: 0.5, followMoving: 0.9)
+    /// Only the edge noise of a thing that holds its shape; motion and real shape change pass straight through.
+    static let light = Smoothing(quiet: 0.05, keepQuiet: 0.5, small: 0.1, keepSmall: 0.25, still: 0.03, followStill: 0.6, followMoving: 1)
+    static let minimal = Smoothing(quiet: 0.04, keepQuiet: 0.4, small: 0.04, keepSmall: 0, still: 0, followStill: 1, followMoving: 1)
+  }
+
   /// The outline to show next. Where it is and what shape it is are settled separately, so a
-  /// thing that moves is followed without lag while its edge noise is damped:
-  /// - Position follows the new cut: most of the way when it has clearly moved, half way
-  ///   when it's only jitter. A jump of more than its own size is something else: replaced.
-  /// - Shape (both outlines centred on their middles and lined up) is blended: mostly the
-  ///   old one when they barely differ (that's the shimmer), mostly the new one when they
-  ///   clearly do, the new one outright when it's a different shape.
-  static func smooth(_ old: [simd_float3]?, _ new: [simd_float3]) -> [simd_float3] {
+  /// thing that moves is followed while its edge noise is damped (see `Smoothing`).
+  static func smooth(_ old: [simd_float3]?, _ new: [simd_float3], _ how: Smoothing = .standard) -> [simd_float3] {
     guard let old, old.count == new.count, !new.isEmpty else { return new }
     let size = max(spread(old), 1e-6)
     let co = centre(old), cn = centre(new)
@@ -83,9 +100,9 @@ enum OutlineMath {
     guard jump < 1 else { return new }
     let (shape, gap) = align(new.map { $0 - cn }, to: old.map { $0 - co })
     let relative = gap / size
-    let t: Float = relative < 0.1 ? 0.35 : relative < 0.25 ? 0.6 : relative < 0.45 ? 0.85 : 1
-    let follow: Float = jump > 0.15 ? 0.9 : 0.5
+    let keep: Float = relative < how.quiet ? how.keepQuiet : relative < how.small ? how.keepSmall : 0
+    let follow: Float = jump < how.still ? how.followStill : how.followMoving
     let middle = co + (cn - co) * follow
-    return zip(old, shape).map { o, n in middle + (o - co) + (n - (o - co)) * t }
+    return zip(old, shape).map { o, n in middle + (o - co) * keep + n * (1 - keep) }
   }
 }

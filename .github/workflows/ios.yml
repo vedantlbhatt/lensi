@@ -110,6 +110,19 @@ jobs:
             LENSI_MODELS_DIR=models-all ./track "footage/$1" - out/track "$1" "$2" 2>&1 | tee -a out/track/summary.txt \
               && python tools/track/render.py "footage/$1" "out/track/$1.json" out/track || echo "FAIL $1"
           done
+      - name: Push tracking results to ci-track (without waiting for the app build)
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          [ -d out/track ] && [ -n "$(ls out/track)" ] || exit 0
+          rm -rf ../ci-track && cp -R out/track ../ci-track && cd ../ci-track
+          echo "$SHA" > COMMIT.txt
+          git init -q && git checkout -q -b ci-track && git add -A
+          git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "Tracking results for $SHA"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-track
       - name: Verify with Core ML (CPU)
         run: python tools/sam/verify_coreml.py --models build/sam --compute-units CPU_ONLY 2>&1 | tee out/verify-cpu.txt
       - name: Verify with Core ML (all compute units)

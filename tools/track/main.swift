@@ -149,7 +149,7 @@ func seed(from m: [UInt8], w: Int, h: Int) -> (CGRect, CGPoint)? {
 final class Runner {
   let label: String
   let tracking: Bool
-  let smoothing: Bool
+  let smoothing: OutlineMath.Smoothing?
   let every: Int
   var outline: [CGPoint]?
   var velocity = CGPoint.zero // per frame, 0-1 units
@@ -161,7 +161,7 @@ final class Runner {
   var j: [Double] = []
   var wobble: [Double] = []
 
-  init(_ label: String, tracking: Bool, smoothing: Bool, every: Int) {
+  init(_ label: String, tracking: Bool, smoothing: OutlineMath.Smoothing?, every: Int) {
     self.label = label
     self.tracking = tracking
     self.smoothing = smoothing
@@ -198,9 +198,9 @@ final class Runner {
       }
       if let c = cut {
         var next = c
-        if smoothing, let prediction {
+        if let smoothing, let prediction {
           let px = { (p: CGPoint) in simd_float3(Float(p.x * scale.width), Float(p.y * scale.height), 0) }
-          let blended = OutlineMath.smooth(prediction.map(px), c.map(px))
+          let blended = OutlineMath.smooth(prediction.map(px), c.map(px), smoothing)
           next = blended.map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
         }
         if let old = outline, f > lastFrame {
@@ -249,11 +249,17 @@ if let m0 = masks.first.flatMap(groundTruth), m0.w == W, m0.h == H, let s = seed
 }
 print("\(name): \(frames.count) frames \(W)x\(H), seed box \(seedBox), point \(seedPoint), masks \(masks.count)")
 
+// The app's own setting is OutlineMath.Smoothing.standard ("lensi"); the others are measured
+// next to it so it can be chosen on real footage rather than guessed.
 let runners = [
-  Runner("fixed", tracking: false, smoothing: false, every: 1),
-  Runner("tracked", tracking: true, smoothing: false, every: 1),
-  Runner("lensi", tracking: true, smoothing: true, every: 1),
-  Runner("lensi@8", tracking: true, smoothing: true, every: 3),
+  Runner("fixed", tracking: false, smoothing: nil, every: 1),
+  Runner("tracked", tracking: true, smoothing: nil, every: 1),
+  Runner("lensi", tracking: true, smoothing: .standard, every: 1),
+  Runner("light", tracking: true, smoothing: .light, every: 1),
+  Runner("minimal", tracking: true, smoothing: .minimal, every: 1),
+  Runner("tracked@8", tracking: true, smoothing: nil, every: 3),
+  Runner("lensi@8", tracking: true, smoothing: .standard, every: 3),
+  Runner("light@8", tracking: true, smoothing: .light, every: 3),
 ]
 var truthWobble: [Double] = []
 var prevTruth = truth0
@@ -302,7 +308,7 @@ for r in runners {
     "label": r.label, "every": r.every, "J": mean(r.j), "wobble": mean(r.wobble), "cuts": r.cuts, "refused": r.refused,
     "jPerFrame": r.j, "outlines": r.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } },
   ])
-  let label = r.label.padding(toLength: 8, withPad: " ", startingAt: 0)
+  let label = r.label.padding(toLength: 10, withPad: " ", startingAt: 0)
   lines.append("  \(label) J \(pct(mean(r.j)))  wobble \(pct(mean(r.wobble)))  (\(r.cuts) cuts, \(r.refused) refused)")
 }
 summary["runs"] = runs

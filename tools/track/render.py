@@ -66,11 +66,13 @@ def writer(path, w, h, fps):
 
 def main():
     frames_dir, json_path, out_dir = sys.argv[1:4]
+    # Which run is "now" (the app's setting at the phone's rate, unless told otherwise).
+    now_label = sys.argv[4] if len(sys.argv) > 4 else "lensi@8"
     os.makedirs(out_dir, exist_ok=True)
     data = json.load(open(json_path))
     name = data["name"]
     runs = {r["label"]: r for r in data["runs"]}
-    lensi, fixed = runs["lensi@8"], runs["fixed"]
+    lensi, fixed = runs[now_label], runs["fixed"]
     unpack = lambda flat: [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
     fps = 24
     first = cv2.imread(os.path.join(frames_dir, data["frameNames"][0]))
