@@ -17,6 +17,7 @@ import { haptic } from '../../lib/haptics';
 import type { Pt } from '../../lib/types';
 import { Ripple } from '../../motion/Ripple';
 import { ink } from '../../theme/tokens';
+import { calm } from '../../theme/motion';
 
 const W = 30;
 const H = 36;
@@ -65,7 +66,7 @@ export function WalkPointer({
       return;
     }
     const goal = { x: tx, y: ty };
-    shown.value = withSpring(1, { damping: 16, stiffness: 220 });
+    shown.value = withSpring(1, calm({ damping: 16, stiffness: 220 }));
     const a = last.current;
     from.value = a;
     to.value = goal;
@@ -74,7 +75,7 @@ export function WalkPointer({
     const d = Math.hypot(goal.x - a.x, goal.y - a.y);
     const duration = Math.min(900, Math.max(420, d * 1.5));
     t.value = withTiming(1, { duration, easing: Easing.bezier(0.45, 0, 0.2, 1) });
-    tap.value = withDelay(duration - 40, withSequence(withTiming(1, { duration: 110 }), withSpring(0, { damping: 9, stiffness: 300 })));
+    tap.value = withDelay(duration - 40, withSequence(withTiming(1, { duration: 110 }), withSpring(0, calm({ damping: 9, stiffness: 300 }))));
     last.current = goal;
     const k = `${index}-${goal.x.toFixed(1)}-${goal.y.toFixed(1)}`;
     const h = setTimeout(() => {

@@ -125,7 +125,8 @@ export function guideReducer(s: GuideState, a: GuideAction): GuideState {
       const placed = a.label && a.at ? addPart(s.parts, a.label, a.at, a.mark, a.outline) : { parts: s.parts, id: null };
       const step: GuideStep = { text: a.text.trim(), ...(placed.id ? { partId: placed.id } : {}) };
       if (!step.text) return s;
-      return { ...s, parts: placed.parts, steps: [...s.steps, step] };
+      // The first step is shown as soon as it arrives; the rest stream in behind it.
+      return { ...s, parts: placed.parts, steps: [...s.steps, step], status: s.status === 'planning' ? 'active' : s.status };
     }
     case 'part': {
       const placed = addPart(s.parts, a.label, a.at, a.mark, a.outline, a.frame);
@@ -138,7 +139,9 @@ export function guideReducer(s: GuideState, a: GuideAction): GuideState {
       if (a.outline.length < 3) return s;
       return { ...s, parts: s.parts.map((p) => (p.id === a.id && !p.outline ? { ...p, outline: simplify(a.outline) } : p)) };
     case 'planned':
-      return { ...s, status: s.steps.length || s.parts.length ? 'active' : 'idle', index: 0 };
+      // Steps may have been under way for a while; only a plan still waiting changes state.
+      if (s.status !== 'planning') return s;
+      return { ...s, status: s.steps.length || s.parts.length ? 'active' : 'idle' };
     case 'go': {
       if (!s.steps.length) return s;
       const index = Math.max(0, Math.min(s.steps.length - 1, a.index));

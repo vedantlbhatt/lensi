@@ -161,3 +161,16 @@ test('a part an answer found belongs to a step that had none, and is kept with i
   s = guideReducer(s, { type: 'part', label: 'Washer', at: { x: 0.7, y: 0.7 }, frame: 'f3', step: 1 });
   assert.equal(s.steps[1].partId, 'p1');
 });
+
+test('a plan streams in: the first step is up at once and moving on survives the rest arriving', () => {
+  let s = guideReducer(initialGuide, { type: 'plan', task: 'Fix the leak' });
+  s = guideReducer(s, { type: 'step', text: 'Turn off the water under the sink.' });
+  assert.equal(s.status, 'active');
+  s = guideReducer(s, { type: 'step', text: 'Put a bowl under the trap.' });
+  s = guideReducer(s, { type: 'next' });
+  s = guideReducer(s, { type: 'step', text: 'Loosen the slip nuts.' });
+  s = guideReducer(s, { type: 'planned' });
+  assert.equal(s.status, 'active');
+  assert.equal(s.index, 1);
+  assert.equal(s.steps.length, 3);
+});

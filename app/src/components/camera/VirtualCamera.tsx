@@ -14,7 +14,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { DEMO_SCENES, setDemoQuestion, type DemoScene } from '../../../modules/lensi-ar/src';
+import { DEMO_SCENES, setDemoQuestion, type DemoScene, type ZoomRange } from '../../../modules/lensi-ar/src';
 import { boxToView, fitRect, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
 import { assetPhoto, type Picked } from '../../lib/media';
@@ -23,7 +23,10 @@ import { face } from '../../theme/type';
 import { labelWidth } from '../capture/layout';
 import type { CameraHandle, VirtualGuidePins } from './CameraSurface';
 
-export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene'>;
+export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom'>;
+
+/** The virtual camera "zooms" its scene the way the real one does: 0.5x to 10x. */
+const ZOOM: ZoomRange = { min: 0.5, max: 10, zoom: 1 };
 
 /**
  * Stand-in camera for the Simulator and the web preview: the demo scenes,
@@ -32,10 +35,21 @@ export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 
  */
 export const VirtualCamera = forwardRef<
   VirtualHandle,
-  { pen: string; brackets: boolean; onScene?: (s: DemoScene) => void; guidePins?: VirtualGuidePins; sceneKey?: string }
->(function VirtualCamera({ pen, brackets, onScene, guidePins, sceneKey }, ref) {
+  {
+    pen: string;
+    brackets: boolean;
+    onScene?: (s: DemoScene) => void;
+    onZoomRange?: (r: ZoomRange) => void;
+    guidePins?: VirtualGuidePins;
+    sceneKey?: string;
+  }
+>(function VirtualCamera({ pen, brackets, onScene, onZoomRange, guidePins, sceneKey }, ref) {
   const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  useEffect(() => {
+    onZoomRange?.(ZOOM);
+  }, [onZoomRange]);
   const scene = DEMO_SCENES[index];
   // Scripted runs pick the scene (lensi:///?scene=truck).
   useEffect(() => {
@@ -56,6 +70,7 @@ export const VirtualCamera = forwardRef<
       stopRecording: async () => null,
       setTorch: async () => false,
       nextScene: (dir: 1 | -1) => setIndex((i) => (i + dir + DEMO_SCENES.length) % DEMO_SCENES.length),
+      setZoom: (z: number) => setZoom(Math.min(ZOOM.max, Math.max(ZOOM.min, z))),
     }),
     [scene],
   );
@@ -72,7 +87,15 @@ export const VirtualCamera = forwardRef<
     ],
   }));
 
-  const fit = fitRect(scene.width, scene.height, width, height, 'cover');
+  // Zoom scales the scene about the screen's centre; tags and outlines are
+  // placed on the zoomed scene but keep their size.
+  const cover = fitRect(scene.width, scene.height, width, height, 'cover');
+  const fit = {
+    x: width / 2 + (cover.x - width / 2) * zoom,
+    y: height / 2 + (cover.y - height / 2) * zoom,
+    w: cover.w * zoom,
+    h: cover.h * zoom,
+  };
   const raw = boxToView({ x: scene.outline.box[0], y: scene.outline.box[1], w: scene.outline.box[2], h: scene.outline.box[3] }, fit);
   // Keep every corner on screen: a bracket half off the edge reads as a stray mark.
   // Symmetric side margins that clear the tool rail on the right.
@@ -87,9 +110,9 @@ export const VirtualCamera = forwardRef<
   return (
     <View style={StyleSheet.absoluteFill} collapsable={false}>
       <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, kb]}>
-        <Image source={scene.asset} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
+        <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
         {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
-        <GuideOutline part={guidePins?.parts.find((p) => p.id === guidePins.focus)} fit={fit} pen={pen} />
+        {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}
         {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}
       </Animated.View>
       <Grain opacity={0.05} />
@@ -98,14 +121,23 @@ export const VirtualCamera = forwardRef<
   );
 });
 
-/** The current step's part, outlined in the lens colour. */
-function GuideOutline({ part, fit, pen }: { part: GuidePart | undefined; fit: Fit; pen: string }) {
-  if (!part?.outline) return null;
+/** A part's outline: the current step's in the lens colour, the rest thin and white. */
+function GuideOutline({ part, fit, pen, focused }: { part: GuidePart; fit: Fit; pen: string; focused: boolean }) {
+  if (!part.outline) return null;
   const points = part.outline.map((q) => toView(q, fit)).map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ');
+  const color = focused ? pen : '#FFFFFF';
   return (
-    <Animated.View key={part.id} entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
+    <Animated.View entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
       <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-        <Polygon points={points} fill={pen} fillOpacity={0.14} stroke={pen} strokeWidth={2.5} strokeLinejoin="round" />
+        <Polygon
+          points={points}
+          fill={color}
+          fillOpacity={focused ? 0.14 : 0.06}
+          stroke={color}
+          strokeOpacity={focused ? 1 : 0.75}
+          strokeWidth={focused ? 2.5 : 1.5}
+          strokeLinejoin="round"
+        />
       </Svg>
     </Animated.View>
   );

@@ -24,7 +24,7 @@ export function CameraBlocked({
   const denied = reason === 'cameraDenied';
   return (
     <Animated.View entering={FadeIn.duration(260)} style={[StyleSheet.absoluteFill, styles.wrap]} pointerEvents="box-none">
-      <Animated.View entering={FadeInDown.delay(120).springify().damping(18)} style={styles.card}>
+      <Animated.View entering={FadeInDown.delay(120).duration(240)} style={styles.card}>
         <Text style={styles.lead}>{denied ? 'Lensi needs' : 'The camera'}</Text>
         <Text style={[styles.big, { color: pen }]}>{denied ? 'the camera' : "didn't start"}</Text>
         <Text style={styles.body}>

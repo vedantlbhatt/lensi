@@ -19,7 +19,7 @@ export function LensPicker({ lens, onPick }: { lens: Lens; onPick: (l: Lens) => 
         return (
           <Animated.View
             key={l.key}
-            entering={FadeInLeft.delay(i * 32).springify().damping(17).stiffness(260)}
+            entering={FadeInLeft.delay(i * 32).duration(240)}
             // Open with the current lens in view, even when it's one of the last.
             onLayout={on && i > 2 ? (e) => scroll.current?.scrollTo({ x: Math.max(0, e.nativeEvent.layout.x - 60), animated: false }) : undefined}
           >

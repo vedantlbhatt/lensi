@@ -22,7 +22,7 @@ export function DropMenu({ top, onPick, onClose }: { top: number; onPick: (c: Dr
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View
-        entering={ZoomIn.springify().damping(17).stiffness(240).withInitialValues({ transform: [{ scale: 0.6 }] })}
+        entering={ZoomIn.duration(240).withInitialValues({ transform: [{ scale: 0.6 }] })}
         exiting={ZoomOut.duration(160)}
         style={[styles.card, { top }]}
       >

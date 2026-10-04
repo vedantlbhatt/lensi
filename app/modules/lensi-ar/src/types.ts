@@ -60,6 +60,8 @@ export type LensiARViewRef = {
   /** Watch the part for a change that settles (a cap off, a valve turned); fires onGuideChange. Null stops. */
   guideWatch(id: string | null): Promise<void>;
   guideClear(): Promise<void>;
+  /** 0.5 (ultra-wide, where ARKit offers it) up to the camera's max; clamped natively. */
+  setZoom(zoom: number): Promise<void>;
 };
 
 export type GuideFrame = { frameId: string; uri: string; width: number; height: number };
@@ -88,7 +90,11 @@ export type LensiARViewProps = ViewProps & {
   onTrackingChange?: (e: { nativeEvent: TrackingEvent }) => void;
   onPinTap?: (e: { nativeEvent: { id: string } }) => void;
   onGuideChange?: (e: { nativeEvent: GuideChangeEvent }) => void;
+  /** How far this camera zooms (min is 0.5 where the ultra-wide is available, else 1). */
+  onZoomRange?: (e: { nativeEvent: ZoomRange }) => void;
 };
+
+export type ZoomRange = { min: number; max: number; zoom: number };
 
 export type Analysis = {
   width: number;
@@ -141,6 +147,8 @@ export type LensiARModuleShape = {
   /** Point prompt in normalized image coords. */
   segment(uri: string, x: number, y: number): Promise<Segment | null>;
   intelligenceStatus(): Promise<IntelligenceStatus>;
+  /** Load the on-device model before the first question (no-op where there is none). */
+  intelligencePrewarm(): Promise<void>;
   /** `request` is JSON: { imageUri, lens, marks, question?, history?, walkthrough? }. */
   intelligenceStart(requestId: string, request: string): Promise<void>;
   intelligenceCancel(requestId: string): Promise<void> | void;

@@ -22,6 +22,7 @@ import { MemoriesButton, MEMORIES_SIZE } from '../components/camera/MemoriesButt
 import { MicButton } from '../components/camera/MicButton';
 import { Shutter } from '../components/camera/Shutter';
 import { ToolRail } from '../components/camera/ToolRail';
+import { ZoomChips } from '../components/camera/ZoomChips';
 import { CaptureView, type Rect } from '../components/capture/CaptureView';
 import { MemoriesSheet } from '../components/memories/MemoriesSheet';
 import { SettingsSheet } from '../components/ui/SettingsSheet';
@@ -199,7 +200,12 @@ export default function Camera() {
   useEffect(() => {
     if (!cameraFront) return;
     let alive = true;
-    pickEngine(settings.brain).then((e) => alive && setEngine(e.id));
+    pickEngine(settings.brain).then((e) => {
+      if (!alive) return;
+      setEngine(e.id);
+      // Load Apple's model now, so the first question doesn't wait for it.
+      if (e.id === 'apple') void LensiAR.intelligencePrewarm().catch(() => {});
+    });
     return () => {
       alive = false;
     };
@@ -357,10 +363,35 @@ export default function Camera() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk]);
 
+  // Zoom: pinch the camera, or tap .5 / 1 / 2 / 5. The camera says how far it
+  // goes (.5 only where ARKit can track with the ultra-wide).
+  const [zoomRange, setZoomRange] = useState({ min: 1, max: 10 });
+  const [zoomShown, setZoomShown] = useState(1);
+  const zoomRef = useRef(1);
+  const pinchFrom = useRef(1);
+  const zoomTo = useCallback(
+    (z: number) => {
+      const v = Math.min(zoomRange.max, Math.max(zoomRange.min, z));
+      zoomRef.current = v;
+      camera.current?.setZoom(v);
+      // The label only needs tenths, so most pinch frames don't re-render.
+      setZoomShown(Math.round(v * 10) / 10);
+    },
+    [zoomRange],
+  );
+  const onZoomRange = useCallback((r: { min: number; max: number }) => setZoomRange({ min: r.min, max: r.max }), []);
+  const pinch = Gesture.Pinch()
+    .runOnJS(true)
+    .onBegin(() => {
+      pinchFrom.current = zoomRef.current;
+    })
+    .onUpdate((e) => zoomTo(pinchFrom.current * e.scale));
+
   // Swipe up anywhere for Memories; sideways changes the lens on a real camera
-  // and the demo scene on the virtual one.
+  // and the demo scene on the virtual one. One finger: two are a pinch.
   const swipe = Gesture.Pan()
     .runOnJS(true)
+    .maxPointers(1)
     .minDistance(30)
     .onEnd((e) => {
       if (e.translationY < -80 && Math.abs(e.translationY) > Math.abs(e.translationX)) setMemories(true);
@@ -395,13 +426,13 @@ export default function Camera() {
 
   return (
     <View style={styles.root}>
-      <GestureDetector gesture={Gesture.Simultaneous(swipe, tapToPin)}>
+      <GestureDetector gesture={Gesture.Simultaneous(swipe, tapToPin, pinch)}>
         <View style={StyleSheet.absoluteFill} collapsable={false}>
           <CameraSurface
             key={camKey}
             ref={camera}
             pen={pen}
-            brackets={settings.liveBrackets}
+            brackets={settings.liveBrackets && !guideLens}
             livePins={live}
             paused={!!open || memories}
             onFocusChange={setFocus}
@@ -413,6 +444,7 @@ export default function Camera() {
             }}
             onScene={onScene}
             onGuideChange={guide.onChange}
+            onZoomRange={onZoomRange}
             guidePins={guideLens ? { parts: guide.state.parts, focus: guide.part?.id ?? null } : undefined}
             pinInsets={guideLens && panelTop ? { top: insets.top + 56, bottom: Math.max(0, height - panelTop + 8) } : undefined}
             sceneKey={params.scene}
@@ -468,6 +500,7 @@ export default function Camera() {
                 <LensCarousel lens={lens} onChange={setLens} />
               </>
             ) : null}
+            <ZoomChips zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} />
             <GuidePanel
               state={guide.state}
               step={guide.step}
@@ -489,6 +522,7 @@ export default function Camera() {
           </View>
         ) : (
         <Animated.View style={[styles.bottom, { paddingBottom: insets.bottom + 18 }, bottomStyle]} pointerEvents="box-none">
+          <ZoomChips zoom={zoomShown} min={zoomRange.min} max={zoomRange.max} pen={pen} onZoom={zoomTo} />
           <FocusLabel label={focusText} tag={isVirtual ? (Platform.OS === 'web' ? 'Preview' : 'Simulator') : live ? 'Live' : null} pen={pen} />
           <LensCarousel lens={lens} onChange={setLens} />
           <View style={styles.row}>

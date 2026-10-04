@@ -159,7 +159,7 @@ export function InfoCard({
           </PressScale>
         ) : null}
         {onShow ? (
-          <Animated.View entering={FadeInDown.springify().damping(18)}>
+          <Animated.View entering={FadeInDown.duration(240)}>
             <PressScale onPress={onShow} accessibilityRole="button" accessibilityLabel="Show me where" scaleTo={0.93} haptic="medium">
               <View style={[styles.chip, { borderColor: lens.pen }]}>
                 <Icon name="pointer" size={14} color={lens.pen} fill={lens.pen} stroke={1.4} />
@@ -169,7 +169,7 @@ export function InfoCard({
           </Animated.View>
         ) : null}
         {suggestions.map((s, i) => (
-          <Animated.View key={s} entering={FadeInDown.delay(200 + i * 70).springify().damping(18)}>
+          <Animated.View key={s} entering={FadeInDown.delay(200 + i * 70).duration(240)}>
             <PressScale onPress={() => onSuggest(s)} accessibilityRole="button" accessibilityLabel={s} scaleTo={0.93} haptic="selection">
               <View style={styles.chip}>
                 <Text style={styles.chipText}>{s}</Text>

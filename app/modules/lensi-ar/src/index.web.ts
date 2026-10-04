@@ -127,6 +127,8 @@ export const LensiAR = {
     return { polygon, box: b, score: 0.9, engine: 'demo' };
   },
 
+  async intelligencePrewarm() {},
+
   async intelligenceStatus(): Promise<IntelligenceStatus> {
     return { available: true, images: true, reason: 'Scripted demo (web preview)' };
   },

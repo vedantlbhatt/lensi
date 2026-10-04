@@ -110,7 +110,7 @@ function Tile({ c, index, width, onOpen }: { c: Capture; index: number; width: n
     ref.current?.measureInWindow((x, y, w, hh) => onOpen(c.id, { x, y, w, h: hh }));
   };
   return (
-    <Animated.View entering={FadeInDown.delay(Math.min(index, 10) * 45).springify().damping(18)}>
+    <Animated.View entering={FadeInDown.delay(Math.min(index, 10) * 45).duration(240)}>
       <PressScale onPress={open} scaleTo={0.95} accessibilityRole="button" accessibilityLabel={c.annotation.title ?? 'Capture'}>
         <View ref={ref} collapsable={false} style={[styles.tile, { width, height: h }]}>
           <Image source={{ uri: c.media.stillUri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={160} />

@@ -12,6 +12,7 @@ declare class LensiARNative extends NativeModule<LensiAREvents> implements Lensi
   analyze: LensiARModuleShape['analyze'];
   segment: LensiARModuleShape['segment'];
   intelligenceStatus: LensiARModuleShape['intelligenceStatus'];
+  intelligencePrewarm: LensiARModuleShape['intelligencePrewarm'];
   intelligenceStart: LensiARModuleShape['intelligenceStart'];
   intelligenceCancel: LensiARModuleShape['intelligenceCancel'];
   speechRequestPermission: LensiARModuleShape['speechRequestPermission'];

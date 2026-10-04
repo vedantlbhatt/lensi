@@ -36,7 +36,7 @@ export function LabelMenu({
     <View style={StyleSheet.absoluteFill}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close label menu" />
       <Animated.View
-        entering={ZoomIn.springify().damping(15).stiffness(340)}
+        entering={ZoomIn.duration(240)}
         exiting={FadeOut.duration(120)}
         style={[styles.menu, { left: x, top: y, width: extra ? MENU.wide : MENU.w, transformOrigin: below ? 'center top' : 'center bottom' }]}
       >

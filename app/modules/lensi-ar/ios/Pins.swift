@@ -108,6 +108,8 @@ final class Pin {
   var guideShape: CAShapeLayer?
   var outlineScreenOrigin: CGPoint = .zero
   var outlineDistance: Float = 1
+  /// The zoom it was drawn at; it scales with the zoom from there.
+  var outlineZoom: CGFloat = 1
   var side: CGFloat = 1
 
   init(id: String, parentId: String?, world: simd_float3, text: String, color: UIColor) {
@@ -152,10 +154,11 @@ final class Pin {
     guideShape?.removeFromSuperlayer()
   }
 
+  /// Fades in from slightly small and stops: no spring, no overshoot.
   func popIn() {
-    label.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+    label.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
     label.alpha = 0
-    UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.62, initialSpringVelocity: 0.8) {
+    UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
       self.label.transform = .identity
       self.label.alpha = 1
     }

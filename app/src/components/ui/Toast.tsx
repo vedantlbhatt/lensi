@@ -35,7 +35,7 @@ export function ToastHost() {
       {t ? (
         <Animated.View
           key={t.id}
-          entering={SlideInUp.springify().damping(18)}
+          entering={SlideInUp.duration(240)}
           exiting={FadeOutUp.duration(200)}
           style={[styles.pill, t.action && styles.pillAction]}
           pointerEvents={t.action ? 'auto' : 'none'}

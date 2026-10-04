@@ -60,6 +60,10 @@ public class LensiARModule: Module {
       IntelligenceBridge.status()
     }
 
+    AsyncFunction("intelligencePrewarm") {
+      IntelligenceBridge.prewarm()
+    }
+
     AsyncFunction("intelligenceStart") { (requestId: String, request: String) in
       try IntelligenceBridge.start(requestId: requestId, json: request) { [weak self] body in
         self?.sendEvent("onIntelligence", body)
@@ -104,7 +108,7 @@ public class LensiARModule: Module {
     // MARK: The camera
 
     View(LensiARView.self) {
-      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap", "onGuideChange")
+      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap", "onGuideChange", "onZoomRange")
 
       Prop("showDetections") { (view: LensiARView, value: Bool) in
         view.showDetections = value
@@ -205,6 +209,10 @@ public class LensiARModule: Module {
 
       AsyncFunction("guideClear") { (view: LensiARView) in
         view.guideClear()
+      }.runOnQueue(.main)
+
+      AsyncFunction("setZoom") { (view: LensiARView, zoom: Double) in
+        view.setZoom(zoom)
       }.runOnQueue(.main)
     }
   }

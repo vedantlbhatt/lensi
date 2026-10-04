@@ -4,10 +4,10 @@ import { Pressable, type GestureResponderEvent, type PressableProps, type StyleP
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { getSettings } from '../lib/settings';
-import { springs } from '../theme/motion';
+import { springs, calm } from '../theme/motion';
 
 /**
- * Every tappable thing squishes under the thumb and settles with one small
+ * Every tappable thing squishes under the thumb and comes straight back, no
  * overshoot. `haptic` fires on press-in, where a real button clicks.
  */
 export function PressScale({
@@ -42,7 +42,7 @@ export function PressScale({
         onPressIn?.(e);
       }}
       onPressOut={(e: GestureResponderEvent) => {
-        s.value = withSpring(1, { ...springs.press, damping: 9 });
+        s.value = withSpring(1, calm({ ...springs.press, damping: 9 }));
         onPressOut?.(e);
       }}
     >

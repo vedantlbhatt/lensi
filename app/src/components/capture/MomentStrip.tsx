@@ -37,7 +37,7 @@ export function MomentStrip({
         const on = m.uri === active;
         const tag = photos ? String(i + 1) : fmt(m.t);
         return (
-          <Animated.View key={m.uri} entering={FadeInUp.delay(photos ? i * 50 : 600 + i * 70).springify().damping(16)}>
+          <Animated.View key={m.uri} entering={FadeInUp.delay(photos ? i * 50 : 600 + i * 70).duration(240)}>
             <PressScale
               onPress={() => onPick(m.uri)}
               haptic="selection"
@@ -56,7 +56,7 @@ export function MomentStrip({
         );
       })}
       {onAdd ? (
-        <Animated.View entering={FadeInUp.delay(moments.length * 50).springify().damping(16)}>
+        <Animated.View entering={FadeInUp.delay(moments.length * 50).duration(240)}>
           <PressScale onPress={onAdd} haptic="selection" scaleTo={0.9} accessibilityRole="button" accessibilityLabel="Add another photo">
             <View style={[styles.thumb, styles.add]}>
               <Icon name="plus" size={18} color={paper} stroke={2.2} />

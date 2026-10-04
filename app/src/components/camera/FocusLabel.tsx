@@ -10,7 +10,7 @@ export function FocusLabel({ label, tag, pen }: { label: string | null; tag?: st
   return (
     <View style={styles.slot} pointerEvents="none">
       {label ? (
-        <Animated.View key={label} entering={ZoomIn.springify().damping(16).stiffness(260)} exiting={FadeOut.duration(140)}>
+        <Animated.View key={label} entering={ZoomIn.duration(240)} exiting={FadeOut.duration(140)}>
           <Glass style={styles.pill}>
             <View style={styles.row}>
               {tag ? <Text style={styles.tag}>{tag}</Text> : null}

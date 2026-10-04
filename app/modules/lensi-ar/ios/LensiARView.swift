@@ -18,6 +18,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   let onTrackingChange = EventDispatcher()
   let onPinTap = EventDispatcher()
   let onGuideChange = EventDispatcher()
+  let onZoomRange = EventDispatcher()
 
   var showDetections = true
   /// Taps pin things in space only in live mode; otherwise the camera is just a viewfinder.
@@ -71,6 +72,19 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   private var paused = false
   private var configuration: ARWorldTrackingConfiguration?
+
+  // Zoom. 0.5 is the ultra-wide camera, when ARKit offers it for world
+  // tracking on this phone; above 1 is a crop of the main camera, applied to
+  // the camera view about its centre. Every camera-to-screen mapping below
+  // goes through `zoomed`, so tags, outlines, brackets and taps stay on target.
+  static let maxZoom: CGFloat = 10
+  /// What the user asked for: 0.5…maxZoom.
+  private var zoomFactor: CGFloat = 1
+  /// The crop part of it, on whichever camera is running.
+  private var zoom: CGFloat = 1
+  private var onUltraWide = false
+  private lazy var ultraWideFormat: ARConfiguration.VideoFormat? =
+    ARWorldTrackingConfiguration.supportedVideoFormats.first { $0.captureDeviceType == .builtInUltraWideCamera }
   private var recorder: Recorder?
   private let photoContext = CIContext(options: [.useSoftwareRenderer: false])
 
@@ -105,7 +119,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    sceneView.frame = bounds
+    // bounds + center, not frame: the camera view carries the zoom as a transform.
+    sceneView.bounds = CGRect(origin: .zero, size: bounds.size)
+    sceneView.center = CGPoint(x: bounds.midX, y: bounds.midY)
     pinLayer.frame = bounds
     boxLayer.frame = bounds
     focusLayer.frame = bounds
@@ -128,6 +144,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let config = configuration ?? makeConfiguration()
     configuration = config
     sceneView.session.run(config)
+    onZoomRange(["min": ultraWideFormat != nil ? 0.5 : 1, "max": Double(Self.maxZoom), "zoom": Double(zoomFactor)])
     let link = CADisplayLink(target: self, selector: #selector(tick))
     link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
     link.add(to: .main, forMode: .common)
@@ -167,6 +184,47 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
   }
 
+  // MARK: - Zoom
+
+  func setZoom(_ requested: Double) {
+    guard requested.isFinite else { return }
+    let lowest: CGFloat = ultraWideFormat != nil ? 0.5 : 1
+    let z = min(max(CGFloat(requested), lowest), Self.maxZoom)
+    zoomFactor = z
+    let ultra = z < 1 && ultraWideFormat != nil
+    if ultra != onUltraWide { useUltraWide(ultra) }
+    // The ultra-wide sees twice as wide: 0.5 is its whole picture, 0.7 a 1.4x crop.
+    zoom = ultra ? z / 0.5 : z
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    sceneView.transform = CGAffineTransform(scaleX: zoom, y: zoom)
+    CATransaction.commit()
+    layoutPins()
+  }
+
+  /// Swaps the camera under the same session; the world (and every pin) carries on.
+  private func useUltraWide(_ ultra: Bool) {
+    guard let config = configuration else { return }
+    if ultra, let format = ultraWideFormat {
+      config.videoFormat = format
+    } else if let format = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
+      config.videoFormat = format
+    } else if let format = ARWorldTrackingConfiguration.supportedVideoFormats.first {
+      config.videoFormat = format
+    }
+    onUltraWide = ultra
+    if running { sceneView.session.run(config) }
+  }
+
+  /// A point in the unzoomed camera view, where it is on screen now.
+  private func zoomed(_ p: CGPoint) -> CGPoint {
+    CGPoint(x: bounds.midX + (p.x - bounds.midX) * zoom, y: bounds.midY + (p.y - bounds.midY) * zoom)
+  }
+
+  private func unzoomed(_ p: CGPoint) -> CGPoint {
+    CGPoint(x: bounds.midX + (p.x - bounds.midX) / zoom, y: bounds.midY + (p.y - bounds.midY) / zoom)
+  }
+
   // MARK: - Coordinate spaces
   //
   // "upright" = normalized portrait camera image, top-left origin (what Vision
@@ -176,12 +234,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let raw = CGPoint(x: p.y, y: 1 - p.x)
     let t = frame.displayTransform(for: .portrait, viewportSize: bounds.size)
     let n = raw.applying(t)
-    return CGPoint(x: n.x * bounds.width, y: n.y * bounds.height)
+    return zoomed(CGPoint(x: n.x * bounds.width, y: n.y * bounds.height))
   }
 
   private func viewToUpright(_ p: CGPoint, frame: ARFrame) -> CGPoint {
     let t = frame.displayTransform(for: .portrait, viewportSize: bounds.size).inverted()
-    let raw = CGPoint(x: p.x / bounds.width, y: p.y / bounds.height).applying(t)
+    let v = unzoomed(p)
+    let raw = CGPoint(x: v.x / bounds.width, y: v.y / bounds.height).applying(t)
     return CGPoint(x: 1 - raw.y, y: raw.x)
   }
 
@@ -350,7 +409,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let local = simd_mul(camera.transform.inverse, simd_float4(world, 1))
     guard local.z < -0.02 else { return nil }
     let p = sceneView.projectPoint(SCNVector3(world.x, world.y, world.z))
-    return (CGPoint(x: CGFloat(p.x), y: CGFloat(p.y)), -local.z)
+    return (zoomed(CGPoint(x: CGFloat(p.x), y: CGFloat(p.y))), -local.z)
   }
 
   private func layoutPins() {
@@ -389,7 +448,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       if pin.parentId == Self.guideParent { drawGuideOutline(pin) }
 
       if let outline = pin.outline {
-        let s = CGFloat(pin.outlineDistance / max(dist, 0.05))
+        let s = CGFloat(pin.outlineDistance / max(dist, 0.05)) * zoom / pin.outlineZoom
         outline.setAffineTransform(
           CGAffineTransform(translationX: p.x, y: p.y)
             .scaledBy(x: s, y: s)
@@ -407,9 +466,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     var local = simd_mul(camera.transform.inverse, simd_float4(pin.world, 1))
     local.z = -max(abs(local.z), 0.05)
     let ahead = simd_mul(camera.transform, local)
-    let q = sceneView.projectPoint(SCNVector3(ahead.x, ahead.y, ahead.z))
+    let projected = sceneView.projectPoint(SCNVector3(ahead.x, ahead.y, ahead.z))
+    let q = zoomed(CGPoint(x: CGFloat(projected.x), y: CGFloat(projected.y)))
     let middle = CGPoint(x: area.midX, y: area.midY)
-    var d = CGVector(dx: CGFloat(q.x) - middle.x, dy: CGFloat(q.y) - middle.y)
+    var d = CGVector(dx: q.x - middle.x, dy: q.y - middle.y)
     // Dead behind: say "turn around" by pointing down, where the panel is.
     if abs(d.dx) + abs(d.dy) < 1 { d = CGVector(dx: 0, dy: 1) }
     pin.label.pointing = atan2(d.dy, d.dx)
@@ -534,6 +594,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     pin.outline = shape
     pin.outlineScreenOrigin = origin
     pin.outlineDistance = dist
+    pin.outlineZoom = zoom
 
     let draw = CABasicAnimation(keyPath: "strokeEnd")
     draw.fromValue = 0
@@ -600,8 +661,19 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   /// High-res frames can be 48 MP on Pro phones; 12 MP (3024) is plenty to read labels.
-  private func writePhoto(_ buffer: CVPixelBuffer, maxSide: CGFloat) -> Result<[String: Any], Error> {
+  /// `crop` is in upright 0…1 coordinates, top-left origin.
+  private func writePhoto(_ buffer: CVPixelBuffer, maxSide: CGFloat, crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) -> Result<[String: Any], Error> {
     var image = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    if crop != CGRect(x: 0, y: 0, width: 1, height: 1) {
+      let e = image.extent
+      let r = CGRect(
+        x: e.minX + crop.minX * e.width,
+        y: e.minY + (1 - crop.maxY) * e.height,
+        width: crop.width * e.width,
+        height: crop.height * e.height
+      ).integral
+      image = image.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+    }
     let longest = max(image.extent.width, image.extent.height)
     if longest > maxSide {
       let scale = maxSide / longest
@@ -761,10 +833,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       done(.failure(LensiError.unavailable("The camera isn't ready yet.")))
       return
     }
+    // Only what's on screen: the camera image is wider than the screen (and
+    // zoom crops it further), and the plan should be made from what you see.
+    let full = CGRect(x: 0, y: 0, width: 1, height: 1)
+    let shown = viewRectToUpright(bounds, frame: frame).intersection(full)
+    let crop = shown.isNull || shown.width < 0.05 || shown.height < 0.05 ? full : shown
     let id = UUID().uuidString
     guideFrames[id] = GuideFrameContext(
-      selection: Selection(frame: frame, crop: CGRect(x: 0, y: 0, width: 1, height: 1)),
-      points: frame.rawFeaturePoints?.points ?? []
+      selection: Selection(frame: frame, crop: crop),
+      points: frame.rawFeaturePoints?.points ?? [],
+      crop: crop
     )
     guideFrameOrder.append(id)
     // The plan's look (the first) stays for the whole job: its parts' outlines
@@ -773,7 +851,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let buffer = frame.capturedImage
     visionQueue.async { [weak self] in
       guard let self else { return }
-      let result = self.writePhoto(buffer, maxSide: 1600)
+      let result = self.writePhoto(buffer, maxSide: 1600, crop: crop)
       DispatchQueue.main.async {
         switch result {
         case .success(var info):
@@ -807,7 +885,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     var world: [simd_float3] = []
     var i = 0
     while i + 1 < points.count {
-      if let w = plane.onPlane(CGPoint(x: points[i], y: points[i + 1])) { world.append(w) }
+      if let w = plane.onPlane(ctx.full(CGPoint(x: points[i], y: points[i + 1]))) { world.append(w) }
       i += 2
     }
     guard world.count >= 3 else { return }
@@ -824,11 +902,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     layoutPins()
   }
 
-  /// The current step's part, outlined where it is now; nothing for the rest,
-  /// or while any corner of it is behind the phone.
+  /// A part's outline where it is now: the current step's in the lens colour,
+  /// the rest thin and white; none while any corner is behind the phone.
   private func drawGuideOutline(_ pin: Pin) {
     guard let shape = pin.guideShape else { return }
-    guard pin.label.emphasis == .focused, pin.label.pointing == nil, !pin.label.isHidden,
+    guard pin.label.pointing == nil, !pin.label.isHidden,
           let camera = sceneView.session.currentFrame?.camera else {
       shape.isHidden = true
       return
@@ -841,13 +919,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         return
       }
       let q = sceneView.projectPoint(SCNVector3(w.x, w.y, w.z))
-      let p = CGPoint(x: CGFloat(q.x), y: CGFloat(q.y))
+      let p = zoomed(CGPoint(x: CGFloat(q.x), y: CGFloat(q.y)))
       if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
     }
     path.close()
     shape.path = path.cgPath
-    shape.strokeColor = accent.cgColor
-    shape.fillColor = accent.withAlphaComponent(0.14).cgColor
+    let focused = pin.label.emphasis == .focused
+    let color: UIColor = focused ? accent : .white
+    shape.lineWidth = focused ? 2.5 : 1.5
+    shape.strokeColor = color.withAlphaComponent(focused ? 1 : 0.75).cgColor
+    shape.fillColor = color.withAlphaComponent(focused ? 0.14 : 0.06).cgColor
     shape.isHidden = false
   }
 
@@ -947,9 +1028,16 @@ private struct Tracked {
 private struct GuideFrameContext {
   let selection: Selection
   let points: [simd_float3]
+  /// The part of the camera image the guide photo shows (upright 0…1).
+  var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
 
-  func anchor(at upright: CGPoint, session: ARSession) -> simd_float3 {
-    let (origin, dir) = selection.ray(upright)
+  /// A point in the guide photo, in the whole camera image.
+  func full(_ p: CGPoint) -> CGPoint {
+    CGPoint(x: crop.minX + p.x * crop.width, y: crop.minY + p.y * crop.height)
+  }
+
+  func anchor(at point: CGPoint, session: ARSession) -> simd_float3 {
+    let (origin, dir) = selection.ray(full(point))
     let query = ARRaycastQuery(origin: origin, direction: dir, allowing: .estimatedPlane, alignment: .any)
     if let hit = session.raycast(query).first {
       let p = simd_make_float3(hit.worldTransform.columns.3)

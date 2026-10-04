@@ -32,7 +32,7 @@ export function ToolRail({
   return (
     <View style={styles.rail}>
       {items.map((it, i) => (
-        <Animated.View key={it.key} entering={FadeInRight.delay(80 + i * 60).springify().damping(18)}>
+        <Animated.View key={it.key} entering={FadeInRight.delay(80 + i * 60).duration(240)}>
           {it.node}
         </Animated.View>
       ))}

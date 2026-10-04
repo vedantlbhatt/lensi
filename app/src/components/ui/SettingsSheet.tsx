@@ -23,6 +23,7 @@ import { clearCaptures, useCaptureList } from '../../lib/store';
 import { PressScale } from '../../motion/PressScale';
 import { faint, glassStrong, hairline, ink, mist, paper } from '../../theme/tokens';
 import { face } from '../../theme/type';
+import { calm } from '../../theme/motion';
 
 const BRAINS: { key: Brain; name: string; note: string }[] = [
   { key: 'auto', name: 'Auto', note: 'On-device first, then the cloud, then eyes only.' },
@@ -46,7 +47,7 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
     })
     .onEnd((e) => {
       if (e.translationY > 110 || e.velocityY > 800) scheduleOnRN(onClose);
-      else pull.value = withSpring(0, { damping: 20, stiffness: 260 });
+      else pull.value = withSpring(0, calm({ damping: 20, stiffness: 260 }));
     });
   const pulled = useAnimatedStyle(() => ({ transform: [{ translateY: pull.value }] }));
   const [cloudOk, setCloudOk] = useState<boolean | null>(null);
@@ -65,7 +66,7 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
       </Animated.View>
       <Animated.View style={[styles.sheetPos, pulled]} pointerEvents="box-none">
         <Animated.View
-          entering={SlideInDown.springify().damping(20).stiffness(190)}
+          entering={SlideInDown.duration(240)}
           exiting={SlideOutDown.duration(220)}
           style={[styles.sheet, { maxHeight: screen.height - insets.top - 24 }]}
         >
@@ -93,7 +94,7 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
                 const on = s.brain === b.key;
                 return (
                   <PressScale key={b.key} onPress={() => setSettings({ brain: b.key })} scaleTo={0.94} haptic="selection" containerStyle={{ flex: 1 }} style={{ flex: 1 }} accessibilityRole="button" accessibilityLabel={b.name}>
-                    <Animated.View layout={LinearTransition.springify().damping(20)} style={[styles.segItem, on && { backgroundColor: pen }]}>
+                    <Animated.View layout={LinearTransition.duration(240)} style={[styles.segItem, on && { backgroundColor: pen }]}>
                       <Text style={[styles.segText, on && { color: ink }]} numberOfLines={1}>
                         {b.name}
                       </Text>

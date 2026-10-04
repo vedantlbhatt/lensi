@@ -10,6 +10,7 @@ import {
   type LensiARViewRef,
   type SelectEvent,
   type TrackingEvent,
+  type ZoomRange,
 } from '../../../modules/lensi-ar/src';
 import type { GuidePart } from '../../lib/guide';
 import type { Picked } from '../../lib/media';
@@ -25,6 +26,8 @@ export type CameraHandle = {
   setTorch(on: boolean): Promise<boolean>;
   /** Virtual camera only: show the next/previous demo scene. */
   nextScene?(dir: 1 | -1): void;
+  /** Zoom the camera (clamped to what it can do; see onZoomRange). */
+  setZoom(zoom: number): void;
   /** The native view, for live pins. Null on the virtual camera. */
   native?: LensiARViewRef | null;
   /**
@@ -59,6 +62,7 @@ export const CameraSurface = forwardRef<
     onPinTap?: (id: string) => void;
     onScene?: (s: DemoScene) => void;
     onGuideChange?: (e: GuideChangeEvent) => void;
+    onZoomRange?: (r: ZoomRange) => void;
     guidePins?: VirtualGuidePins;
     /** Room the chrome takes above and below: a guide tag whose part is out of view waits inside it. */
     pinInsets?: { top: number; bottom: number };
@@ -85,6 +89,7 @@ export const CameraSurface = forwardRef<
           stopRecording: () => virtual.current?.stopRecording() ?? Promise.resolve(null),
           setTorch: () => Promise.resolve(false),
           nextScene: (dir: 1 | -1) => virtual.current?.nextScene?.(dir),
+          setZoom: (z: number) => virtual.current?.setZoom(z),
           native: null,
           guide: {
             capture: async () => {
@@ -141,6 +146,9 @@ export const CameraSurface = forwardRef<
         get native() {
           return native.current;
         },
+        setZoom: (z: number) => {
+          void native.current?.setZoom(z).catch(() => {});
+        },
         guide: {
           capture: async () => (await native.current?.guideCapture()) ?? null,
           pin: async (frameId: string, part: GuidePart) => {
@@ -165,7 +173,17 @@ export const CameraSurface = forwardRef<
   );
 
   if (isVirtual) {
-    return <VirtualCamera ref={virtual} pen={props.pen} brackets={props.brackets && !props.paused} onScene={props.onScene} guidePins={props.guidePins} sceneKey={props.sceneKey} />;
+    return (
+      <VirtualCamera
+        ref={virtual}
+        pen={props.pen}
+        brackets={props.brackets && !props.paused}
+        onScene={props.onScene}
+        onZoomRange={props.onZoomRange}
+        guidePins={props.guidePins}
+        sceneKey={props.sceneKey}
+      />
+    );
   }
   return (
     <LensiARView
@@ -181,6 +199,7 @@ export const CameraSurface = forwardRef<
       onSelect={(e) => props.onSelect?.(e.nativeEvent)}
       onPinTap={(e) => props.onPinTap?.(e.nativeEvent.id)}
       onGuideChange={(e) => props.onGuideChange?.(e.nativeEvent)}
+      onZoomRange={(e) => props.onZoomRange?.(e.nativeEvent)}
     />
   );
 });

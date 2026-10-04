@@ -17,7 +17,7 @@ import Animated, {
 import Svg, { Circle } from 'react-native-svg';
 
 import { getSettings } from '../../lib/settings';
-import { springs } from '../../theme/motion';
+import { springs, calm } from '../../theme/motion';
 import { paper, record } from '../../theme/tokens';
 import { face } from '../../theme/type';
 
@@ -117,7 +117,7 @@ export function Shutter({
     })
     .onEnd((_e, ok) => {
       if (!ok) return;
-      press.value = withSequence(withTiming(1, { duration: 50 }), withSpring(0, { ...springs.press, damping: 8 }));
+      press.value = withSequence(withTiming(1, { duration: 50 }), withSpring(0, calm({ ...springs.press, damping: 8 })));
       haptic(Haptics.ImpactFeedbackStyle.Medium);
       onPhoto();
     })

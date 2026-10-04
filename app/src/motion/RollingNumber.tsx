@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type TextStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { calm } from '../theme/motion';
 
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
@@ -32,7 +33,7 @@ export function RollingNumber({
 function Place({ digit, style, lineHeight }: { digit: number; style?: StyleProp<TextStyle>; lineHeight: number }) {
   const y = useSharedValue(digit);
   useEffect(() => {
-    y.value = withSpring(digit, { damping: 16, stiffness: 180, mass: 0.8 });
+    y.value = withSpring(digit, calm({ damping: 16, stiffness: 180, mass: 0.8 }));
   }, [digit, y]);
   const a = useAnimatedStyle(() => ({ transform: [{ translateY: -y.value * lineHeight }] }));
   return (

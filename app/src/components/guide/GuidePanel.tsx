@@ -70,7 +70,7 @@ export function GuidePanel({
   const talking = listening && !handsFree;
 
   return (
-    <Animated.View entering={FadeInDown.springify().damping(18)} style={styles.card}>
+    <Animated.View entering={FadeInDown.duration(240)} style={styles.card}>
       {talking ? (
         <Animated.View key="listening" entering={FadeIn.duration(160)} style={styles.block}>
           <Text style={styles.kicker}>Listening. Pause when you&rsquo;re done.</Text>

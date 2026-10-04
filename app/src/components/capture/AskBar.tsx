@@ -77,7 +77,7 @@ export function AskBar({
         accessibilityLabel="Ask a question about this capture"
       />
       {hasText && !voice.listening ? (
-        <Animated.View entering={ZoomIn.springify().damping(14)} exiting={FadeOut.duration(120)}>
+        <Animated.View entering={ZoomIn.duration(240)} exiting={FadeOut.duration(120)}>
           <PressScale onPress={send} accessibilityRole="button" accessibilityLabel="Send" scaleTo={0.85}>
             <View style={[styles.send, { backgroundColor: pen }]}>
               <Icon name="send" size={20} color={ink} stroke={2.3} />

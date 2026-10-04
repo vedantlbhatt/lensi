@@ -52,6 +52,24 @@ enum IntelligenceBridge {
     throw LensiError.unavailable("Apple Intelligence needs iOS 26 or later.")
   }
 
+  #if canImport(FoundationModels)
+  /// Holds the warmed session so the loaded model isn't let go before it's used.
+  private static var warm: AnyObject?
+  #endif
+
+  /// Loads the on-device model ahead of the first question; otherwise the
+  /// first plan waits for it to load.
+  static func prewarm() {
+    #if canImport(FoundationModels)
+    if #available(iOS 26.0, *) {
+      guard case .available = SystemLanguageModel.default.availability else { return }
+      let session = LanguageModelSession()
+      session.prewarm()
+      warm = session
+    }
+    #endif
+  }
+
   static func cancel(requestId: String) {
     #if canImport(FoundationModels)
     if #available(iOS 26.0, *) {

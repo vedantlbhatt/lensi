@@ -29,6 +29,10 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
   /** Parts whose shape was asked for (SAM at the part's point) or sent to the camera. */
   const shaped = useRef(new Set<string>());
   const drawn = useRef(new Set<string>());
+  // Two kinds of brain work: the plan, made once per job with its steps
+  // streaming in, and everything after it (checks, answers). Moving on or
+  // asking cancels the second kind, never a plan that's still arriving.
+  const planWork = useRef<AbortController | null>(null);
   const work = useRef<AbortController | null>(null);
   const advance = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -42,17 +46,28 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     if (advance.current) clearTimeout(advance.current);
     advance.current = null;
   }, []);
+  const cancelAll = useCallback(() => {
+    planWork.current?.abort();
+    planWork.current = null;
+    cancelWork();
+  }, [cancelWork]);
 
-  /** Run the brain once over a fresh frame; resolves with what it said, or null if cancelled. */
+  /** Run the brain once over a fresh frame; resolves false if it was cancelled. */
   const runBrain = useCallback(
-    async (f: GuideFrame, req: Omit<EngineRequest, 'imageUri' | 'width' | 'height' | 'lens'>, onEvent: (e: EngineEvent) => void) => {
+    async (
+      f: GuideFrame,
+      req: Omit<EngineRequest, 'imageUri' | 'width' | 'height' | 'lens'>,
+      onEvent: (e: EngineEvent) => void,
+      slot: 'plan' | 'work' = 'work',
+    ) => {
+      const ref = slot === 'plan' ? planWork : work;
       const controller = new AbortController();
-      work.current?.abort();
-      work.current = controller;
+      ref.current?.abort();
+      ref.current = controller;
       const engine = await pickEngine(getSettings().brain);
       await engine.run({ imageUri: f.uri, width: f.width, height: f.height, lens: 'guide', ...req }, onEvent, controller.signal);
       if (controller.signal.aborted) return false;
-      if (work.current === controller) work.current = null;
+      if (ref.current === controller) ref.current = null;
       return true;
     },
     [],
@@ -71,8 +86,10 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     async (task: string) => {
       const text = task.trim();
       if (!text) return;
-      cancelWork();
+      cancelAll();
       hush();
+      const t0 = Date.now();
+      const since = () => `${((Date.now() - t0) / 1000).toFixed(1)} s`;
       pinned.current.clear();
       shaped.current.clear();
       drawn.current.clear();
@@ -86,19 +103,27 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
       }
       frame.current = f;
       looks.current = new Map([[f.frameId, f]]);
+      console.log(`[lensi] guide: frame ${since()}`);
       let regions: Region[] = [];
       let hint: string | null = null;
       try {
-        const built = buildRegions((await LensiAR.analyze(f.uri)) as AnalysisLike);
+        const analysis = (await LensiAR.analyze(f.uri)) as AnalysisLike & { ms?: number };
+        const built = buildRegions(analysis);
         regions = built.regions;
         hint = built.subject?.text ?? null;
+        console.log(`[lensi] guide: eyes ${since()} (analysis ${analysis.ms ?? '?'} ms, ${regions.length} marks)`);
       } catch {}
       let noModel: string | null = null;
       // Counted here, not read back from state: a fast server's whole plan can
       // arrive in one tick, before React has rendered any of it.
       const got = { steps: 0, parts: 0 };
       try {
+        let first = true;
         const ok = await runBrain(f, { regions, hint, question: text, walkthrough: true, guide: true }, (e) => {
+          if (first && (e.kind === 'step' || e.kind === 'callout')) {
+            first = false;
+            console.log(`[lensi] guide: first ${e.kind} ${since()}`);
+          }
           const region = 'mark' in e && e.mark ? regions.find((r) => r.mark === e.mark) : undefined;
           const at = region ? anchorFor(region) : 'at' in e ? e.at : undefined;
           const outline = region?.polygon;
@@ -114,13 +139,13 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
           // Eyes only: the summary says why there are no steps.
           else if (e.kind === 'summary') noModel = e.text;
           else if (e.kind === 'error') dispatch({ type: 'note', note: { text: e.text, tone: 'warn' } });
-        });
+        }, 'plan');
         if (!ok) return;
       } catch {
         dispatch({ type: 'note', note: { text: "Couldn't plan that one. Try saying it another way.", tone: 'warn' } });
       }
       // The model failed outright (a VM, assets missing): the eyes still tag the parts.
-      if (!got.steps && !got.parts && !work.current) {
+      if (!got.steps && !got.parts && !planWork.current) {
         try {
           await visionEngine.run(
             { imageUri: f.uri, width: f.width, height: f.height, lens: 'guide', regions, hint, question: text, walkthrough: true, guide: true },
@@ -137,6 +162,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
           );
         } catch {}
       }
+      console.log(`[lensi] guide: planned ${since()} (${got.steps} steps, ${got.parts} parts)`);
       dispatch({ type: 'planned' });
       if (noModel && !got.steps) {
         const tagged = got.parts > 0;
@@ -149,7 +175,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
         });
       }
     },
-    [camera, cancelWork, capture, runBrain],
+    [camera, cancelAll, capture, runBrain],
   );
 
   /** Ask whether the current step is done, from a fresh look. */
@@ -244,7 +270,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     if (step) void say(step.text);
   }, []);
   const stop = useCallback(() => {
-    cancelWork();
+    cancelAll();
     hush();
     pinned.current.clear();
     shaped.current.clear();
@@ -253,7 +279,7 @@ export function useGuide(camera: RefObject<CameraHandle | null>, opts: { enabled
     looks.current = new Map();
     void camera.current?.guide.clear().catch(() => {});
     dispatch({ type: 'reset' });
-  }, [camera, cancelWork]);
+  }, [camera, cancelAll]);
 
   /** Whatever was said or typed (or already read as a command): a command, a question, or a new job. */
   const handle = useCallback(
