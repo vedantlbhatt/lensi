@@ -140,4 +140,58 @@ enum OutlineMath {
     let middle = co + (cn - co) * follow
     return (zip(old, shape).map { o, n in middle + (o - co) * keep + n * (1 - keep) }, change)
   }
+
+  /// Triangles covering a simple polygon (indices into `p`, three a triangle), by clipping ears;
+  /// a fan from the first point if the polygon crosses itself and runs out of ears.
+  static func triangulate(_ p: [SIMD2<Float>]) -> [Int] {
+    let n = p.count
+    guard n >= 3 else { return [] }
+    var area: Float = 0
+    for i in 0..<n {
+      let a = p[i], b = p[(i + 1) % n]
+      area += a.x * b.y - b.x * a.y
+    }
+    // Counter-clockwise from here on.
+    var left = area >= 0 ? Array(0..<n) : Array((0..<n).reversed())
+    func cross(_ o: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    }
+    func inTriangle(_ q: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) -> Bool {
+      cross(a, b, q) > 0 && cross(b, c, q) > 0 && cross(c, a, q) > 0
+    }
+    var out: [Int] = []
+    out.reserveCapacity(3 * (n - 2))
+    var k = 0
+    var sinceEar = 0
+    while left.count > 3 {
+      if sinceEar > left.count {
+        // No ear left: the polygon crosses itself. Fan the rest.
+        for i in 1..<(left.count - 1) { out += [left[0], left[i], left[i + 1]] }
+        return out
+      }
+      let m = left.count
+      let i0 = left[(k + m - 1) % m], i1 = left[k % m], i2 = left[(k + 1) % m]
+      let a = p[i0], b = p[i1], c = p[i2]
+      var ear = cross(a, b, c) > 0
+      if ear {
+        for j in left where j != i0 && j != i1 && j != i2 {
+          if inTriangle(p[j], a, b, c) {
+            ear = false
+            break
+          }
+        }
+      }
+      if ear {
+        out += [i0, i1, i2]
+        left.remove(at: k % m)
+        sinceEar = 0
+        k = k % max(left.count, 1)
+      } else {
+        k = (k + 1) % m
+        sinceEar += 1
+      }
+    }
+    out += left
+    return out
+  }
 }

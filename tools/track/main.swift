@@ -338,9 +338,11 @@ final class Runner {
       let mask = try sam.segment(id: "frame", points: points, labels: [1], box: box, prior: tracking ? prediction : nil)
       cuts += 1
       var cut = mask.polygon.count > 2 && mask.score >= 0.5 ? OutlineMath.resample(mask.polygon, scale: scale) : nil
-      if tracking, let c = cut, let prediction, !LiveTracker.accepts(c, predicted: prediction, gate: gate) {
-        cut = nil
-        refused += 1
+      if tracking, let c = cut, let prediction {
+        // As the app takes it (LensiARView.segmentLive): up close, the whole outline goes where
+        // the part on the picture went.
+        cut = LiveTracker.follow(cut: c, predicted: prediction, gate: gate)
+        if cut == nil { refused += 1 }
       }
       if let c = cut {
         var next = c

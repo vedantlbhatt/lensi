@@ -41,8 +41,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// is LiveShape (LiveWorld.swift, which tools/pin runs on ARKit's recorded poses); their
   /// layers are here, and where each was last drawn on screen (a pinned thing's tag sits above it).
   private var liveShapes: [String: LiveShape] = [:]
-  private var liveLayers: [String: OutlineLayer] = [:]
+  private var liveLayers: [String: OutlineNode] = [:]
   private var liveBoxes: [String: CGRect] = [:]
+  /// Every outline (live ones, the strip's, guide parts'), drawn by SceneKit in the world with
+  /// the camera image, so they never slide against it (OutlineNode).
+  private let outlines = SCNNode()
+  /// How fast the phone itself turns (radians a second) and moves (metres a second), steadied:
+  /// past `fastTurn` or `fastMove` the picture is a blur and what the flow and SAM say about a
+  /// thing's own motion is mostly the phone's, so it isn't taken as the thing's (ARKit already
+  /// keeps every outline where it is in the world).
+  private var phoneTurn: Float = 0
+  private var phoneMove: Float = 0
+  private var lastPhonePose: (transform: simd_float4x4, t: TimeInterval)?
+  static let fastTurn: Float = 1.0
+  static let fastMove: Float = 0.5
+  private var phoneFast: Bool { phoneTurn > Self.fastTurn || phoneMove > Self.fastMove }
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -138,6 +151,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     sceneView.session.delegate = self
     sceneView.automaticallyUpdatesLighting = false
     sceneView.rendersCameraGrain = false
+    // Outlines are drawn in the scene (OutlineNode): smooth edges on their thin lines.
+    sceneView.antialiasingMode = .multisampling4X
+    let scene = SCNScene()
+    scene.rootNode.addChildNode(outlines)
+    sceneView.scene = scene
     addSubview(sceneView)
 
     boxLayer.fillColor = nil
@@ -300,9 +318,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let now = shape.placed(at: frame.timestamp)
       // A pinned thing SAM has lost (behind a hand, out of view) is only taken back where it
       // was and as it was: asked for as a still thing, strictly.
-      let asking = LiveTracker.asking(sizesPerSecond: shape.misses < 2 ? CGFloat(shape.sizesPerSecond) : 0)
+      let asking = LiveTracker.asking(still: shape.misses >= 2 || shape.still)
+      // Up close only part of it is on the picture: SAM is asked about that part (and the rest
+      // goes where that part goes: LiveTracker.follow), unless too little of it is left to say.
       guard let predicted = uprightPoints(now, camera: frame.camera, upright: upright),
-            predicted.contains(where: { unit.contains($0) }),
+            LiveTracker.visibleFraction(predicted) >= LiveTracker.minVisible,
             let p = LiveTracker.prompt(for: predicted, scale: upright, grow: asking.grow) else { return nil }
       return LivePrompt(key: key, point: p.point, box: p.box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
                         follows: true, gate: asking.gate, smoothing: asking.smoothing)
@@ -373,11 +393,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             prior: p.predicted)
           guard mask.score >= (p.predicted == nil ? 0.6 : 0.5), mask.polygon.count > 2 else { continue }
           // Evenly spaced (in pixels).
-          let ring = OutlineMath.resample(mask.polygon, scale: upright)
-          // Following a thing: a cut that doesn't fit where it should be is something else.
-          if let predicted = p.predicted, !LiveTracker.accepts(ring, predicted: predicted, gate: p.gate) {
-            refused += 1
-            continue
+          var ring = OutlineMath.resample(mask.polygon, scale: upright)
+          // Following a thing: a cut that doesn't fit where it should be is something else. Up
+          // close the cut is only the part on the picture, and the whole outline goes where it went.
+          if let predicted = p.predicted {
+            guard let taken = LiveTracker.follow(cut: ring, predicted: predicted, gate: p.gate) else {
+              refused += 1
+              continue
+            }
+            ring = taken
           }
           // Onto the thing's plane in the world.
           let plane = camera.withPlane(through: p.anchor)
@@ -452,16 +476,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // A pinned thing is blended back however long it was lost: its cut was asked for where
         // it should be, and had to fit it there.
         if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
-          shape.take(world, at: t, how: prompt.smoothing)
+          // While the phone itself moves fast, where the cut landed says little about the
+          // thing's own speed.
+          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast)
           liveShapes[key] = shape
         } else {
           // New, or not seen for a while: start over.
-          liveLayers[key]?.removeFromSuperlayer()
-          let layer = OutlineLayer()
-          layer.isHidden = true
-          // Under the tags.
-          pinLayer.layer.insertSublayer(layer, at: 0)
-          liveLayers[key] = layer
+          liveLayers[key]?.removeFromParentNode()
+          let node = OutlineNode()
+          node.isHidden = true
+          outlines.addChildNode(node)
+          liveLayers[key] = node
           var shape = LiveShape(world: world, at: t, follows: prompt.follows)
           if let pin = pins[key] {
             let offset = pin.world - OutlineMath.centre(world)
@@ -505,7 +530,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       DispatchQueue.main.async {
         self.flowBusy = false
         self.flowMs = self.flowMs == 0 ? ms : self.flowMs * 0.8 + ms * 0.2
-        guard let now, let previous, t - previous.t < 0.25, self.liveSegments else { return }
+        // Not while the phone itself moves fast: the picture is a blur, and what moved in it is
+        // mostly the phone, which ARKit has already taken care of.
+        guard let now, let previous, t - previous.t < 0.25, self.liveSegments, !self.phoneFast else { return }
         self.carryLive(from: previous.frame, previous.camera, at: previous.t, to: now, camera, at: t)
       }
     }
@@ -531,70 +558,84 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private func layoutLive() {
     guard !liveShapes.isEmpty else { return }
     let now = CACurrentMediaTime()
-    let toCamera = sceneView.session.currentFrame?.camera.transform.inverse
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    defer { CATransaction.commit() }
+    let eye = outlineEye()
     for (key, var shape) in liveShapes {
       let pin = pins[key]
       let age = now - shape.cut
-      guard let layer = liveLayers[key] else {
+      guard let node = liveLayers[key] else {
         liveShapes[key] = nil
         continue
       }
       if pin == nil || (!shape.pinned && (shape.misses >= 2 || age > Self.liveStale)) {
-        retire(layer)
+        node.retire()
         liveShapes[key] = nil
         liveLayers[key] = nil
         liveBoxes[key] = nil
         continue
       }
-      guard let toCamera, pin.map({ !$0.label.isHidden && $0.label.pointing == nil }) ?? true else {
-        layer.isHidden = true
+      guard let eye, pin.map({ !$0.label.isHidden && $0.label.pointing == nil }) ?? true else {
+        node.isHidden = true
         liveBoxes[key] = nil
         continue
       }
       let drawn = shape.draw(at: now)
       liveShapes[key] = shape
-      guard let path = screenPath(drawn, toCamera: toCamera) else {
-        layer.isHidden = true
+      guard let box = screenBounds(drawn, toCamera: eye.toCamera) else {
+        node.isHidden = true
         liveBoxes[key] = nil
         continue
       }
       let focused = pin?.label.emphasis == .focused
       let strong = focused || shape.pinned
       let color: UIColor = shape.pinned ? (pin?.label.color ?? accent) : focused ? accent : .white
-      layer.setOutline(path.cgPath)
-      layer.style(color, width: strong ? 2.5 : 1.5, stroke: strong ? 1 : 0.75, fill: focused ? 0.14 : shape.pinned ? 0.1 : 0.07)
-      layer.isHidden = false
-      liveBoxes[key] = path.bounds
+      node.style(color, width: strong ? 2.5 : 1.5, stroke: strong ? 1 : 0.75, fill: focused ? 0.14 : shape.pinned ? 0.1 : 0.07)
+      node.setOutline(drawn, eye: eye)
+      node.isHidden = false
+      liveBoxes[key] = box
     }
   }
 
-  /// World points as a closed path on screen; nil when any is behind the phone.
-  private func screenPath(_ world: [simd_float3], toCamera: simd_float4x4) -> UIBezierPath? {
-    let path = UIBezierPath()
-    for (i, w) in world.enumerated() {
+  /// How the camera view sees the world now, for drawing outlines in it (OutlineNode); nil
+  /// before the first frame.
+  private func outlineEye() -> OutlineEye? {
+    guard bounds.width > 0, let camera = sceneView.session.currentFrame?.camera else { return nil }
+    // The camera image fills the view (aspect fill), upright: its pixels to the view's points.
+    let res = camera.imageResolution
+    let scale = max(bounds.width / res.height, bounds.height / res.width)
+    return OutlineEye(transform: camera.transform, pointsPerMetre: camera.intrinsics[0][0] * Float(scale), zoom: Float(zoom))
+  }
+
+  /// Where world points are on screen, as the box around them; nil when any is behind the phone.
+  private func screenBounds(_ world: [simd_float3], toCamera: simd_float4x4) -> CGRect? {
+    var x0 = CGFloat.greatestFiniteMagnitude, y0 = CGFloat.greatestFiniteMagnitude
+    var x1 = -CGFloat.greatestFiniteMagnitude, y1 = -CGFloat.greatestFiniteMagnitude
+    for w in world {
       guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else { return nil }
       let q = sceneView.projectPoint(SCNVector3(w.x, w.y, w.z))
       let v = zoomed(CGPoint(x: CGFloat(q.x), y: CGFloat(q.y)))
-      if i == 0 { path.move(to: v) } else { path.addLine(to: v) }
+      x0 = min(x0, v.x); y0 = min(y0, v.y); x1 = max(x1, v.x); y1 = max(y1, v.y)
     }
-    path.close()
-    return path
+    return world.isEmpty ? nil : CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
   }
 
   /// Not re-cut for this long (seconds), an outline is let go even if nothing said it's wrong.
   private static let liveStale: CFTimeInterval = 4
 
-  /// A live outline SAM has lost fades out rather than blinking off.
-  private func retire(_ layer: CALayer) {
-    CATransaction.begin()
-    CATransaction.setDisableActions(false)
-    CATransaction.setAnimationDuration(0.2)
-    CATransaction.setCompletionBlock { layer.removeFromSuperlayer() }
-    layer.opacity = 0
-    CATransaction.commit()
+  /// How fast the phone itself is turning and moving (`phoneTurn`, `phoneMove`), from ARKit's
+  /// poses one frame to the next.
+  private func trackPhone(_ frame: ARFrame) {
+    let m = frame.camera.transform
+    defer { lastPhonePose = (transform: m, t: frame.timestamp) }
+    guard let last = lastPhonePose else { return }
+    let dt = Float(frame.timestamp - last.t)
+    guard dt > 0.001, dt < 0.5 else { return }
+    let a = last.transform
+    let r = simd_float3x3(simd_make_float3(a.columns.0), simd_make_float3(a.columns.1), simd_make_float3(a.columns.2)).transpose
+      * simd_float3x3(simd_make_float3(m.columns.0), simd_make_float3(m.columns.1), simd_make_float3(m.columns.2))
+    let turned = acos(min(max((r[0][0] + r[1][1] + r[2][2] - 1) / 2, -1), 1))
+    let moved = simd_distance(simd_make_float3(a.columns.3), simd_make_float3(m.columns.3))
+    phoneTurn = phoneTurn * 0.6 + turned / dt * 0.4
+    phoneMove = phoneMove * 0.6 + moved / dt * 0.4
   }
 
   /// Live outlines off (or the camera paused under a capture): what SAM was keeping up goes,
@@ -603,8 +644,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for key in Array(liveShapes.keys) where liveShapes[key]?.pinned != true {
       liveShapes[key] = nil
     }
-    for (key, layer) in liveLayers where liveShapes[key] == nil {
-      layer.removeFromSuperlayer()
+    for (key, node) in liveLayers where liveShapes[key] == nil {
+      node.removeFromParentNode()
       liveLayers[key] = nil
       liveBoxes[key] = nil
     }
@@ -701,10 +742,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
     recorder?.append(pixelBuffer: frame.capturedImage, time: frame.timestamp)
+    trackPhone(frame)
     if guideWatchId != nil { watchGuide(frame) }
     segmentLive(frame)
     flowLive(frame)
-    guard showDetections, !visionBusy, frame.timestamp - lastVisionTime > 0.066 else { return }
+    // Not while a finger is on the strip: the things it offers were found when it landed, and
+    // the Neural Engine and GPU are better spent keeping the camera and the outlines smooth.
+    guard showDetections, scrubThings.isEmpty, !scrubBusy, !visionBusy, frame.timestamp - lastVisionTime > 0.066 else { return }
     visionBusy = true
     lastVisionTime = frame.timestamp
     let buffer = frame.capturedImage
@@ -1090,10 +1134,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// YOLO's name for it, when it's one of YOLO's things.
     let label: String?
     let confidence: Float
-    let layer: OutlineLayer
     /// Its pin once it's pinned (holding on it again does nothing).
     var pinId: String?
   }
+
+  /// The strip's highlighted thing, the only one drawn while a finger is on it.
+  private var scrubNode: OutlineNode?
 
   /// One thing found in the picture (upright 0…1).
   private struct ScrubFind {
@@ -1192,12 +1238,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     laid.sort { ($0.at.x, $0.at.y) < ($1.at.x, $1.at.y) }
     laid = Array(laid.prefix(14))
     scrubThings = laid.map { l in
-      let layer = OutlineLayer()
-      layer.isHidden = true
-      pinLayer.layer.insertSublayer(layer, at: 0)
-      return ScrubThing(world: l.world, label: l.find.label, confidence: l.find.confidence, layer: layer, pinId: nil)
+      ScrubThing(world: l.world, label: l.find.label, confidence: l.find.confidence, pinId: nil)
     }
     scrubIndex = nil
+    scrubNode?.removeFromParentNode()
+    let node = OutlineNode()
+    node.isHidden = true
+    outlines.addChildNode(node)
+    scrubNode = node
     layoutScrub()
     return laid.map { l in
       let name: Any = l.find.label.map { $0 as Any } ?? NSNull()
@@ -1232,13 +1280,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     shape.pinned = true
     shape.tagOffset = .zero
     liveShapes[id] = shape
-    let layer = OutlineLayer()
-    layer.isHidden = true
-    pinLayer.layer.insertSublayer(layer, at: 0)
-    liveLayers[id] = layer
+    let node = OutlineNode()
+    node.isHidden = true
+    outlines.addChildNode(node)
+    liveLayers[id] = node
     addPin(Pin(id: id, parentId: nil, world: centre, text: thing.label ?? "Looking", color: accent))
     scrubThings[index].pinId = id
-    thing.layer.isHidden = true
+    // Drawn as its pin from now on.
+    layoutScrub()
     layoutLive()
     layoutPins()
     let buffer = frame.capturedImage
@@ -1254,10 +1303,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     return id
   }
 
-  /// The finger left the strip: the things fade (a pinned one stays, as its pin).
+  /// The finger left the strip: the highlighted thing fades (a pinned one stays, as its pin).
   func scrubEnd() {
     scrubSession += 1
-    for thing in scrubThings { retire(thing.layer) }
+    scrubNode?.retire()
+    scrubNode = nil
     scrubThings = []
     scrubIndex = nil
   }
@@ -1267,24 +1317,18 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for id in pinOrder where pins[id]?.parentId == nil { removePin(id: id) }
   }
 
-  /// The strip's things where they are now: the highlighted one bold in the lens colour, the
-  /// rest faint, so the finger sees what it can reach. A pinned one is drawn as its pin instead.
+  /// The strip's highlighted thing where it is now, bold in the lens colour; nothing else is
+  /// drawn (the strip's ticks say how many there are). A pinned one is drawn as its pin instead.
   private func layoutScrub() {
-    guard !scrubThings.isEmpty else { return }
-    let toCamera = sceneView.session.currentFrame?.camera.transform.inverse
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    defer { CATransaction.commit() }
-    for (i, thing) in scrubThings.enumerated() {
-      guard let toCamera, thing.pinId == nil, let path = screenPath(thing.world, toCamera: toCamera) else {
-        thing.layer.isHidden = true
-        continue
-      }
-      let on = i == scrubIndex
-      thing.layer.setOutline(path.cgPath)
-      thing.layer.style(on ? accent : .white, width: on ? 2.5 : 1.25, stroke: on ? 1 : 0.5, fill: on ? 0.16 : 0)
-      thing.layer.isHidden = false
+    guard let node = scrubNode else { return }
+    guard let i = scrubIndex, scrubThings.indices.contains(i), scrubThings[i].pinId == nil,
+          let eye = outlineEye(), screenBounds(scrubThings[i].world, toCamera: eye.toCamera) != nil else {
+      node.isHidden = true
+      return
     }
+    node.style(accent, width: 2.5, stroke: 1, fill: 0.16)
+    node.setOutline(scrubThings[i].world, eye: eye)
+    node.isHidden = false
   }
 
   // MARK: - Photo, video, torch
@@ -1550,10 +1594,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     guard world.count >= 3 else { return }
     pin.guideOutline = world
     if pin.guideShape == nil {
-      let shape = OutlineLayer()
+      let shape = OutlineNode()
       shape.isHidden = true
-      // Under the tags.
-      pinLayer.layer.insertSublayer(shape, at: 0)
+      outlines.addChildNode(shape)
       pin.guideShape = shape
     }
     layoutPins()
@@ -1563,26 +1606,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// the rest thin and white; none while any corner is behind the phone.
   private func drawGuideOutline(_ pin: Pin) {
     guard let shape = pin.guideShape else { return }
-    guard pin.label.pointing == nil, !pin.label.isHidden, !hasLiveOutline(pin),
-          let camera = sceneView.session.currentFrame?.camera else {
+    guard pin.label.pointing == nil, !pin.label.isHidden, !hasLiveOutline(pin), let eye = outlineEye(),
+          pin.guideOutline.allSatisfy({ simd_mul(eye.toCamera, simd_float4($0, 1)).z < -0.02 }) else {
       shape.isHidden = true
       return
     }
-    let toCamera = camera.transform.inverse
-    let path = UIBezierPath()
-    for (i, w) in pin.guideOutline.enumerated() {
-      guard simd_mul(toCamera, simd_float4(w, 1)).z < -0.02 else {
-        shape.isHidden = true
-        return
-      }
-      let q = sceneView.projectPoint(SCNVector3(w.x, w.y, w.z))
-      let p = zoomed(CGPoint(x: CGFloat(q.x), y: CGFloat(q.y)))
-      if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
-    }
-    path.close()
-    shape.setOutline(path.cgPath)
     let focused = pin.label.emphasis == .focused
     shape.style(focused ? accent : .white, width: focused ? 2.5 : 1.5, stroke: focused ? 1 : 0.75, fill: focused ? 0.14 : 0.06)
+    shape.setOutline(pin.guideOutline, eye: eye)
     shape.isHidden = false
   }
 

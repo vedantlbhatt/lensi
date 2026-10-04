@@ -472,12 +472,12 @@ for (k, f) in window.enumerated() {
           let now = shape.placed(at: t)
           var grow = run.grow
           if run.bySpeed {
-            let asking = LiveTracker.asking(sizesPerSecond: CGFloat(shape.sizesPerSecond))
+            let asking = LiveTracker.asking(still: shape.still)
             grow = asking.grow
             gate = asking.gate
             smoothing = asking.smoothing
           }
-          if let p = camera.upright(now), p.contains(where: { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0) }),
+          if let p = camera.upright(now), LiveTracker.visibleFraction(p) >= LiveTracker.minVisible,
              let prompt = LiveTracker.prompt(for: p, scale: size, grow: grow) {
             point = prompt.point
             box = prompt.box
@@ -495,10 +495,12 @@ for (k, f) in window.enumerated() {
           run.cuts += 1
           var world: [simd_float3]?
           if m.score >= (predicted == nil ? 0.6 : 0.5), m.polygon.count > 2 {
-            let ring = OutlineMath.resample(m.polygon, scale: size)
-            if let predicted, !LiveTracker.accepts(ring, predicted: predicted, gate: gate) {
+            var ring: [CGPoint]? = OutlineMath.resample(m.polygon, scale: size)
+            // LensiARView.segmentLive: up close the whole outline goes where the part in view went.
+            if let predicted, let cut = ring { ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: gate) }
+            if ring == nil {
               run.refused += 1
-            } else {
+            } else if let ring {
               let plane = camera.withPlane(through: anchor)
               let laid = ring.compactMap { plane.onPlane($0) }
               if laid.count == ring.count { world = laid }

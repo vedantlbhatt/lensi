@@ -21,14 +21,102 @@ enum LiveTracker {
     let box: CGRect
   }
 
-  /// The SAM prompt for a thing predicted to be at `predicted` (a closed outline).
+  /// The SAM prompt for a thing predicted to be at `predicted` (a closed outline). Up close
+  /// part of it can be off the picture: the point is then well inside the part that's on it.
   static func prompt(for predicted: [CGPoint], scale: CGSize, grow: CGFloat = LiveTracker.grow) -> Prompt? {
     guard predicted.count >= 3 else { return nil }
     let r = bounds(predicted)
     guard r.width > 0, r.height > 0 else { return nil }
-    let box = r.insetBy(dx: -r.width * grow, dy: -r.height * grow).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    let box = r.insetBy(dx: -r.width * grow, dy: -r.height * grow).intersection(picture)
     guard !box.isNull, box.width > 0.004, box.height > 0.004 else { return nil }
-    return Prompt(point: interiorPoint(predicted, scale: scale), box: box)
+    let visible = clipped(predicted)
+    guard visible.count >= 3 else { return nil }
+    return Prompt(point: interiorPoint(visible, scale: scale), box: box)
+  }
+
+  /// The whole picture, in the normalized space everything here is in.
+  static let picture = CGRect(x: 0, y: 0, width: 1, height: 1)
+
+  /// Less than this much of a thing on the picture (by area), SAM isn't asked about it: what's
+  /// left is too little to say where the rest went. ARKit keeps it where it was meanwhile.
+  static let minVisible: CGFloat = 0.12
+
+  /// A thing whose outline is at least this much on the picture is taken as wholly in view.
+  static let wholeVisible: CGFloat = 0.95
+
+  /// What a cut says about a thing predicted at `predicted`: the outline to take (upright,
+  /// like both), or nil when the cut is something else. Up close only part of a thing is on the
+  /// picture, and SAM can only cut that part: it's judged against the part of the prediction
+  /// that's on the picture, and rather than shrinking the thing to what's in view, the whole
+  /// prediction moves the way the cut's own edges moved (the ones not on the picture's edge).
+  static func follow(cut: [CGPoint], predicted: [CGPoint], gate: Gate = .loose) -> [CGPoint]? {
+    guard cut.count >= 3, predicted.count >= 3 else { return nil }
+    let visible = clipped(predicted)
+    guard visible.count >= 3, accepts(cut, predicted: visible, gate: gate) else { return nil }
+    guard visibleFraction(predicted) < wholeVisible else { return cut }
+    let fit = edgeFit(from: bounds(visible), to: bounds(cut))
+    return predicted.map { CGPoint(x: fit.to.x + ($0.x - fit.from.x) * fit.scale, y: fit.to.y + ($0.y - fit.from.y) * fit.scale) }
+  }
+
+  /// How a box moved and grew, from the sides of it that are really its own: a side on the
+  /// picture's edge is where the picture ends, not where the thing does. A point of `a` (the
+  /// middle of an axis with both sides free, else its free side; along an axis with neither,
+  /// it didn't move as far as this can tell), where it went in `b`, and how much bigger `b` is
+  /// (from an axis with both sides free; getting closer, a thing grows the same both ways).
+  static func edgeFit(from a: CGRect, to b: CGRect, margin: CGFloat = 0.01) -> (from: CGPoint, to: CGPoint, scale: CGFloat) {
+    func free(_ v: CGFloat, low: Bool) -> Bool { low ? v > margin : v < 1 - margin }
+    let lx = free(a.minX, low: true) && free(b.minX, low: true), hx = free(a.maxX, low: false) && free(b.maxX, low: false)
+    let ly = free(a.minY, low: true) && free(b.minY, low: true), hy = free(a.maxY, low: false) && free(b.maxY, low: false)
+    var scales: [CGFloat] = []
+    if lx, hx, a.width > 0.005 { scales.append(b.width / a.width) }
+    if ly, hy, a.height > 0.005 { scales.append(b.height / a.height) }
+    let scale = scales.isEmpty ? 1 : min(max(scales.reduce(0, +) / CGFloat(scales.count), 0.7), 1.4)
+    func matched(_ lo: Bool, _ hi: Bool, _ a0: CGFloat, _ a1: CGFloat, _ b0: CGFloat, _ b1: CGFloat) -> (CGFloat, CGFloat) {
+      if lo && hi { return ((a0 + a1) / 2, (b0 + b1) / 2) }
+      if lo { return (a0, b0) }
+      if hi { return (a1, b1) }
+      return ((a0 + a1) / 2, (a0 + a1) / 2)
+    }
+    let (ax, bx) = matched(lx, hx, a.minX, a.maxX, b.minX, b.maxX)
+    let (ay, by) = matched(ly, hy, a.minY, a.maxY, b.minY, b.maxY)
+    return (CGPoint(x: ax, y: ay), CGPoint(x: bx, y: by), scale)
+  }
+
+  /// The part of a closed outline on the picture (Sutherland-Hodgman against its four edges).
+  static func clipped(_ poly: [CGPoint]) -> [CGPoint] {
+    guard poly.count >= 3 else { return [] }
+    if poly.allSatisfy({ $0.x >= 0 && $0.x <= 1 && $0.y >= 0 && $0.y <= 1 }) { return poly }
+    // Each edge of the picture: which side of it is in, and where a segment crosses it.
+    let edges: [(inside: (CGPoint) -> Bool, cross: (CGPoint, CGPoint) -> CGPoint)] = [
+      ({ $0.x >= 0 }, { a, b in CGPoint(x: 0, y: a.y + (b.y - a.y) * (0 - a.x) / (b.x - a.x)) }),
+      ({ $0.x <= 1 }, { a, b in CGPoint(x: 1, y: a.y + (b.y - a.y) * (1 - a.x) / (b.x - a.x)) }),
+      ({ $0.y >= 0 }, { a, b in CGPoint(x: a.x + (b.x - a.x) * (0 - a.y) / (b.y - a.y), y: 0) }),
+      ({ $0.y <= 1 }, { a, b in CGPoint(x: a.x + (b.x - a.x) * (1 - a.y) / (b.y - a.y), y: 1) }),
+    ]
+    var out = poly
+    for edge in edges {
+      let input = out
+      out = []
+      guard var a = input.last else { break }
+      for b in input {
+        let ina = edge.inside(a), inb = edge.inside(b)
+        if inb {
+          if !ina { out.append(edge.cross(a, b)) }
+          out.append(b)
+        } else if ina {
+          out.append(edge.cross(a, b))
+        }
+        a = b
+      }
+    }
+    return out.count >= 3 ? out : []
+  }
+
+  /// How much of an outline is on the picture, by area.
+  static func visibleFraction(_ poly: [CGPoint]) -> CGFloat {
+    let whole = area(poly)
+    guard whole > 0 else { return 0 }
+    return min(area(clipped(poly)) / whole, 1)
   }
 
   /// How closely a cut must match where the thing should be to be taken as it.
@@ -54,8 +142,19 @@ enum LiveTracker {
   /// a thing that moves or bends really changes, and the strict gate would refuse it (loose,
   /// within a wider box, as OutlineMath.steady's standard). tools/pin and tools/track measure both.
   static func asking(sizesPerSecond speed: CGFloat) -> (grow: CGFloat, gate: Gate, smoothing: OutlineMath.Smoothing) {
-    speed < stillBelow ? (0.1, .strict, .still) : (grow, .loose, .standard)
+    asking(still: speed < stillBelow)
   }
+
+  /// The same for a thing already judged still or moving (LiveShape.still, which doesn't
+  /// flip back and forth on one noisy cut).
+  static func asking(still: Bool) -> (grow: CGFloat, gate: Gate, smoothing: OutlineMath.Smoothing) {
+    still ? (0.1, .strict, .still) : (grow, .loose, .standard)
+  }
+
+  /// A still thing counts as moving from this speed (its own sizes a second), and a moving one
+  /// as still again under `stillBelow`: in between it stays as it was, so one noisy cut
+  /// doesn't swap how it's asked about, blended and drawn.
+  static let movingAbove: CGFloat = 0.8
 
   /// Whether `cut` is the same thing as `predicted`: it overlaps it, and it's about the
   /// same size (it hasn't swallowed the background or shrunk to a speck).
