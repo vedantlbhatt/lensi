@@ -35,9 +35,25 @@ def main():
     data = json.load(open(json_path))
     name = data["name"]
     runs = {r["label"]: r for r in data["runs"]}
-    turn = lambda flat: [(flat[i + 1], 1 - flat[i]) for i in range(0, len(flat) - 1, 2)]
+    # The iPad was held whichever way; turn each frame so the room's up is up (the harness
+    # says where up points in the recorded image: x right, y up).
+    ux, uy = data.get("upInImage", [0, 1])
+    if abs(uy) >= abs(ux):
+        quarter = 0 if uy > 0 else 2
+    else:
+        quarter = 3 if ux > 0 else 1  # clockwise quarter turns
+    def upright_frame(img):
+        for _ in range(quarter):
+            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        return img
+    def place(x, y):
+        # A recorded-image point, after the same quarter turns.
+        for _ in range(quarter):
+            x, y = 1 - y, x
+        return x, y
+    turn = lambda flat: [place(flat[i + 1], 1 - flat[i]) for i in range(0, len(flat) - 1, 2)]
     frames = [os.path.join(scene, "vga_wide", f) for f in data["frameNames"]]
-    first = cv2.imread(frames[0])
+    first = upright_frame(cv2.imread(frames[0]))
     h, w = first.shape[:2]
     fps = 30
     s = 2
@@ -53,6 +69,7 @@ def main():
         img = cv2.imread(path)
         if img is None:
             continue
+        img = upright_frame(img)
         big = cv2.resize(img, (w * s, h * s), interpolation=cv2.INTER_CUBIC)
         big = outline(big, turn(app["outlines"][i]), PEN, 2.5 * s)
         big = caption(big, [f"{CAPTIONS[app_label]}: the {data['thing']}"], size=13 * s)

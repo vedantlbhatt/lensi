@@ -217,6 +217,31 @@ guard let best = bestChoice else {
   exit(1)
 }
 let thing = boxes[best.box]
+
+/// Up, in the recording's world: the axis the hand-drawn boxes stand along (they're drawn
+/// upright), pointing from the things to the camera.
+func worldUp() -> simd_float3 {
+  let axes = [simd_float3(1, 0, 0), simd_float3(0, 1, 0), simd_float3(0, 0, 1)]
+  var votes = [0, 0, 0]
+  for box in boxes {
+    // Edges from corner 0: the box's three axes.
+    for k in [1, 2, 4] where k < box.corners.count {
+      let e = simd_normalize(box.corners[k] - box.corners[0])
+      for (i, a) in axes.enumerated() where abs(simd_dot(e, a)) > 0.99 { votes[i] += 1 }
+    }
+  }
+  let up = axes[votes.firstIndex(of: votes.max() ?? 0) ?? 1]
+  let above = window.compactMap { cameras[$0] }.reduce(Float(0)) { $0 + simd_dot(simd_make_float3($1.transform.columns.3) - thing.centre, up) }
+  return above >= 0 ? up : -up
+}
+let up = worldUp()
+/// Which way up points in the recorded (sideways) image: (right, up) in the camera's x and y.
+let upInImage = window.compactMap { cameras[$0] }.reduce(simd_float2.zero) { sum, camera in
+  let r = simd_float3x3(columns: (simd_make_float3(camera.transform.columns.0), simd_make_float3(camera.transform.columns.1),
+                                  simd_make_float3(camera.transform.columns.2)))
+  let c = r.transpose * up
+  return sum + simd_float2(c.x, c.y)
+}
 let window = Array(best.start..<(best.start + windowLength))
 print(String(format: "%@: the %@, frames %ld-%ld (%.1f s); the camera travels %.0f cm and turns %.0f degrees",
              name, thing.label, window.first!, window.last!, pngs[window.last!].t - pngs[window.first!].t,
@@ -524,6 +549,7 @@ let summary: [String: Any] = [
   "name": name, "thing": thing.label, "frames": frameNames.count, "frameNames": frameNames,
   "travelCm": Double(best.travel * 100), "turnDegrees": Double(best.turn * 180 / .pi),
   "truthJerk": truthJerk, "encodeMs": mean(encodeMs), "width": Int(size.width), "height": Int(size.height),
+  "upInImage": [Double(upInImage.x), Double(upInImage.y)],
   "reference": reference.map { $0.flatMap { [Double($0.x), Double($0.y)] } }, "runs": runsOut,
 ]
 let data = try JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys])
