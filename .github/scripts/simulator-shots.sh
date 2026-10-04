@@ -137,6 +137,19 @@ scenario 10d-zoom-dial 12 "lensi:///?scene=truck&zoom=2.7"
 # runtime from GitHub, restarts into it, and says which update it's running (the toast; the
 # device log has AppDelegate's "starting from update").
 scenario 10e-over-the-air 45 "lensi:///?scene=cars&ota=1"
+# ...and a cold start after it runs that update instead of setting it aside. React Native asks
+# AppDelegate for the bundle more than once a launch, and the mark the first ask leaves once
+# counted against the second (plugins/withOTA.js): every update lasted one launch.
+scenario 10e2-over-the-air-relaunch 12 "lensi:///?scene=cars"
+OTA_SEEN=$(xcrun simctl spawn "$DEV" log show --last 2m --style compact --predicate 'process == "Lensi"' 2>/dev/null | grep "Lensi\[$PID:" | grep "over the air" || true)
+tl "over the air, cold start: ${OTA_SEEN:-nothing logged}"
+OTA_BROKEN=""
+case "$OTA_SEEN" in
+  *"set aside"*) OTA_BROKEN="a cold start set its own update aside" ;;
+  *"starting from update"*) ;;
+  *) OTA_BROKEN="a cold start after the update didn't start from it" ;;
+esac
+[ -z "$OTA_BROKEN" ] || echo "over the air: $OTA_BROKEN" >> "$OUT/problems.txt"
 
 # The same job with steps: the Lensi server in mock mode answers it with a scripted
 # plan (no model, no key), so the real app's panel, tags and outline can be filmed.
@@ -187,3 +200,8 @@ find "$HOME/Library/Logs/DiagnosticReports" -newermt "$START" -type f \( -name '
 for f in "$OUT"/stdout-*.txt "$OUT"/stderr-*.txt; do [ -s "$f" ] || rm -f "$f"; done
 grep -h -iE "terminating|uncaught|exception|JSError|error" "$OUT"/stderr-*.txt 2>/dev/null | head -50 > "$OUT/uncaught.txt" || true
 ls -la "$OUT"
+# An iPhone that only ever runs its build's own JavaScript is a regression nothing else shows.
+if [ -n "$OTA_BROKEN" ]; then
+  echo "::error::Over the air: $OTA_BROKEN"
+  exit 1
+fi
