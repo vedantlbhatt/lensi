@@ -113,6 +113,19 @@ CI also builds for the iOS 27 Simulator, drives scripted captures through deep l
 
 At 4 cuts a second (a hot phone, or a guide part waiting its turn) coasting loses fast things (dog J 32%, drifting car 10%) and LiveFlow keeps them (73%, 53%). LiveFlow costs 2-3 ms a frame plus about 1 ms per outline on a Mac core. Not measured here: ARKit (the phone's own motion), SAM's speed on a phone's Neural Engine, heat. `bash tools/track/ci.sh` reproduces it on a Mac; results and videos land on the `ci-track` branch.
 
+### Pinned while the phone moves, on real ARKit recordings
+
+The footage above has no camera pose. `tools/pin` runs the app's world anchoring on Apple's ARKitScenes (iPad Pro captures with ARKit's own recorded pose and lens for every frame, and 3D boxes drawn around the furniture by hand; CC BY-NC-SA): `FrozenCamera` and `LiveShape` (`LiveWorld.swift`, shared with the app), LiveTracker, LiveFlow and SAM, over 3 s stretches where a still thing stays in view while the camera moves the most. "On the box" is how much of the outline lies on the thing's hand-drawn 3D box as each pose sees it (no SAM in that check); lurch is next to the box's own, which is all camera motion. The app's camera math puts the boxes' corners within 0.00 px of the dataset's own projection.
+
+| scan, 3 s | camera | no ARKit (SAM at a fixed place) | ARKit alone (one cut) | the app | box's own lurch |
+|---|---|---|---|---|---|
+| kitchen cabinet | 66 cm, 54 degrees | 16% on the box, 5.7 px lurch | 94%, 1.0 px | 89%, 3.6 px | 0.9 px |
+| TV | 80 cm, 47 degrees | 21%, 9.1 px | 88%, 0.7 px | 94%, 0.8 px | 0.7 px |
+| chair | 206 cm, 58 degrees | 68%, 41.1 px | 92%, 1.6 px | 96%, 3.1 px | 1.5 px |
+| cabinet | 77 cm, 38 degrees | 48%, 47.1 px | 99.8%, 0.8 px | 98.4%, 1.9 px | 0.8 px |
+
+ARKit alone keeps an outline on a still thing as steadily as the thing itself moves on screen; SAM's re-cuts keep its shape right as the view turns (on the kitchen cabinet, J against SAM asked with the box goes 83% to 84%, on the chair 49% to 73%). Re-cuts are asked by how fast the thing itself moves (ARKit takes the phone's motion out): strict for a still one, loose for one that moves, since a strict gate refuses the real changes of a moving, bending thing (parkour 60% to 19%) and a loose one let the wooden floor creep into a wooden table (56% to 86% on the kitchen cabinet with the change). Not handled: things SAM can't cut from a point, such as a glass-topped open-frame table, where SAM cuts the rug seen through the glass. `bash tools/pin/ci.sh` on a Mac reproduces it (the scans are fetched from Apple, 1-2 GB each); results and videos land on the `ci-track-lab` branch.
+
 ## Design
 
 - **Type:** SF Pro, the iPhone's own, in sentence case. No display faces, no monospace, no italics. (The web preview substitutes Inter.)
