@@ -262,3 +262,49 @@ func checkFlow(_ urls: [URL]) -> Bool {
   }
   return ok
 }
+
+/// FrozenCamera (LiveWorld.swift), the app's camera math, on a camera turned and moved
+/// off-axis with a real phone's lens: a picture point cast into the world and seen again lands
+/// where it started; laid on a plane, it's on the plane and on its ray.
+func checkCamera() -> Bool {
+  var failures: [String] = []
+  func expect(_ condition: Bool, _ what: String) { if !condition { failures.append(what) } }
+  // An iPhone's main camera at 1920 x 1440: fx = fy ~ 1450 px, centre a little off.
+  let k = simd_float3x3(columns: (simd_float3(1450, 0, 0), simd_float3(0, 1452, 0), simd_float3(962.5, 718.3, 1)))
+  let turn = simd_float3x3(simd_quatf(angle: 0.7, axis: simd_normalize(simd_float3(0.3, 1, -0.2))))
+  let pose = simd_float4x4(columns: (simd_float4(turn.columns.0, 0), simd_float4(turn.columns.1, 0),
+                                     simd_float4(turn.columns.2, 0), simd_float4(0.4, 1.3, -0.8, 1)))
+  let camera = FrozenCamera(transform: pose, intrinsics: k, resolution: CGSize(width: 1920, height: 1440))
+  var worst: CGFloat = 0
+  for p in [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.1, y: 0.2), CGPoint(x: 0.9, y: 0.75), CGPoint(x: 0.33, y: 0.97)] {
+    let (origin, dir) = camera.ray(p)
+    for depth: Float in [0.3, 1.2, 4] {
+      guard let back = camera.upright([origin + dir * depth])?.first else {
+        failures.append("a point \(depth) m in front of the camera is behind it")
+        continue
+      }
+      worst = max(worst, hypot((back.x - p.x) * 1440, (back.y - p.y) * 1920))
+    }
+  }
+  expect(worst < 0.01, "cast and seen again lands \(worst) px away")
+  // Laid on a plane through a point 1 m out: on the plane, and on the ray.
+  let (o, d) = camera.ray(CGPoint(x: 0.5, y: 0.5))
+  let laidOn = camera.withPlane(through: o + d * 1)
+  if let q = laidOn.onPlane(CGPoint(x: 0.2, y: 0.8)) {
+    expect(abs(simd_dot(q - laidOn.planePoint, laidOn.planeNormal)) < 1e-4, "a laid point is off its plane")
+    let (ro, rd) = camera.ray(CGPoint(x: 0.2, y: 0.8))
+    expect(simd_length(simd_cross(simd_normalize(q - ro), rd)) < 1e-4, "a laid point is off its ray")
+  } else {
+    failures.append("a point in the picture misses a plane facing the camera")
+  }
+  // The middle of the picture looks straight down the camera's -z (ARKit's axes).
+  let forward = -simd_normalize(simd_make_float3(pose.columns.2))
+  let (_, centreDir) = camera.ray(CGPoint(x: 1 - 718.3 / 1440, y: 962.5 / 1920))
+  expect(simd_distance(centreDir, forward) < 1e-4, "the principal point doesn't look down -z")
+  if failures.isEmpty {
+    print(String(format: "camera: ok (cast and seen again within %.4f px)", Double(worst)))
+    return true
+  }
+  for f in failures { print("FAIL camera: \(f)") }
+  return false
+}

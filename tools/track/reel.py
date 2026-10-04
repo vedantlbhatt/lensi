@@ -29,17 +29,23 @@ def font(size, bold=False):
     return ImageFont.load_default()
 
 
-def card(path, lines):
-    """A plain title card: big first line, the rest smaller."""
+def card(path, blocks):
+    """A plain title card: (text, size, bold, grey) blocks top to bottom, the whole stack
+    centred on the card. Sized to read on a phone held upright."""
     img = Image.new("RGB", (W, H), (14, 14, 16))
     d = ImageDraw.Draw(img)
-    y = 300
-    for i, text in enumerate(lines):
-        f = font(38 if i == 0 else 24, bold=i == 0)
-        for line in wrap(d, text, f, W - 100):
-            d.text((50, y), line, font=f, fill=(255, 255, 255) if i == 0 else (200, 200, 205))
-            y += int(f.size * 1.35)
-        y += 18
+    laid = []
+    for text, size, bold, grey in blocks:
+        f = font(size, bold=bold)
+        lines = wrap(d, text, f, W - 100)
+        laid.append((f, lines, grey))
+    height = sum(len(lines) * int(f.size * 1.3) + 26 for f, lines, _ in laid)
+    y = max(40, (H - height) // 2)
+    for f, lines, grey in laid:
+        for line in lines:
+            d.text((50, y), line, font=f, fill=(170, 170, 178) if grey else (255, 255, 255))
+            y += int(f.size * 1.3)
+        y += 26
     img.save(path)
 
 
@@ -88,17 +94,23 @@ def main():
         stats = json.load(open(os.path.join(src, f"{clip}.json")))
         runs = {r["label"]: r for r in stats["runs"]}
         j_now, j_old = runs[label]["J"], runs[before]["J"]
-        score = (f"On the thing (overlap with the hand-drawn mask): before {j_old * 100:.0f}%, now {j_now * 100:.0f}%"
-                 if j_now >= 0 else "No hand-drawn mask for this clip: judge by eye.")
         k_now, k_old, k_true = runs[label].get("jerk", -1), runs[before].get("jerk", -1), stats.get("truthJerk", -1)
+        blocks = [(title, 44, True, False), (sub, 22, False, True)]
+        if j_now >= 0:
+            blocks.append((f"On the thing: {j_old * 100:.0f}% \u2192 {j_now * 100:.0f}%", 36, True, False))
+            blocks.append(("Overlap with the outline drawn by hand, every frame", 22, False, True))
+        else:
+            blocks.append(("No hand-drawn outline for this clip: judge by eye", 26, False, True))
         if k_now >= 0 and k_old >= 0:
-            own = f" (the hand-drawn outline's own: {k_true:.1f} px)" if k_true >= 0 else ""
-            score += f". Lurch from frame to frame: before {k_old:.1f} px, now {k_now:.1f} px{own}"
+            blocks.append((f"Lurch: {k_old:.1f} \u2192 {k_now:.1f} px a frame", 36, True, False))
+            own = f"; the hand-drawn outline's own is {k_true:.1f} px" if k_true >= 0 else ""
+            blocks.append((f"How far its middle jumps rather than glides{own}", 22, False, True))
         png = os.path.join(tmp, f"card{n}.png")
-        pace = "As filmed." if speed == 1 else f"{speed:g}x speed."
-        card(png, [title, sub, score, f"Top: before ({was}). Bottom: now ({how}). {pace}"])
+        pace = "As filmed" if speed == 1 else f"{speed:g}x speed"
+        blocks.append((f"Top, white: before ({was}). Bottom, orange: now ({how}). {pace}.", 22, False, True))
+        card(png, blocks)
         c = os.path.join(tmp, f"c{n}.mp4")
-        run("ffmpeg", "-y", "-loop", "1", "-t", "3.2", "-i", png, "-vf", "fps=30,format=yuv420p",
+        run("ffmpeg", "-y", "-loop", "1", "-t", "2.8", "-i", png, "-vf", "fps=30,format=yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", c)
         v = os.path.join(tmp, f"v{n}.mp4")
         run("ffmpeg", "-y", "-stream_loop", str(loops - 1), "-i", os.path.join(src, f"{clip}{tag}{vs}-compare.mp4"),
