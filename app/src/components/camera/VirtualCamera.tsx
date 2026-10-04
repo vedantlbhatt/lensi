@@ -15,7 +15,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { DEMO_SCENES, setDemoQuestion, type DemoScene, type ZoomRange } from '../../../modules/lensi-ar/src';
-import { boxToView, fitRect, toView, type Fit } from '../../lib/geometry';
+import { boxToView, fitRect, pointInPolygon, polygonArea, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
 import { assetPhoto, type Picked } from '../../lib/media';
 import { Grain } from '../../motion/Grain';
@@ -23,7 +23,7 @@ import { face } from '../../theme/type';
 import { labelWidth } from '../capture/layout';
 import type { CameraHandle, VirtualGuidePins } from './CameraSurface';
 
-export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom'>;
+export type VirtualHandle = Pick<CameraHandle, 'takePhoto' | 'startRecording' | 'stopRecording' | 'setTorch' | 'nextScene' | 'setZoom' | 'outlineAt'>;
 
 /**
  * The virtual camera crops into its scene the way the real one does above 1x. There's no
@@ -52,6 +52,8 @@ export const VirtualCamera = forwardRef<
   const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
+  /** What a tap asked to have outlined (scene 0-1 space), like the phone's tap-to-outline. */
+  const [tapped, setTapped] = useState<{ x: number; y: number }[] | null>(null);
   useEffect(() => {
     onZoomRange?.(ZOOM);
   }, [onZoomRange]);
@@ -65,7 +67,18 @@ export const VirtualCamera = forwardRef<
   useEffect(() => {
     onScene?.(scene);
     setDemoQuestion(scene.script.question);
+    setTapped(null);
   }, [scene, onScene]);
+
+  // Zoom scales the scene about the screen's centre; tags and outlines are
+  // placed on the zoomed scene but keep their size.
+  const cover = fitRect(scene.width, scene.height, width, height, 'cover');
+  const fit = {
+    x: width / 2 + (cover.x - width / 2) * zoom,
+    y: height / 2 + (cover.y - height / 2) * zoom,
+    w: cover.w * zoom,
+    h: cover.h * zoom,
+  };
 
   useImperativeHandle(
     ref,
@@ -76,8 +89,19 @@ export const VirtualCamera = forwardRef<
       setTorch: async () => false,
       nextScene: (dir: 1 | -1) => setIndex((i) => (i + dir + DEMO_SCENES.length) % DEMO_SCENES.length),
       setZoom: (z: number) => setZoom(Math.min(ZOOM.max, Math.max(ZOOM.min, z))),
+      // The smallest of the scene's real SAM shapes under the finger (its parts, then the
+      // subject); a tap on none of them goes back to outlining the subject.
+      outlineAt: (x: number, y: number) => {
+        if (guidePins?.parts.length) return;
+        const at = { x: (x - fit.x) / fit.w, y: (y - fit.y) / fit.h };
+        const shapes = [...scene.parts.map((p) => p.polygon), scene.outline.polygon]
+          .map((poly) => poly.map(([px, py]) => ({ x: px, y: py })))
+          .filter((poly) => poly.length > 2 && pointInPolygon(at, poly))
+          .sort((a, b) => polygonArea(a) - polygonArea(b));
+        setTapped(shapes[0] ?? null);
+      },
     }),
-    [scene],
+    [scene, fit.x, fit.y, fit.w, fit.h, guidePins?.parts.length],
   );
 
   const drift = useSharedValue(0);
@@ -92,15 +116,6 @@ export const VirtualCamera = forwardRef<
     ],
   }));
 
-  // Zoom scales the scene about the screen's centre; tags and outlines are
-  // placed on the zoomed scene but keep their size.
-  const cover = fitRect(scene.width, scene.height, width, height, 'cover');
-  const fit = {
-    x: width / 2 + (cover.x - width / 2) * zoom,
-    y: height / 2 + (cover.y - height / 2) * zoom,
-    w: cover.w * zoom,
-    h: cover.h * zoom,
-  };
   const raw = boxToView({ x: scene.outline.box[0], y: scene.outline.box[1], w: scene.outline.box[2], h: scene.outline.box[3] }, fit);
   // Keep every corner on screen: a bracket half off the edge reads as a stray mark.
   // Symmetric side margins that clear the tool rail on the right.
@@ -119,7 +134,14 @@ export const VirtualCamera = forwardRef<
         {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
         {/* Live outline of what's in view, as the phone's live SAM draws it (the scene's real SAM outline). */}
         {liveOutlines && !guidePins?.parts.length ? (
-          <GuideOutline key={`live-${scene.key}`} part={{ id: 'live', label: '', at: { x: 0.5, y: 0.5 }, outline: scene.outline.polygon.map(([x, y]) => ({ x, y })) }} fit={fit} pen={pen} focused={false} strong />
+          <GuideOutline
+            key={`live-${scene.key}-${tapped ? tapped.length + ':' + tapped[0].x.toFixed(3) : 'subject'}`}
+            part={{ id: 'live', label: '', at: { x: 0.5, y: 0.5 }, outline: tapped ?? scene.outline.polygon.map(([x, y]) => ({ x, y })) }}
+            fit={fit}
+            pen={pen}
+            focused={false}
+            strong
+          />
         ) : null}
         {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}
         {guidePins?.parts.map((p) => <GuideTag key={p.id} part={p} fit={fit} pen={pen} focus={guidePins.focus} screenW={width} />)}

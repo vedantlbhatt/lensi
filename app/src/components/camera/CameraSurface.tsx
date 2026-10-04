@@ -28,6 +28,11 @@ export type CameraHandle = {
   nextScene?(dir: 1 | -1): void;
   /** Zoom the camera (clamped to what it can do; see onZoomRange). */
   setZoom(zoom: number): void;
+  /**
+   * A tap on the camera at x, y (screen points): outline what's there, live. The native view
+   * handles its own taps, so this is for the virtual camera.
+   */
+  outlineAt?(x: number, y: number): void;
   /** The native view, for live pins. Null on the virtual camera. */
   native?: LensiARViewRef | null;
   /**
@@ -92,6 +97,7 @@ export const CameraSurface = forwardRef<
           setTorch: () => Promise.resolve(false),
           nextScene: (dir: 1 | -1) => virtual.current?.nextScene?.(dir),
           setZoom: (z: number) => virtual.current?.setZoom(z),
+          outlineAt: (x: number, y: number) => virtual.current?.outlineAt?.(x, y),
           native: null,
           guide: {
             capture: async () => {

@@ -406,6 +406,8 @@ export default function Camera() {
     .runOnJS(true)
     .onEnd((e) => {
       setTouched(true);
+      // Outline what was tapped, live (the native camera does this itself).
+      camera.current?.outlineAt?.(e.x, e.y);
     });
 
   const chrome = useSharedValue(1);
