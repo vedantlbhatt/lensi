@@ -3,7 +3,7 @@
   render.py <frames dir> <name>.json <out dir>
 
 Writes <name>.mp4 (the phone's outline, SAM 8 times a second, on every frame) and
-<name>-compare.mp4 (left: SAM asked at a fixed spot every frame; right: the phone's
+<name>-compare.mp4 (top: SAM asked at a fixed spot every frame; bottom: the phone's
 tracker), each with its per-frame J against the hand-drawn mask when there is one.
 """
 import json
@@ -78,7 +78,7 @@ def main():
     # Big enough to read on a phone.
     s = 2 if w < 1000 else 1
     single = writer(os.path.join(out_dir, f"{name}.mp4"), w * s, h * s, fps)
-    pair = writer(os.path.join(out_dir, f"{name}-compare.mp4"), w * 2, h, fps)
+    pair = writer(os.path.join(out_dir, f"{name}-compare.mp4"), w, h * 2, fps)
     def j(run, i):
         v = run["jPerFrame"]
         return f"  J {v[i] * 100:.0f}%" if i < len(v) else ""
@@ -94,7 +94,7 @@ def main():
         left = caption(left, [f"Before: SAM at a fixed spot{j(fixed, i)}"], size=15)
         right = outline(img.copy(), unpack(lensi["outlines"][i]), PEN, 2.5)
         right = caption(right, [f"Now: tracked, SAM 8/s{j(lensi, i)}"], size=15)
-        pair.write(np.hstack([left, right]))
+        pair.write(np.vstack([left, right]))
     single.release()
     pair.release()
     print(f"{name}: wrote {name}.mp4 and {name}-compare.mp4 ({len(data['frameNames'])} frames)")
