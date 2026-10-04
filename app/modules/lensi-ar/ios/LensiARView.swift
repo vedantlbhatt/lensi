@@ -138,7 +138,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     // Load SAM off the main thread now. Nothing on the main thread touches
     // `SAMSegmenter.shared` itself: while it loads, that would wait for it.
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let started = CACurrentMediaTime()
       let loaded = SAMSegmenter.shared
+      if loaded == nil {
+        NSLog("[lensi] SAM isn't available (models missing from the app?): no live outlines")
+      } else {
+        NSLog("[lensi] SAM loaded in %.1f s", CACurrentMediaTime() - started)
+      }
       DispatchQueue.main.async { self?.sam = loaded }
     }
 
@@ -330,6 +336,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let started = CACurrentMediaTime()
       var encodeMs: Double = 0
       var found: [String: [simd_float3]] = [:]
+      var failure: String?
       do {
         try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "live")
         encodeMs = (CACurrentMediaTime() - started) * 1000
@@ -344,20 +351,25 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           if world.count == ring.count { found[p.key] = world }
         }
       } catch {
-        NSLog("[lensi] live SAM failed: %@", error.localizedDescription)
+        failure = error.localizedDescription
       }
       let ms = (CACurrentMediaTime() - started) * 1000
-      let results = found, encoded = encodeMs
+      let results = found, encoded = encodeMs, failed = failure
       DispatchQueue.main.async {
         guard let self else { return }
         self.samBusy = false
         self.samMs = self.samMs == 0 ? ms : self.samMs * 0.8 + ms * 0.2
         self.samEncodeMs = self.samEncodeMs == 0 ? encoded : self.samEncodeMs * 0.8 + encoded * 0.2
         let now = CACurrentMediaTime()
+        // At most every 3 s (a failure would otherwise be logged a dozen times a second).
         if now - self.lastSamLog > 3 {
           self.lastSamLog = now
-          NSLog("[lensi] live SAM %.0f ms a frame (encoder %.0f ms), %ld of %ld prompts found, thermal %ld",
-                self.samMs, self.samEncodeMs, results.count, prompts.count, ProcessInfo.processInfo.thermalState.rawValue)
+          if let failed {
+            NSLog("[lensi] live SAM failed: %@", failed)
+          } else {
+            NSLog("[lensi] live SAM %.0f ms a frame (encoder %.0f ms), %ld of %ld prompts found, thermal %ld",
+                  self.samMs, self.samEncodeMs, results.count, prompts.count, ProcessInfo.processInfo.thermalState.rawValue)
+          }
         }
         guard self.liveSegments else { return }
         self.takeLive(results, asked: prompts.map(\.key), now: now)
