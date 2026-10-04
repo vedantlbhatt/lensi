@@ -22,6 +22,7 @@
 //   jitter  how much the outline changes frame to frame beyond how much the
 //           true mask changes: mean of max(0, (1-IoU(d_t,d_t-1)) - (1-IoU(g_t,g_t-1)))
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -281,6 +282,8 @@ func warpLabels(_ l: [UInt8], _ m: CGAffineTransform, imageW: Int, imageH: Int) 
 
 struct SeqScore { var missing = 0; var shownJ: [Double] = []; var j: [Double] = []; var jitter: [Double] = []; var samMs: [Double] = []; var flowMs: [Double] = [] }
 var all = SeqScore()
+let ciContext = CIContext()
+var smallJ: [Double] = []
 var boxIoU: [Double] = [], samJ: [Double] = [], gtJ: [Double] = []
 var perSeq: [[String: Any]] = []
 let frameMs = 1000 / fps
@@ -357,20 +360,12 @@ for seq in seqs {
       var results: [SegResult] = []
       var baseline: [(Int, [CGPoint])] = []
       var prompts = 0
+      var crops = 0
       if mode == "ours" {
-        for job in tracker.jobs(anchors: anchors) {
-          prompts += 1
-          let mask = try? sam.segment(id: "live", points: job.points, labels: job.labels, box: job.box,
-                                      preferPart: job.preferPart, prior: job.prior)
-          if let o = Int(job.key), let g = truth[o], let gb = bbox(g), let jb = job.box {
-            let i = gb.intersection(jb)
-            boxIoU.append(i.isNull ? 0 : Double(i.width * i.height / (gb.width * gb.height + jb.width * jb.height - i.width * i.height)))
-            if let m = mask { samJ.append(iou(rasterNorm(m.polygon), g)) }
-            if let gm = try? sam.segment(id: "live", points: [], labels: [], box: gb) { gtJ.append(iou(rasterNorm(gm.polygon), g)) }
-          }
-          let ok = (mask?.score ?? 0) >= 0.5 && (mask?.polygon.count ?? 0) > 2
-          results.append(SegResult(key: job.key, frame: job.frame, polygon: ok ? mask!.polygon : [], score: mask?.score ?? 0))
-        }
+        let jobs = tracker.jobs(anchors: anchors)
+        prompts = jobs.count
+        crops = min(1, jobs.filter { SegRunner.cropRegion($0, size: CGSize(width: image.width, height: image.height)) != nil }.count)
+        results = SegRunner.run(jobs, image: CIImage(cgImage: image), sam: sam, context: ciContext)
       } else if mode == "oracle" {
         for o in objects {
           guard let m = truth[o], let b = bbox(m) else { continue }
@@ -388,7 +383,7 @@ for seq in seqs {
         }
       }
       score.samMs.append((CFAbsoluteTimeGetCurrent() - s0) * 1000)
-      let latency = encoderMs + decoderMs * Double(prompts)
+      let latency = encoderMs * Double(1 + crops) + decoderMs * Double(prompts)
       inflight = (mode == "oracle" ? f : f + max(1, Int(ceil(latency / frameMs))), results, baseline)
       if mode == "oracle" { for (o, p) in baseline { shown[o] = p }; inflight = nil }
     }
@@ -402,6 +397,7 @@ for seq in seqs {
       guard let g = truth[o] else { continue }
       if g.contains(true) {
         score.j.append(iou(d, g))
+        if Double(g.filter { $0 }.count) < 0.02 * Double(g.count) { smallJ.append(iou(d, g)) }
         if poly.count < 3 { score.missing += 1 } else { score.shownJ.append(iou(d, g)) }
       }
       if let pd = prevShown[o], let pg = prevTruth[o], pd.contains(true) || d.contains(true) {
@@ -426,6 +422,7 @@ for seq in seqs {
   all.j += score.j; all.jitter += score.jitter; all.samMs += score.samMs; all.flowMs += score.flowMs
 }
 func mean(_ a: [Double]) -> Double { a.isEmpty ? 0 : a.reduce(0, +) / Double(a.count) }
+print(String(format: "small objects (< 2%% of the frame): J %.3f over %d object-frames", mean(smallJ), smallJ.count))
 print(String(format: "prompt box IoU %.3f  SAM answer J %.3f  SAM with true box J %.3f", mean(boxIoU), mean(samJ), mean(gtJ)))
 print(String(format: "missing %.3f J-shown %.3f", Double(all.missing) / Double(max(1, all.j.count)), mean(all.shownJ)))
 print(String(format: "ALL mode=%@ seed=%@ enc=%.0f dec=%.0f step=%d  J %.3f  jitter %.4f  (sam %.0f ms, flow %.1f ms on this Mac)",

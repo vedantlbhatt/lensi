@@ -1,5 +1,6 @@
 import Accelerate
 import CoreGraphics
+import CoreImage
 import CoreVideo
 import Foundation
 
@@ -963,5 +964,73 @@ enum MaskContour {
       if area > bestArea { bestArea = area; best = loop }
     }
     return (best, Float(on) / Float(W * H))
+  }
+}
+
+/// Runs SAM for a set of jobs on one image. Small things get a closer look: SAM sees the
+/// whole frame at 1024 px, so a screw or a ball is a few of its cells; for a track whose
+/// outline is small, the encoder runs again on a crop around it (3x its size), which is
+/// up to several times the detail.
+enum SegRunner {
+  /// Below this (longest side, fraction of the image's shorter side) a job gets its own crop.
+  static var smallBelow = CGFloat(Double(ProcessInfo.processInfo.environment["LENSI_SMALL"] ?? "") ?? 0.22)
+
+  /// `image`: upright, any extent origin. Points/boxes/polygons normalized, top-left origin.
+  static func run(_ jobs: [SegJob], image: CIImage, sam: SAMSegmenter, context: CIContext, minScore: Float = 0.5) -> [SegResult] {
+    let e = image.extent
+    var results: [SegResult] = []
+    var preparedFull = false
+    // One close look a pass (each is another encoder run): the smallest thing gets it.
+    let cropped = jobs.compactMap { j in cropRegion(j, size: e.size).map { (j.key, $0) } }
+      .min { $0.1.width * $0.1.height < $1.1.width * $1.1.height }
+    for job in jobs {
+      let region = cropped?.0 == job.key ? cropped?.1 : nil
+      do {
+        let mask: SAMMask
+        if let r = region {
+          // CI's origin is bottom-left.
+          let px = CGRect(x: e.minX + r.minX * e.width, y: e.minY + (1 - r.maxY) * e.height,
+                          width: r.width * e.width, height: r.height * e.height).integral
+          try sam.prepare(ciImage: image.cropped(to: px), context: context, id: "crop")
+          let inCrop = { (p: CGPoint) in CGPoint(x: (p.x - r.minX) / r.width, y: (p.y - r.minY) / r.height) }
+          let box = job.box.map { b in
+            CGRect(x: (b.minX - r.minX) / r.width, y: (b.minY - r.minY) / r.height, width: b.width / r.width, height: b.height / r.height)
+          }
+          let m = try sam.segment(id: "crop", points: job.points.map(inCrop), labels: job.labels, box: box,
+                                  preferPart: job.preferPart, prior: job.prior?.map(inCrop), level: job.level)
+          mask = SAMMask(polygon: m.polygon.map { CGPoint(x: r.minX + $0.x * r.width, y: r.minY + $0.y * r.height) },
+                         score: m.score, area: m.area * Float(r.width * r.height))
+        } else {
+          if !preparedFull {
+            try sam.prepare(ciImage: image, context: context, id: "live")
+            preparedFull = true
+          }
+          mask = try sam.segment(id: "live", points: job.points, labels: job.labels, box: job.box,
+                                 preferPart: job.preferPart, prior: job.prior, level: job.level)
+        }
+        let ok = mask.score >= minScore && mask.polygon.count > 2
+        results.append(SegResult(key: job.key, frame: job.frame, polygon: ok ? mask.polygon : [], score: mask.score))
+      } catch {
+        results.append(SegResult(key: job.key, frame: job.frame, polygon: [], score: 0))
+      }
+    }
+    return results
+  }
+
+  /// A square (in pixels) around a small job's box or outline, 3x its size, inside the image.
+  static func cropRegion(_ job: SegJob, size: CGSize) -> CGRect? {
+    guard smallBelow > 0, size.width > 0, size.height > 0 else { return nil }
+    let b: CGRect
+    if let box = job.box { b = box } else if let prior = job.prior, prior.count >= 3 { b = Poly.bounds(prior) } else { return nil }
+    let shorter = min(size.width, size.height)
+    let longestPx = max(b.width * size.width, b.height * size.height)
+    guard longestPx < smallBelow * shorter else { return nil }
+    // Only where the camera has more pixels than SAM sees: the crop is at least ~680 source
+    // pixels (at most 1.5x upscaled into SAM's 1024), and clearly smaller than the frame.
+    let side = max(longestPx * 3, 0.3 * shorter, 1024 / 1.5)
+    guard side <= 0.8 * shorter else { return nil }
+    let cx = b.midX * size.width, cy = b.midY * size.height
+    let x = min(max(cx - side / 2, 0), size.width - side), y = min(max(cy - side / 2, 0), size.height - side)
+    return CGRect(x: x / size.width, y: y / size.height, width: side / size.width, height: side / size.height)
   }
 }
