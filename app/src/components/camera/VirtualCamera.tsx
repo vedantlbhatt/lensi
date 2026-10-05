@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import Animated, {
@@ -15,7 +15,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { DEMO_SCENES, setDemoQuestion, type DemoScene, type VideoTracks, type ZoomRange } from '../../../modules/lensi-ar/src';
+import { Asset } from 'expo-asset';
+import { DEMO_SCENES, DemoVideoView, onSceneTracks, sceneTracks, setDemoQuestion, type DemoScene, type VideoTracks, type ZoomRange } from '../../../modules/lensi-ar/src';
 import { boxToView, centroid, fitRect, pointInPolygon, polygonIoU, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
 import type { Pt } from '../../lib/types';
@@ -41,7 +42,7 @@ const nameOf = (label: string | null) => (label ? label.charAt(0).toUpperCase() 
 
 const decoded = new Map<string, Uint16Array>();
 /** A tracked thing's outline in frame `f` of a video scene (tools/strip/pack.py's format), or null before it's found. */
-function outlineAt(tracks: VideoTracks, i: number, f: number): Pt[] | null {
+export function outlineAt(tracks: VideoTracks, i: number, f: number): Pt[] | null {
   const th = tracks.things[i];
   if (!th || f < th.start) return null;
   let words = decoded.get(th.data);
@@ -55,6 +56,10 @@ function outlineAt(tracks: VideoTracks, i: number, f: number): Pt[] | null {
   const n = tracks.points;
   const at = (f - th.start) * n * 2;
   if (at + n * 2 > words.length) return null;
+  // All zeros: not in view at that frame (the app's own EdgeTAM run marks those so).
+  let any = false;
+  for (let k = at; k < at + n * 2 && !any; k++) any = words[k] !== 0;
+  if (!any) return null;
   const pts: Pt[] = [];
   for (let k = 0; k < n; k++) pts.push({ x: words[at + 2 * k] / 65535, y: words[at + 2 * k + 1] / 65535 });
   return pts;
@@ -165,10 +170,33 @@ export const VirtualCamera = forwardRef<
   }, [onZoomRange]);
   const scene = DEMO_SCENES[index];
   const video = scene.video;
-  const tracks = video?.tracks ?? null;
+  // The bundled tracks, or the app's own EdgeTAM run's once it has one (`edgetam=`).
+  const [, tracksChanged] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => onSceneTracks(tracksChanged), []);
+  const tracks = video ? sceneTracks(scene) : null;
   // Which frame of a video scene is showing.
   const [frame, setFrame] = useState(0);
   const frameRef = useRef(0);
+  // On iOS the footage and its pinned outlines are drawn natively, in the same display frame
+  // (DemoVideoView): JavaScript only needs to know which frame is showing, for the strip.
+  const native = !!video && !!DemoVideoView;
+  const [videoUri, setVideoUri] = useState<string | null>(null);
+  useEffect(() => {
+    if (!native || !video) return;
+    let alive = true;
+    setVideoUri(null);
+    const asset = Asset.fromModule(video.source);
+    void asset.downloadAsync().then(() => {
+      if (alive) setVideoUri(asset.localUri ?? asset.uri);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [native, video]);
+  const tracksJson = useMemo(() => (tracks ? JSON.stringify(tracks) : ''), [tracks]);
+  const onNativeFrame = useCallback((e: { nativeEvent: { frame: number } }) => {
+    frameRef.current = e.nativeEvent.frame;
+  }, []);
   const onFrame = useCallback((f: number) => {
     frameRef.current = f;
     setFrame(f);
@@ -188,10 +216,11 @@ export const VirtualCamera = forwardRef<
   }, [scene, onScene]);
 
   // Zoom scales the scene about the screen's centre; tags and outlines are
-  // placed on the zoomed scene but keep their size. A video (landscape footage) is shown across
-  // the screen and a little more, above the chrome, the way a phone held upright shows a wide
-  // shot; a still fills the screen.
-  const cover = video
+  // placed on the zoomed scene but keep their size. Landscape footage is shown across the screen
+  // and a little more, above the chrome, the way a phone held upright shows a wide shot; a still,
+  // or footage filmed upright, fills the screen.
+  // Footage filmed upright fills the screen, as the camera does.
+  const cover = video && scene.width > scene.height
     ? (() => {
         const s = (width / scene.width) * 1.3;
         return { x: (width - scene.width * s) / 2, y: height * 0.37 - (scene.height * s) / 2, w: scene.width * s, h: scene.height * s };
@@ -291,7 +320,22 @@ export const VirtualCamera = forwardRef<
   return (
     <View style={StyleSheet.absoluteFill} collapsable={false}>
       <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, !video && kb]}>
-        {video ? (
+        {video && native && DemoVideoView ? (
+          videoUri ? (
+            <DemoVideoView
+              source={videoUri}
+              tracks={tracksJson}
+              pins={pinned.filter((p) => p.track !== undefined).map((p) => ({ track: p.track as number, color: pen, label: p.label }))}
+              highlight={(() => {
+                const i = strip?.index ?? -1;
+                const t = strip && i >= 0 && !strip.pinned.includes(i) ? strip.things[i] : undefined;
+                return t && t.track !== undefined ? { track: t.track, color: pen, label: t.label } : null;
+              })()}
+              onFrame={onNativeFrame}
+              style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }}
+            />
+          ) : null
+        ) : video ? (
           <SceneVideo source={video.source} fit={fit} fps={tracks?.fps ?? 15} frames={tracks?.frames ?? 150} onFrame={onFrame} />
         ) : (
           <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
@@ -301,18 +345,18 @@ export const VirtualCamera = forwardRef<
         {(() => {
           const i = strip?.index ?? -1;
           const t = strip && i >= 0 && !strip.pinned.includes(i) ? strip.things[i] : undefined;
-          const shape = t ? shapeOf(t) : null;
+          const shape = t && !(native && t.track !== undefined) ? shapeOf(t) : null;
           return t && shape ? (
             <GuideOutline key={`s-${i}-${t.label}`} part={{ id: `s${i}`, label: t.label, at: { x: 0.5, y: 0.5 }, outline: shape }} fit={fit} pen={pen} focused />
           ) : null;
         })()}
         {/* Pinned things: outlined in the lens colour, named just above, wherever they've gone. */}
         {pinned.map((p) => {
-          const shape = shapeOf(p);
+          const shape = native && p.track !== undefined ? null : shapeOf(p);
           return shape ? <GuideOutline key={p.id} part={{ id: p.id, label: p.label, at: { x: 0.5, y: 0.5 }, outline: shape }} fit={fit} pen={pen} focused /> : null;
         })}
         {pinned.map((p) => {
-          const shape = shapeOf(p);
+          const shape = native && p.track !== undefined ? null : shapeOf(p);
           return shape ? <PinTag key={`t-${p.id}`} pin={{ ...p, polygon: shape }} fit={fit} pen={pen} screenW={width} /> : null;
         })}
         {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}

@@ -58,6 +58,37 @@ public class LensiARModule: Module {
       }
     }
 
+    // MARK: Following a thing through a video (EdgeTAM)
+
+    // The app's EdgeTAMTracker on a video file with the models it ships: pinned with `box`
+    // (x0, y0, x1, y1: fractions of the picture) on the first frame, followed through every
+    // `every`-th after (EdgeTAMVideo); with `render`, the clip written again with it drawn on.
+    AsyncFunction("trackVideo") { (uri: String, box: [Double], every: Int, render: String?, color: String?, promise: Promise) in
+      guard box.count == 4, box.allSatisfy({ $0.isFinite }) else {
+        promise.reject("E_TRACK", "Bad box.")
+        return
+      }
+      let url: URL? = uri.hasPrefix("file:") ? URL(string: uri) : URL(fileURLWithPath: uri)
+      guard let url else {
+        promise.reject("E_TRACK", "Bad file.")
+        return
+      }
+      // Where to write the clip with what it followed drawn on it (none: no video).
+      var film: URL?
+      if let render, !render.isEmpty {
+        film = render.hasPrefix("file:") ? URL(string: render) : URL(fileURLWithPath: render)
+      }
+      let pen = UIColor(hex: color ?? "#FFFFFF")
+      let rect = CGRect(x: box[0], y: box[1], width: box[2] - box[0], height: box[3] - box[1])
+      DispatchQueue.global(qos: .userInitiated).async {
+        do {
+          promise.resolve(try EdgeTAMVideo.track(url: url, box: rect, every: every, render: film, color: pen))
+        } catch {
+          promise.reject("E_TRACK", error.localizedDescription)
+        }
+      }
+    }
+
     // MARK: Brain: Apple Intelligence (Foundation Models)
 
     AsyncFunction("intelligenceStatus") { () -> [String: Any] in
@@ -243,6 +274,28 @@ public class LensiARModule: Module {
       AsyncFunction("scrubClear") { (view: LensiARView) in
         view.scrubClear()
       }.runOnQueue(.main)
+    }
+
+    // The virtual camera's footage, with what's pinned in it outlined in the same display frame
+    // as the picture (DemoVideoView). Not the default view: requireNativeView('LensiAR', 'DemoVideoView').
+    View(DemoVideoView.self) {
+      Events("onFrame")
+
+      Prop("source") { (view: DemoVideoView, uri: String) in
+        view.setSource(uri)
+      }
+
+      Prop("tracks") { (view: DemoVideoView, json: String) in
+        view.setTracks(json)
+      }
+
+      Prop("pins") { (view: DemoVideoView, pins: [DemoPin]) in
+        view.setPins(pins)
+      }
+
+      Prop("highlight") { (view: DemoVideoView, pin: DemoPin?) in
+        view.setHighlight(pin?.track ?? -1, color: pin?.color ?? "#ffffff")
+      }
     }
   }
 }

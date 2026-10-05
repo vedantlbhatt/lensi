@@ -17,6 +17,11 @@
 //   strict@8   loose@8 with SAM asked within a tighter box and only a close match taken
 //              (LiveTracker.Gate.strict, which tools/pin's ARKit recordings called for)
 //   coast@4, lensi@4: SAM on every sixth frame (a hot phone, a guide part waiting its turn)
+//   edgetam    the app's pinned things now: EdgeTAM (EdgeTAMTracker, Meta's on-device SAM 2)
+//              from its memory of the thing, started from the seed box, every frame; what's
+//              shown glides from one outline to the next (OutlineMath.glide)
+//   edgetam@8  the same on every third frame, carried on its own pixels in between (the flow)
+//   (both only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
 // wobble (how much the outline's shape changes from one frame to the next) and jerk (how much
@@ -26,6 +31,7 @@
 //   swiftc -O -o track tools/track/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,Analyzer,Detector}.swift
 //   LENSI_MODELS_DIR=<models> ./track <frames dir> <masks dir or -> <out dir> <name> [x,y,w,h seed box, 0-1]
 import CoreGraphics
+import CoreImage
 import CoreVideo
 import Foundation
 import ImageIO
@@ -216,7 +222,7 @@ final class PixelFlow {
 }
 
 /// One way of keeping an outline on the thing, run frame by frame.
-final class Runner {
+class Runner {
   let label: String
   let tracking: Bool
   let smoothing: OutlineMath.Smoothing?
@@ -304,6 +310,10 @@ final class Runner {
 
   /// Frame f: maybe ask SAM (on this runner's beat), then say what's shown.
   func step(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
+    try stepSAM(f, image: image, sam: sam, scale: scale, seedBox: seedBox, seedPoint: seedPoint)
+  }
+
+  final func stepSAM(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
     // The box tracker sees every frame, as it would on the phone.
     if let follower, follower.box != nil, f > 0, follower.track(image) == nil { anchorBox = nil }
     // So does the flow: the outline (and what's shown) move with the thing's pixels.
@@ -449,7 +459,42 @@ print("\(name): \(frames.count) frames \(W)x\(H), seed box \(seedBox), point \(s
 // next to it so it can be chosen on real footage rather than guessed. @8 is SAM on every third
 // frame (8 a second at 24 fps, about what a phone manages); @4 every sixth (a hot phone, or a
 // guide part waiting its turn).
+/// The frame EdgeTAM's encoder made, for every EdgeTAM runner that looks at this frame.
+var edgeFrame: EdgeTAMTracker.Encoded?
+
+/// The app's pinned things now (LensiARView.followEdge): EdgeTAM from its memory of the thing,
+/// every `every`-th frame; in between, the outline rides its own pixels (the flow); each new
+/// outline glides into the last (OutlineMath.glide, in pixels).
+final class EdgeRunner: Runner {
+  let tracker: EdgeTAMTracker
+
+  init(_ label: String, every: Int, flow: PixelFlow?, tracker: EdgeTAMTracker) {
+    self.tracker = tracker
+    super.init(label, tracking: true, smoothing: nil, every: every, flow: flow, scaling: true)
+  }
+
+  override func step(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
+    let looks = f == 0 || f % every == 0
+    if looks, let picture = edgeFrame {
+      let cut = try f == 0 ? tracker.start(picture, box: seedBox) : tracker.step(picture)
+      cuts += 1
+      if cut.visible {
+        let px = { (p: CGPoint) in simd_float3(Float(p.x * scale.width), Float(p.y * scale.height), 0) }
+        let ring = OutlineMath.resample(cut.outline, scale: scale).map(px)
+        outline = OutlineMath.glide(outline?.map(px), ring).map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
+      } else {
+        outline = nil
+      }
+    } else if let flow, let o = outline, let carried = flow.carry(o, scaling: scaling) {
+      outline = carried
+    }
+    return outline
+  }
+}
+
 let flow = PixelFlow()
+let edgeModels = EdgeTAMTracker.Models.shared
+let edgeEncoder = edgeModels.flatMap { try? EdgeTAMTracker.Encoder(models: $0) }
 let runners = [
   Runner("fixed", tracking: false, smoothing: nil, every: 1),
   Runner("tracked", tracking: true, smoothing: nil, every: 1),
@@ -464,7 +509,10 @@ let runners = [
   Runner("coast@4", tracking: true, smoothing: .standard, every: 6, adaptive: true),
   Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true, glide: 0.75,
          bySpeed: true),
-]
+] + (edgeModels.flatMap { models -> [Runner]? in
+  guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models) else { return nil }
+  return [EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b)]
+} ?? [])
 var truthWobble: [Double] = []
 var truthCentres: [CGPoint?] = []
 var prevTruth = truth0
@@ -478,6 +526,8 @@ for (f, url) in frames.enumerated() {
   try sam.prepare(image: image, id: "frame", force: true)
   encodeMs.append(Date().timeIntervalSince(t0) * 1000)
   flow.feed(image)
+  // EdgeTAM's encoder once a frame, for its runners (the one on every frame looks at all).
+  edgeFrame = edgeEncoder.flatMap { try? $0.encode(CIImage(cgImage: image)) }
   let truth = f < masks.count ? groundTruth(masks[f]) : nil
   for r in runners {
     let shown = try r.step(f, image: image, sam: sam, scale: scale, seedBox: seedBox, seedPoint: seedPoint) ?? []

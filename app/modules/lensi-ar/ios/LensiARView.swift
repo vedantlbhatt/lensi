@@ -37,6 +37,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var lastSamPose: simd_float4x4?
   /// SAM once it has loaded (nil until then, and on a phone without the models).
   private var sam: SAMSegmenter?
+  /// EdgeTAM (Meta's on-device SAM 2, EdgeTAMTracker) once it has loaded: it follows every pinned
+  /// thing every frame from its memory of it (the frame it was pinned on and the last few), which
+  /// holds on through close-ups, zooming out, blur and turning where a fresh SAM cut each frame
+  /// jumps about (tools/edgetam, on a handheld clip of a bottle). Nil until then, and on a phone
+  /// without its models: then SAM re-cuts pinned things, as it does guide parts.
+  private var edgeTAM: EdgeTAMTracker.Models?
+  /// Only touched on `samQueue`: the camera's encoder for EdgeTAM, and each pinned thing's tracker.
+  private var edgeEncoder: EdgeTAMTracker.Encoder?
+  private var edgeTrackers: [String: EdgeTAMTracker] = [:]
+  private var edgeLogTime: CFTimeInterval = 0
   /// Live outlines by what they're of: a guide tag's pin id, or a pinned thing's. Their state
   /// is LiveShape (LiveWorld.swift, which tools/pin runs on ARKit's recorded poses); their
   /// layers are here, and where each was last drawn on screen (a pinned thing's tag sits above it).
@@ -47,15 +57,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// the camera image, so they never slide against it (OutlineNode).
   private let outlines = SCNNode()
   /// How fast the phone itself turns (radians a second) and moves (metres a second), steadied:
-  /// past `fastTurn` or `fastMove` the picture is a blur and what the flow and SAM say about a
-  /// thing's own motion is mostly the phone's, so it isn't taken as the thing's (ARKit already
-  /// keeps every outline where it is in the world).
+  /// past LiveShape.fastTurn or fastMove the picture is a blur and what the flow and SAM say
+  /// about a thing's own motion is mostly the phone's, so it isn't taken as the thing's (ARKit
+  /// already keeps every outline where it is in the world).
   private var phoneTurn: Float = 0
   private var phoneMove: Float = 0
   private var lastPhonePose: (transform: simd_float4x4, t: TimeInterval)?
-  static let fastTurn: Float = 1.0
-  static let fastMove: Float = 0.5
-  private var phoneFast: Bool { phoneTurn > Self.fastTurn || phoneMove > Self.fastMove }
+  private var phoneFast: Bool { phoneTurn > LiveShape.fastTurn || phoneMove > LiveShape.fastMove }
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -140,6 +148,34 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var onUltraWide = false
   private lazy var ultraWideFormat: ARConfiguration.VideoFormat? =
     ARWorldTrackingConfiguration.supportedVideoFormats.first { $0.captureDeviceType == .builtInUltraWideCamera }
+  /// 0.5x on a phone whose ARKit has no ultra-wide format (UltraWideCamera): ARKit pauses, and
+  /// pinned things are followed on the ultra-wide's picture by EdgeTAM alone, drawn flat over it,
+  /// until the zoom is back at 1x (then ARKit picks up its world, and every pin, where it was).
+  private var wide: UltraWideCamera?
+  private var wideMode = false
+  private var lastWideTime: CFTimeInterval = 0
+  /// Each pinned thing's outline on the ultra-wide picture (upright 0…1, OutlineMath.count
+  /// points, glided from one cut to the next: OutlineMath.glide), and the layer drawing it.
+  private var wideOutlines: [String: [CGPoint]] = [:]
+  private var wideLayers: [String: FlatOutline] = [:]
+  /// When the frame each one was found in was captured, and the ultra-wide picture's upright
+  /// size: drawn, it's moved on by how the phone has turned since (UltraWideCamera.warp).
+  private var wideTimes: [String: CFTimeInterval] = [:]
+  private var wideSize = CGSize(width: 1080, height: 1920)
+  /// Things pinned at 0.5x, where there's no world to lay them in: followed on the ultra-wide by
+  /// EdgeTAM from the frame they were found in, and laid in the world from their first cut once
+  /// ARKit is back at 1x (where they're at, measured inside the cut, or a guess its lines of
+  /// sight put right: LiveShape.sight). Hidden at 1x until then.
+  private var flatPins: Set<String> = []
+  /// The strip at 0.5x: the frame its things were found in (their outlines are on it), and the
+  /// highlighted one's layer.
+  private var wideScrubFrame: (buffer: CVPixelBuffer, t: CFTimeInterval)?
+  private var wideScrubLayer: FlatOutline?
+  /// Callouts the brain put on a thing pinned at 0.5x before it was in the world: placed with
+  /// it once it is (`takeLive`).
+  private var flatCallouts: [String: [(id: String, x: Double, y: Double, text: String)]] = [:]
+  /// 0.5x is there: ARKit's own ultra-wide, or the ultra-wide camera on its own.
+  private var hasUltraWide: Bool { ultraWideFormat != nil || UltraWideCamera.available }
   private var recorder: Recorder?
   private let photoContext = CIContext(options: [.useSoftwareRenderer: false])
 
@@ -185,6 +221,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
       DispatchQueue.main.async { self?.sam = loaded }
     }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let started = CACurrentMediaTime()
+      let loaded = EdgeTAMTracker.Models.shared
+      if loaded == nil {
+        NSLog("[lensi] EdgeTAM isn't available (models missing from the app?): SAM re-cuts pinned things")
+      } else {
+        NSLog("[lensi] EdgeTAM loaded in %.1f s", CACurrentMediaTime() - started)
+      }
+      DispatchQueue.main.async { self?.edgeTAM = loaded }
+    }
 
     addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
   }
@@ -194,6 +240,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     // bounds + center, not frame: the camera view carries the zoom as a transform.
     sceneView.bounds = CGRect(origin: .zero, size: bounds.size)
     sceneView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    if let preview = wide?.preview {
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      preview.bounds = CGRect(origin: .zero, size: bounds.size)
+      preview.position = CGPoint(x: bounds.midX, y: bounds.midY)
+      CATransaction.commit()
+    }
     pinLayer.frame = bounds
     boxLayer.frame = bounds
     focusLayer.frame = bounds
@@ -215,8 +268,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     running = true
     let config = configuration ?? makeConfiguration()
     configuration = config
-    sceneView.session.run(config)
-    onZoomRange(["min": ultraWideFormat != nil ? 0.5 : 1, "max": Double(Self.maxZoom), "zoom": Double(zoomFactor)])
+    if wideMode {
+      wide?.start()
+    } else {
+      sceneView.session.run(config)
+    }
+    onZoomRange(["min": hasUltraWide ? 0.5 : 1, "max": Double(Self.maxZoom), "zoom": Double(zoomFactor)])
     let link = CADisplayLink(target: self, selector: #selector(tick))
     link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
     link.add(to: .main, forMode: .common)
@@ -230,6 +287,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     displayLink = nil
     if recorder != nil { stopRecording { _ in } }
     sceneView.session.pause()
+    wide?.stop()
   }
 
   private func makeConfiguration() -> ARWorldTrackingConfiguration {
@@ -237,6 +295,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     config.planeDetection = [.horizontal, .vertical]
     if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
       config.sceneReconstruction = .mesh
+    }
+    // LiDAR's depth with every frame, on a phone that has one: how far a pinned thing is,
+    // measured inside each cut of it (LiveShape.setDepth).
+    if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+      config.frameSemantics.insert(.smoothedSceneDepth)
     }
     // A format that can also deliver full-resolution stills on demand.
     if let format = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
@@ -286,6 +349,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// gentle for a still thing).
     var gate: LiveTracker.Gate = .loose
     var smoothing: OutlineMath.Smoothing = .standard
+    /// Followed by EdgeTAM (`box` starts it; after that it needs no prompt), not cut by SAM.
+    var edge = false
+    /// Pinned at 0.5x and not yet in the world: its first cut at 1x is laid where it's measured
+    /// to be (`anchor` means nothing yet).
+    var unplaced = false
+    /// Up close, how much bigger or smaller the part on the picture can make the whole outline
+    /// in one cut (LiveTracker.follow).
+    var scaleLimit: CGFloat = 1.4
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -297,7 +368,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     switch ProcessInfo.processInfo.thermalState {
     case .critical: gap = 0.6
     case .serious: gap = 0.25
-    default: gap = 0.08
+    // Only pinned things, followed by EdgeTAM (one encoder pass and a step each): up to 20 times
+    // a second, so what's drawn between its outlines (ARKit, the flow) has less to cover.
+    default: gap = edgeTAM != nil && !pins.values.contains(where: { $0.parentId == Self.guideParent }) ? 0.05 : 0.08
     }
     let pose = frame.camera.transform
     let moving = liveShapes.values.contains { simd_length($0.velocity) >= 0.02 }
@@ -318,7 +391,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let now = shape.placed(at: frame.timestamp)
       // A pinned thing SAM has lost (behind a hand, out of view) is only taken back where it
       // was and as it was: asked for as a still thing, strictly.
-      let asking = LiveTracker.asking(still: shape.misses >= 2 || shape.still)
+      // A still thing whose depth is known, seen from about where it was last cut, takes only a
+      // cut that matches it closely: one that's grown onto a neighbour is refused. (At a guessed
+      // depth where it should be is off as the phone moves, and that would refuse good cuts.)
+      let still = shape.misses >= 2 || shape.still
+      let turned = shape.depthKnown ? shape.turned(from: simd_make_float3(frame.camera.transform.columns.3)) : nil
+      let asking = LiveTracker.asking(still: still, turned: turned)
       // Up close only part of it is on the picture: SAM is asked about that part (and the rest
       // goes where that part goes: LiveTracker.follow), unless too little of it is left to say.
       guard let predicted = uprightPoints(now, camera: frame.camera, upright: upright),
@@ -356,9 +434,31 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         prompts.append(LivePrompt(key: pin.id, point: at, box: box, part: box == nil, anchor: pin.world, predicted: nil, follows: true))
       }
     }
-    // Pinned things (the strip): one or two a frame, in turns, each where it should be now.
+    // Pinned things (the strip). EdgeTAM follows every one every frame, from its memory of it:
+    // its box where it is now only starts it. Without EdgeTAM, SAM re-cuts one or two a frame, in
+    // turns, each where it should be now.
     let held = pinOrder.filter { liveShapes[$0]?.pinned == true }
-    if !held.isEmpty {
+    if edgeTAM != nil {
+      for key in held {
+        guard let shape = liveShapes[key] else { continue }
+        let now = shape.placed(at: frame.timestamp)
+        let predicted = uprightPoints(now, camera: frame.camera, upright: upright)
+        let visible = predicted.map { LiveTracker.clipped($0) } ?? []
+        let box = visible.count >= 3 ? LiveTracker.bounds(visible) : nil
+        // Up close, a still thing's part on the picture is taken only where it fits (the strict
+        // gate), and moves a still thing whose depth is known only a little (ARKit already
+        // scales it as the phone comes closer): as SAM's cuts are (tools/walk).
+        let asking = LiveTracker.asking(still: shape.still)
+        prompts.append(LivePrompt(key: key, point: nil, box: box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
+                                  follows: true, gate: asking.gate, smoothing: asking.smoothing, edge: true,
+                                  scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4))
+      }
+      // Pinned at 0.5x: EdgeTAM is already following them; their first cut here lays them in the world.
+      for key in pinOrder where flatPins.contains(key) {
+        prompts.append(LivePrompt(key: key, point: nil, box: nil, part: false, anchor: .zero, predicted: nil,
+                                  follows: true, edge: true, unplaced: true))
+      }
+    } else if !held.isEmpty {
       let ask = min(prompts.isEmpty ? 2 : 1, held.count)
       var asked = 0
       for i in 0..<held.count where asked < ask {
@@ -376,16 +476,28 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let buffer = frame.capturedImage
     let captured = frame.timestamp
     let camera = FrozenCamera(frame: frame, crop: unit)
+    // What says how far each thing is: LiDAR's depth, or ARKit's points.
+    let measured = DepthSample(frame)
+    let points = frame.rawFeaturePoints?.points ?? []
+    let edge = edgeTAM
     samQueue.async { [weak self] in
       let started = CACurrentMediaTime()
       var encodeMs: Double = 0
-      var found: [String: [simd_float3]] = [:]
+      var found: [String: LiveCut] = [:]
       var refused = 0
       var failure: String?
       do {
-        try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "live")
-        encodeMs = (CACurrentMediaTime() - started) * 1000
-        for p in prompts {
+        let samPrompts = prompts.filter { !$0.edge }
+        if !samPrompts.isEmpty {
+          try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "live")
+          encodeMs = (CACurrentMediaTime() - started) * 1000
+        }
+        if let edge, let self {
+          let followed = prompts.filter(\.edge)
+          found = try self.followEdge(followed, models: edge, buffer: buffer, camera: camera, upright: upright,
+                                      measured: measured, points: points)
+        }
+        for p in samPrompts {
           // Following a thing: of SAM's candidates, the one that overlaps where it should be wins,
           // so the outline doesn't flip between "the handle" and "the whole mug" (from smooth-seg).
           let mask = try sam.segment(
@@ -393,11 +505,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             prior: p.predicted)
           guard mask.score >= (p.predicted == nil ? 0.6 : 0.5), mask.polygon.count > 2 else { continue }
           // Evenly spaced (in pixels).
-          var ring = OutlineMath.resample(mask.polygon, scale: upright)
+          let cut = OutlineMath.resample(mask.polygon, scale: upright)
+          var ring = cut
           // Following a thing: a cut that doesn't fit where it should be is something else. Up
           // close the cut is only the part on the picture, and the whole outline goes where it went.
           if let predicted = p.predicted {
-            guard let taken = LiveTracker.follow(cut: ring, predicted: predicted, gate: p.gate) else {
+            guard let taken = LiveTracker.follow(cut: cut, predicted: predicted, gate: p.gate) else {
               refused += 1
               continue
             }
@@ -406,7 +519,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           // Onto the thing's plane in the world.
           let plane = camera.withPlane(through: p.anchor)
           let world = ring.compactMap { plane.onPlane($0) }
-          if world.count == ring.count { found[p.key] = world }
+          guard world.count == ring.count else { continue }
+          // How far it really is, measured inside the cut: LiDAR's depth, else ARKit's points on it.
+          var depth: (metres: Float, weight: Float)?
+          if let d = measured?.inside(cut) {
+            depth = (d, LiveShape.lidarWeight)
+          } else if let d = camera.medianDepth(of: points, inside: cut) {
+            depth = (d, LiveShape.pointsWeight)
+          }
+          found[p.key] = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(cut) ? Self.middle(cut) : nil)
         }
       } catch {
         failure = error.localizedDescription
@@ -431,9 +552,90 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           }
         }
         guard self.liveSegments else { return }
-        self.takeLive(results, asked: prompts, at: captured)
+        self.takeLive(results, asked: prompts, at: captured, seenBy: camera)
       }
     }
+  }
+
+  /// EdgeTAM's step for each pinned thing in `buffer` (on `samQueue`, the only place its state is
+  /// touched): one encoder pass for them all, then each thing's own tracker, started from its box
+  /// the first time. Each outline it finds is laid in the world like a SAM cut (on a plane through
+  /// the thing, at the depth measured inside it); a thing it says isn't in view isn't found, and
+  /// counts a miss. Trackers of things no longer pinned go.
+  private func followEdge(_ asked: [LivePrompt], models: EdgeTAMTracker.Models, buffer: CVPixelBuffer, camera: FrozenCamera,
+                          upright: CGSize, measured: DepthSample?, points: [simd_float3]) throws -> [String: LiveCut] {
+    let keys = Set(asked.map(\.key))
+    for key in edgeTrackers.keys where !keys.contains(key) { edgeTrackers[key] = nil }
+    guard !asked.isEmpty else { return [:] }
+    let encoder = try edgeEncoder ?? EdgeTAMTracker.Encoder(models: models)
+    edgeEncoder = encoder
+    let picture = try encoder.encode(CIImage(cvPixelBuffer: buffer).oriented(.right))
+    var found: [String: LiveCut] = [:]
+    for p in asked {
+      let cut: EdgeTAMTracker.Cut
+      if let tracker = edgeTrackers[p.key], tracker.started {
+        cut = try tracker.step(picture)
+      } else {
+        // Not started until its box is on the picture.
+        guard let box = p.box, box.width > 0.01, box.height > 0.01 else { continue }
+        let tracker = try EdgeTAMTracker(models: models)
+        cut = try tracker.start(picture, box: box)
+        edgeTrackers[p.key] = tracker
+      }
+      let now = CACurrentMediaTime()
+      if now - edgeLogTime > 3 {
+        edgeLogTime = now
+        let ms = cut.ms.sorted { $0.key < $1.key }.map { String(format: "%@ %.0f", $0.key, $0.value) }.joined(separator: ", ")
+        NSLog("[lensi] EdgeTAM: %ld things, score %.1f, ms: %@", asked.count, cut.score, ms)
+      }
+      guard cut.visible else { continue }
+      let seen = OutlineMath.resample(cut.outline, scale: upright)
+      var ring = seen
+      // Up close it runs off the picture, and EdgeTAM can only outline the part on it: the whole
+      // outline goes where that part went, rather than stopping at the picture's edge. A part
+      // that doesn't fit where the thing should be isn't taken (ARKit holds it meanwhile): laid
+      // as the whole thing, or carried far by it, it threw the whole outline about a close-up
+      // sink and washer (tools/walk).
+      if Self.touchesEdge(seen), let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
+        guard let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit) else { continue }
+        ring = whole
+      }
+      var anchor = p.anchor
+      if p.unplaced {
+        // Pinned at 0.5x, it has no place in the world yet: where it's measured to be (LiDAR, ARKit's
+        // points on it), else a metre off along its middle's line of sight, which its lines of
+        // sight put right as it's followed (LiveShape.sight).
+        let middle = Self.middle(seen)
+        let (origin, dir) = camera.ray(middle)
+        if let d = measured?.inside(seen) ?? camera.medianDepth(of: points, inside: seen) {
+          anchor = origin + dir * camera.range(depth: d, through: middle)
+        } else {
+          anchor = origin + dir
+        }
+      }
+      let plane = camera.withPlane(through: anchor)
+      let world = ring.compactMap { plane.onPlane($0) }
+      guard world.count == ring.count else { continue }
+      var depth: (metres: Float, weight: Float)?
+      if let d = measured?.inside(seen) {
+        depth = (d, LiveShape.lidarWeight)
+      } else if let d = camera.medianDepth(of: points, inside: seen) {
+        depth = (d, LiveShape.pointsWeight)
+      }
+      found[p.key] = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(seen) ? Self.middle(seen) : nil)
+    }
+    return found
+  }
+
+  /// The middle of an outline's points (evenly spaced: OutlineMath.resample).
+  private static func middle(_ ring: [CGPoint]) -> CGPoint {
+    let n = CGFloat(max(ring.count, 1))
+    return CGPoint(x: ring.reduce(0) { $0 + $1.x } / n, y: ring.reduce(0) { $0 + $1.y } / n)
+  }
+
+  /// An outline (upright 0…1) that reaches the picture's edge: the thing runs off it.
+  private static func touchesEdge(_ outline: [CGPoint], margin: CGFloat = 0.006) -> Bool {
+    outline.contains { $0.x < margin || $0.x > 1 - margin || $0.y < margin || $0.y > 1 - margin }
   }
 
   /// World points as this camera sees them (upright 0…1); nil when any is behind the phone.
@@ -466,19 +668,37 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     return OutlineMath.centre(shape.placed(at: t)) + offset
   }
 
-  /// SAM's answers for one frame (captured at `t`): found shapes are blended into what's
-  /// shown and their motion measured; asked-for ones it didn't find, or whose cut didn't fit,
-  /// count a miss (two in a row and they go).
-  private func takeLive(_ found: [String: [simd_float3]], asked: [LivePrompt], at t: CFTimeInterval) {
+  /// One of SAM's cuts, laid in the world, and how far away its thing is as measured inside it
+  /// (and how much to go by that), if anything did.
+  private struct LiveCut {
+    let world: [simd_float3]
+    let depth: (metres: Float, weight: Float)?
+    /// The middle of a cut of the whole thing (none of it off the picture), upright: its line of
+    /// sight says how far it is once the phone has moved (LiveShape.sight).
+    var middle: CGPoint? = nil
+  }
+
+  /// SAM's answers for one frame (captured at `t`, by `camera`): found shapes are blended into
+  /// what's shown, their motion measured and their depth put right (LiveShape: a cut is laid at
+  /// the depth the outline already had, a guess to start with); asked-for ones it didn't find, or
+  /// whose cut didn't fit, count a miss (two in a row and they go).
+  private func takeLive(_ found: [String: LiveCut], asked: [LivePrompt], at t: CFTimeInterval, seenBy camera: FrozenCamera) {
     for prompt in asked {
       let key = prompt.key
-      if let world = found[key] {
+      if let cut = found[key] {
+        let world = cut.world
         // A pinned thing is blended back however long it was lost: its cut was asked for where
         // it should be, and had to fit it there.
         if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
           // While the phone itself moves fast, where the cut landed says little about the
           // thing's own speed.
-          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast)
+          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: camera.position)
+          if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
+          // Without LiDAR, where its lines of sight cross says how far it is (a black bottle has
+          // no ARKit points on it).
+          if let middle = cut.middle, (cut.depth?.weight ?? 0) < LiveShape.lidarWeight {
+            shape.sight(middle, seenBy: camera, at: t)
+          }
           liveShapes[key] = shape
         } else {
           // New, or not seen for a while: start over.
@@ -488,10 +708,31 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           outlines.addChildNode(node)
           liveLayers[key] = node
           var shape = LiveShape(world: world, at: t, follows: prompt.follows)
-          if let pin = pins[key] {
+          if prompt.unplaced, let pin = pins[key] {
+            // Pinned at 0.5x: in the world now, a pinned thing like any other.
+            shape.pinned = true
+            shape.tagOffset = .zero
+            shape.depthKnown = cut.depth != nil
+            pin.world = OutlineMath.centre(world)
+            flatPins.remove(key)
+            // Its callouts were put on a crop of it from the ultra-wide; the box round it here
+            // stands in for that crop.
+            if let seen = camera.upright(world) {
+              let r = LiveTracker.bounds(seen)
+              let crop = r.insetBy(dx: -r.width * 0.15, dy: -r.height * 0.15).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+              if !crop.isNull, crop.width > 0.02, crop.height > 0.02 {
+                contexts[key] = FrozenCamera(transform: camera.transform, intrinsics: camera.intrinsics, resolution: camera.resolution,
+                                             crop: crop).withPlane(through: pin.world)
+              }
+            }
+            for c in flatCallouts.removeValue(forKey: key) ?? [] {
+              addCallout(parentId: key, id: c.id, x: c.x, y: c.y, text: c.text)
+            }
+          } else if let pin = pins[key] {
             let offset = pin.world - OutlineMath.centre(world)
             shape.tagOffset = simd_length(offset) < 0.5 ? offset : .zero
           }
+          if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
           liveShapes[key] = shape
         }
       } else if var shape = liveShapes[key] {
@@ -510,7 +751,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// moves its own width between cuts (a bolt on a belt) is lost (tools/track measures both).
   private func flowLive(_ frame: ARFrame) {
     guard liveSegments, sam != nil, !flowBusy, frame.timestamp - lastFlowTime >= 1.0 / 30,
-          liveShapes.values.contains(where: { $0.follows }) else { return }
+          liveShapes.values.contains(where: { $0.follows && !Self.heldByARKit($0) }) else { return }
     flowBusy = true
     lastFlowTime = frame.timestamp
     let buffer = frame.capturedImage
@@ -544,9 +785,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// too and cancels out in the round trip; what's left is the thing's.
   private func carryLive(from a: LiveFlow.Frame, _ ca: FrozenCamera, at ta: CFTimeInterval,
                          to b: LiveFlow.Frame, _ cb: FrozenCamera, at tb: CFTimeInterval) {
-    for (key, var shape) in liveShapes where shape.follows && shape.misses < 2 {
+    for (key, var shape) in liveShapes where shape.follows && shape.misses < 2 && !Self.heldByARKit(shape) {
       if shape.carry(from: a, ca, at: ta, to: b, cb, at: tb) { liveShapes[key] = shape }
     }
+  }
+
+  /// A still thing whose depth has been measured isn't carried by the flow: ARKit already holds
+  /// it where it is, and the flow could add only its own noise. On handheld walk-arounds that
+  /// took the outline's wobble against its thing from 8 px to 3 (tools/walk). Laid at a depth
+  /// that's only a guess, the flow keeps it on its thing as the phone moves.
+  private static func heldByARKit(_ shape: LiveShape) -> Bool {
+    shape.still && shape.depthKnown
   }
 
   /// Every display frame: each live outline drawn where its thing is now (carried along by
@@ -661,18 +910,202 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   func setZoom(_ requested: Double) {
     guard requested.isFinite else { return }
-    let lowest: CGFloat = ultraWideFormat != nil ? 0.5 : 1
-    let z = min(max(CGFloat(requested), lowest), Self.maxZoom)
+    var z = min(max(CGFloat(requested), hasUltraWide ? 0.5 : 1), Self.maxZoom)
+    // A recording keeps the camera it started on (its frames are that camera's size).
+    if recorder != nil, ultraWideFormat == nil { z = wideMode ? min(z, 0.99) : max(z, 1) }
     zoomFactor = z
-    let ultra = z < 1 && ultraWideFormat != nil
-    if ultra != onUltraWide { useUltraWide(ultra) }
+    let ultra = z < 1
+    if ultraWideFormat != nil {
+      if ultra != onUltraWide { useUltraWide(ultra) }
+    } else if ultra != wideMode {
+      setWideMode(ultra)
+    }
     // The ultra-wide sees twice as wide: 0.5 is its whole picture, 0.7 a 1.4x crop.
     zoom = ultra ? z / 0.5 : z
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     sceneView.transform = CGAffineTransform(scaleX: zoom, y: zoom)
+    wide?.preview.setAffineTransform(CGAffineTransform(scaleX: zoom, y: zoom))
     CATransaction.commit()
     layoutPins()
+  }
+
+  /// Into or out of 0.5x on the ultra-wide camera on its own (ARKit has no ultra-wide format
+  /// here): ARKit pauses, keeping its world, and resumes with it (pins and all) at 1x.
+  private func setWideMode(_ on: Bool) {
+    wideMode = on
+    if on {
+      let camera = wide ?? UltraWideCamera()
+      if wide == nil {
+        wide = camera
+        camera.preview.bounds = CGRect(origin: .zero, size: bounds.size)
+        camera.preview.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        layer.insertSublayer(camera.preview, above: sceneView.layer)
+        camera.onFrame = { [weak self] buffer, t in
+          DispatchQueue.main.async { self?.wideFrame(buffer, at: t) }
+        }
+      }
+      sceneView.session.pause()
+      sceneView.isHidden = true
+      camera.preview.isHidden = false
+      if running { camera.start() }
+    } else {
+      for (_, l) in wideLayers { l.removeFromSuperlayer() }
+      wideLayers = [:]
+      wideScrubLayer?.removeFromSuperlayer()
+      wideScrubLayer = nil
+      wideScrubFrame = nil
+      wideOutlines = [:]
+      wideTimes = [:]
+      // Pinned things' tags go back to SceneKit, with their outlines.
+      for (_, pin) in pins where pin.tagNode != nil { pin.label.drawnElsewhere = true }
+      // ARKit once the ultra-wide has let go of the camera.
+      let camera = wide
+      camera?.stop { [weak self] in
+        guard let self, !self.wideMode else { return }
+        camera?.preview.isHidden = true
+        self.sceneView.isHidden = false
+        if self.running, let config = self.configuration { self.sceneView.session.run(config) }
+      }
+      if camera == nil {
+        sceneView.isHidden = false
+        if running, let config = configuration { sceneView.session.run(config) }
+      }
+    }
+  }
+
+  /// A frame from the ultra-wide (0.5x without ARKit): EdgeTAM takes every pinned thing it's
+  /// following one step further on it, as often as it keeps up, and each outline it finds is
+  /// steadied into what's drawn (`layoutWide`).
+  private func wideFrame(_ buffer: CVPixelBuffer, at t: CFTimeInterval) {
+    guard wideMode, liveSegments, !samBusy, !scrubBusy, let edge = edgeTAM, t - lastWideTime > 0.05 else { return }
+    let held = pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) }
+    guard !held.isEmpty else { return }
+    samBusy = true
+    lastWideTime = t
+    let size = CGSize(width: CVPixelBufferGetHeight(buffer), height: CVPixelBufferGetWidth(buffer)) // upright
+    samQueue.async { [weak self] in
+      guard let self else { return }
+      var found: [String: [CGPoint]] = [:]
+      do {
+        found = try self.followWide(held, models: edge, buffer: buffer)
+      } catch {
+        NSLog("[lensi] EdgeTAM on the ultra-wide failed: %@", error.localizedDescription)
+      }
+      DispatchQueue.main.async {
+        self.samBusy = false
+        guard self.wideMode else { return }
+        let px = { (p: CGPoint) in simd_float3(Float(p.x * size.width), Float(p.y * size.height), 0) }
+        self.wideSize = size
+        for (key, outline) in found {
+          let ring = OutlineMath.resample(outline, scale: size).map(px)
+          // The last one, moved on to this frame by how the phone turned, is what this one is
+          // glided into.
+          let last = self.wideOutlines[key].map { self.wide?.warp($0, from: self.wideTimes[key] ?? t, to: t, size: size) ?? $0 }
+          let glided = OutlineMath.glide(last?.map(px), ring)
+          self.wideOutlines[key] = glided.map { CGPoint(x: CGFloat($0.x) / size.width, y: CGFloat($0.y) / size.height) }
+          self.wideTimes[key] = t
+        }
+        // Not in view: no outline (it's drawn again once EdgeTAM finds it).
+        for key in held where found[key] == nil {
+          self.wideOutlines[key] = nil
+          self.wideTimes[key] = nil
+        }
+      }
+    }
+  }
+
+  /// EdgeTAM's step for each pinned thing on an ultra-wide frame (on `samQueue`): its outline
+  /// (upright 0…1) where it's in view. Only things it was already following: without ARKit there's
+  /// no knowing where anything else is in this picture.
+  private func followWide(_ keys: [String], models: EdgeTAMTracker.Models, buffer: CVPixelBuffer) throws -> [String: [CGPoint]] {
+    let following = keys.filter { edgeTrackers[$0]?.started == true }
+    guard !following.isEmpty else { return [:] }
+    let encoder = try edgeEncoder ?? EdgeTAMTracker.Encoder(models: models)
+    edgeEncoder = encoder
+    let picture = try encoder.encode(CIImage(cvPixelBuffer: buffer).oriented(.right))
+    var found: [String: [CGPoint]] = [:]
+    for key in following {
+      guard let tracker = edgeTrackers[key] else { continue }
+      let cut = try tracker.step(picture)
+      if cut.visible { found[key] = cut.outline }
+    }
+    return found
+  }
+
+  /// Every display frame at 0.5x without ARKit: each pinned thing's outline flat over the
+  /// ultra-wide's picture, its tag just above it, and the strip's highlighted thing.
+  private func layoutWide() {
+    layoutWideScrub()
+    guard let wide else { return }
+    let held = Set(pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) })
+    for (key, l) in wideLayers where !held.contains(key) {
+      l.removeFromSuperlayer()
+      wideLayers[key] = nil
+    }
+    let visible = bounds.inset(by: pinInsets)
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+    for id in pinOrder {
+      guard let pin = pins[id] else { continue }
+      guard held.contains(id), let outline = wideOutlines[id], outline.count >= 3 else {
+        wideLayers[id]?.isHidden = true
+        pin.setHidden(true)
+        continue
+      }
+      let flat: FlatOutline
+      if let existing = wideLayers[id] {
+        flat = existing
+      } else {
+        flat = FlatOutline()
+        layer.insertSublayer(flat, above: wide.preview)
+        wideLayers[id] = flat
+      }
+      flat.frame = bounds
+      // Where it is on the picture now: moved on from its frame by how the phone has turned since.
+      let now = wide.latest?.t ?? CACurrentMediaTime()
+      let moved = wide.warp(outline, from: wideTimes[id] ?? now, to: now, size: wideSize)
+      let points = moved.map { zoomed(wide.layerPoint($0)) }
+      let path = OutlineMath.curvePath(points)
+      flat.draw(path, color: pin.label.color.cgColor, width: 2.5, fillOpacity: 0.1)
+      flat.isHidden = false
+      // Its tag just above it, as at 1x.
+      let box = path.boundingBox
+      pin.label.drawnElsewhere = false
+      pin.setHidden(false)
+      pin.tagNode?.isHidden = true
+      let half = pin.label.bounds.width / 2 + 8
+      let h = pin.label.bounds.height / 2
+      pin.label.center = CGPoint(x: min(max(box.midX, half), bounds.width - half),
+                                 y: min(max(box.minY - h - 6, visible.minY + h), max(visible.minY + h, visible.maxY - h)))
+    }
+  }
+
+  /// The strip's highlighted thing at 0.5x, bold in the lens colour, moved on from the frame it
+  /// was found in by how the phone has turned since (a pinned one is drawn as its pin).
+  private func layoutWideScrub() {
+    guard wideMode, let wide, let found = wideScrubFrame, let i = scrubIndex, scrubThings.indices.contains(i),
+          scrubThings[i].pinId == nil, let flat = scrubThings[i].flat else {
+      wideScrubLayer?.isHidden = true
+      return
+    }
+    let highlight: FlatOutline
+    if let existing = wideScrubLayer {
+      highlight = existing
+    } else {
+      highlight = FlatOutline()
+      layer.insertSublayer(highlight, above: wide.preview)
+      wideScrubLayer = highlight
+    }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+    highlight.frame = bounds
+    let now = wide.latest?.t ?? CACurrentMediaTime()
+    let moved = wide.warp(flat, from: found.t, to: now, size: wideSize)
+    highlight.draw(OutlineMath.curvePath(moved.map { zoomed(wide.layerPoint($0)) }), color: accent.cgColor, width: 2.5, fillOpacity: 0.16)
+    highlight.isHidden = false
   }
 
   /// Swaps the camera under the same session; the world (and every pin) carries on.
@@ -865,6 +1298,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
     focusedId = newFocus?.id
 
+    // At 0.5x without ARKit there's no world to draw in: pinned things are drawn flat.
+    if wideMode {
+      layoutWide()
+      return
+    }
     // Outlines first: a pinned thing's tag sits above where its outline is drawn.
     layoutLive()
     layoutPins()
@@ -890,6 +1328,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   private func layoutPins() {
+    if wideMode {
+      layoutWide()
+      return
+    }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
@@ -897,6 +1339,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let visible = bounds.inset(by: pinInsets)
     for id in pinOrder {
       guard let pin = pins[id] else { continue }
+      // Pinned at 0.5x and not yet in the world.
+      if flatPins.contains(id) {
+        pin.setHidden(true)
+        continue
+      }
       // A guide tag rides with its part when the part moves, and a pinned thing's with the
       // thing (their live outlines say where).
       let held = liveShapes[id]?.pinned == true
@@ -1154,8 +1601,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// YOLO's name for it, when it's one of YOLO's things.
     let label: String?
     let confidence: Float
+    /// Laid where LiDAR or ARKit's points put it, rather than where a raycast guessed.
+    let depthKnown: Bool
     /// Its pin once it's pinned (holding on it again does nothing).
     var pinId: String?
+    /// At 0.5x: its outline on the ultra-wide's picture (upright 0…1), and no world.
+    var flat: [CGPoint]? = nil
   }
 
   /// The strip's highlighted thing, the only one drawn while a finger is on it.
@@ -1174,7 +1625,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   func scrubStart(top: Double, bottom: Double, done: @escaping ([[String: Any]]) -> Void) {
     scrubEnd()
     let session = scrubSession
-    guard bounds.width > 0, let frame = sceneView.session.currentFrame else {
+    guard bounds.width > 0 else {
+      done([])
+      return
+    }
+    // At 0.5x without ARKit: things on the ultra-wide's picture.
+    if wideMode {
+      scrubStartWide(top: top, bottom: bottom, session: session, done: done)
+      return
+    }
+    guard let frame = sceneView.session.currentFrame else {
       done([])
       return
     }
@@ -1197,11 +1657,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
     let camera = FrozenCamera(frame: frame, crop: unit)
     let points = frame.rawFeaturePoints?.points ?? []
+    let measured = DepthSample(frame)
     let res = frame.camera.imageResolution
     let upright = CGSize(width: res.height, height: res.width)
     guard let sam else {
       // No SAM on this phone: YOLO's boxes are the things.
-      done(scrubLay(objects, camera: camera, points: points, upright: upright))
+      done(scrubLay(objects, camera: camera, points: points, depth: measured, upright: upright))
       return
     }
     let buffer = frame.capturedImage
@@ -1230,7 +1691,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           done([])
           return
         }
-        let things = self.scrubLay(found, camera: camera, points: points, upright: upright)
+        let things = self.scrubLay(found, camera: camera, points: points, depth: measured, upright: upright)
         NSLog("[lensi] strip: %ld things in view (%ld found) in %.0f ms", things.count, found.count, ms)
         done(things)
       }
@@ -1239,26 +1700,37 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// The strip's finds laid in the world, the same thing found twice kept once, in order across
   /// the screen; each gets a layer (drawn by `layoutScrub`).
-  private func scrubLay(_ found: [ScrubFind], camera: FrozenCamera, points: [simd_float3], upright: CGSize) -> [[String: Any]] {
+  private func scrubLay(_ found: [ScrubFind], camera: FrozenCamera, points: [simd_float3], depth: DepthSample?,
+                        upright: CGSize) -> [[String: Any]] {
     let look = GuideFrameContext(selection: camera, points: points)
     var kept: [ScrubFind] = []
     for f in found where !kept.contains(where: { LiveTracker.iou($0.polygon, f.polygon) > 0.6 }) {
       kept.append(f)
     }
-    var laid: [(world: [simd_float3], find: ScrubFind, at: CGPoint)] = []
+    var laid: [(world: [simd_float3], find: ScrubFind, at: CGPoint, depthKnown: Bool)] = []
     for f in kept {
       let ring = OutlineMath.resample(f.polygon, scale: upright)
       let middle = LiveTracker.interiorPoint(f.polygon, scale: upright)
-      let plane = camera.withPlane(through: look.anchor(at: middle, session: sceneView.session))
+      // How far it is: LiDAR's depth inside it, else ARKit's points on it, else a raycast through
+      // its middle (which can hit the wall behind it: LiveShape puts that right as it's followed).
+      let anchor: simd_float3
+      let measured = depth?.inside(ring) ?? camera.medianDepth(of: points, inside: ring)
+      if let d = measured {
+        let (origin, dir) = camera.ray(middle)
+        anchor = origin + dir * camera.range(depth: d, through: middle)
+      } else {
+        anchor = look.anchor(at: middle, session: sceneView.session)
+      }
+      let plane = camera.withPlane(through: anchor)
       let world = ring.compactMap { plane.onPlane($0) }
       guard world.count == ring.count, let (p, _) = project(OutlineMath.centre(world)), bounds.contains(p) else { continue }
-      laid.append((world: world, find: f, at: p))
+      laid.append((world: world, find: f, at: p, depthKnown: measured != nil))
     }
     // Left to right as they are on screen.
     laid.sort { ($0.at.x, $0.at.y) < ($1.at.x, $1.at.y) }
     laid = Array(laid.prefix(14))
     scrubThings = laid.map { l in
-      ScrubThing(world: l.world, label: l.find.label, confidence: l.find.confidence, pinId: nil)
+      ScrubThing(world: l.world, label: l.find.label, confidence: l.find.confidence, depthKnown: l.depthKnown, pinId: nil)
     }
     scrubIndex = nil
     scrubNode?.removeFromParentNode()
@@ -1282,8 +1754,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// Pins thing `index`: a tag, an outline SAM keeps on it from now on, and its picture to JS
   /// (onSelect) to be named, as a tap's was. Answers its pin's id.
   func scrubPin(_ index: Int) -> String? {
-    guard scrubThings.indices.contains(index), let frame = sceneView.session.currentFrame else { return nil }
+    guard scrubThings.indices.contains(index) else { return nil }
     if let id = scrubThings[index].pinId { return id }
+    if scrubThings[index].flat != nil { return scrubPinWide(index) }
+    guard let frame = sceneView.session.currentFrame else { return nil }
     let thing = scrubThings[index]
     let id = UUID().uuidString
     let centre = OutlineMath.centre(thing.world)
@@ -1298,6 +1772,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     contexts[id] = FrozenCamera(frame: frame, crop: crop).withPlane(through: centre)
     var shape = LiveShape(world: thing.world, at: frame.timestamp, follows: true)
     shape.pinned = true
+    shape.depthKnown = thing.depthKnown
     shape.tagOffset = .zero
     liveShapes[id] = shape
     let node = OutlineNode()
@@ -1337,6 +1812,125 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     scrubNode = nil
     scrubThings = []
     scrubIndex = nil
+    wideScrubLayer?.isHidden = true
+    wideScrubFrame = nil
+  }
+
+  /// The strip at 0.5x without ARKit: SAM's parts on the ultra-wide's picture, between `top` and
+  /// `bottom` on screen, outlines on that picture (there's no world to lay them in), in order
+  /// across the screen. Pinned, one is followed there by EdgeTAM (`scrubPinWide`).
+  private func scrubStartWide(top: Double, bottom: Double, session: Int, done: @escaping ([[String: Any]]) -> Void) {
+    guard let wide, let latest = wide.latest, let sam else {
+      done([])
+      return
+    }
+    let buffer = latest.buffer
+    let size = CGSize(width: CVPixelBufferGetHeight(buffer), height: CVPixelBufferGetWidth(buffer)) // upright
+    let lo = CGFloat(max(0, top))
+    let hi = max(lo + 1, min(bounds.height, CGFloat(bottom)))
+    let a = wide.uprightPoint(unzoomed(CGPoint(x: 0, y: lo)))
+    let b = wide.uprightPoint(unzoomed(CGPoint(x: bounds.width, y: hi)))
+    let region = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+      .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    guard !region.isNull, region.width > 0.05, region.height > 0.05 else {
+      done([])
+      return
+    }
+    scrubBusy = true
+    samQueue.async { [weak self] in
+      let started = CACurrentMediaTime()
+      var found: [[CGPoint]] = []
+      do {
+        try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "scrub")
+        let parts = try sam.proposeParts(id: "scrub", region: region, grid: 6, maxParts: 12,
+                                         minArea: 0.002, maxArea: 0.3, minScore: 0.8, budget: 0.6)
+        found = parts.map(\.polygon)
+      } catch {
+        NSLog("[lensi] strip at 0.5x: SAM failed: %@", error.localizedDescription)
+      }
+      let ms = (CACurrentMediaTime() - started) * 1000
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.scrubBusy = false
+        guard session == self.scrubSession, self.wideMode, let wide = self.wide else {
+          done([])
+          return
+        }
+        var kept: [[CGPoint]] = []
+        for f in found where !kept.contains(where: { LiveTracker.iou($0, f) > 0.6 }) {
+          kept.append(f)
+        }
+        var laid: [(flat: [CGPoint], at: CGPoint)] = []
+        for f in kept {
+          let at = self.zoomed(wide.layerPoint(LiveTracker.interiorPoint(f, scale: size)))
+          guard self.bounds.contains(at) else { continue }
+          laid.append((flat: OutlineMath.resample(f, scale: size), at: at))
+        }
+        laid.sort { ($0.at.x, $0.at.y) < ($1.at.x, $1.at.y) }
+        laid = Array(laid.prefix(14))
+        self.scrubThings = laid.map {
+          ScrubThing(world: [], label: nil, confidence: 0, depthKnown: false, pinId: nil, flat: $0.flat)
+        }
+        self.scrubIndex = nil
+        self.wideScrubFrame = (buffer: buffer, t: latest.t)
+        self.wideSize = size
+        NSLog("[lensi] strip at 0.5x: %ld things in view (%ld found) in %.0f ms", laid.count, found.count, ms)
+        let width = self.bounds.width, height = self.bounds.height
+        done(laid.map { l -> [String: Any] in
+          ["label": NSNull(), "x": Double(l.at.x / width), "y": Double(l.at.y / height)]
+        })
+      }
+    }
+  }
+
+  /// Pins thing `index` at 0.5x: a tag, and EdgeTAM started on it from the frame it was found in,
+  /// following it on the ultra-wide (`wideFrame`); it's laid in the world from its first cut
+  /// once ARKit is back at 1x. Its picture goes to JS (onSelect) to be named, as at 1x.
+  private func scrubPinWide(_ index: Int) -> String? {
+    // Without EdgeTAM (still loading, or missing) nothing could follow it here.
+    guard let edge = edgeTAM, let flat = scrubThings[index].flat, let found = wideScrubFrame else { return nil }
+    let id = UUID().uuidString
+    let pin = Pin(id: id, parentId: nil, world: .zero, text: "Looking", color: accent)
+    let tag = TagNode()
+    tag.isHidden = true
+    outlines.addChildNode(tag)
+    pin.tagNode = tag
+    addPin(pin)
+    flatPins.insert(id)
+    scrubThings[index].pinId = id
+    wideOutlines[id] = flat
+    wideTimes[id] = found.t
+    // EdgeTAM starts on it on samQueue, where its trackers live; if it can't, it's unpinned
+    // rather than left with nothing to follow it.
+    let box = LiveTracker.bounds(flat)
+    let start = found.buffer
+    samQueue.async { [weak self] in
+      guard let self else { return }
+      do {
+        let encoder = try self.edgeEncoder ?? EdgeTAMTracker.Encoder(models: edge)
+        self.edgeEncoder = encoder
+        let tracker = try EdgeTAMTracker(models: edge)
+        _ = try tracker.start(encoder.encode(CIImage(cvPixelBuffer: start).oriented(.right)), box: box)
+        self.edgeTrackers[id] = tracker
+      } catch {
+        NSLog("[lensi] EdgeTAM couldn't start on a thing pinned at 0.5x: %@", error.localizedDescription)
+        DispatchQueue.main.async { self.removePin(id: id) }
+      }
+    }
+    layoutWide()
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    let r = LiveTracker.bounds(flat)
+    var crop = r.insetBy(dx: -r.width * 0.15, dy: -r.height * 0.15).intersection(unit)
+    if crop.isNull || crop.width < 0.02 || crop.height < 0.02 { crop = unit }
+    let buffer = found.buffer
+    visionQueue.async { [weak self] in
+      guard let self else { return }
+      let jpeg = self.detector.jpeg(buffer, crop: crop)
+      DispatchQueue.main.async {
+        self.onSelect(["id": id, "label": NSNull(), "confidence": 0, "image": jpeg?.base64EncodedString() ?? ""])
+      }
+    }
+    return id
   }
 
   /// Unpins every pinned thing, and whatever the brain added to it.
@@ -1347,6 +1941,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// The strip's highlighted thing where it is now, bold in the lens colour; nothing else is
   /// drawn (the strip's ticks say how many there are). A pinned one is drawn as its pin instead.
   private func layoutScrub() {
+    if wideMode {
+      layoutWideScrub()
+      return
+    }
     guard let node = scrubNode else { return }
     guard let i = scrubIndex, scrubThings.indices.contains(i), scrubThings[i].pinId == nil,
           let eye = outlineEye(), screenBounds(scrubThings[i].world, toCamera: eye.toCamera) != nil else {
@@ -1362,6 +1960,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// Full-resolution still (when the format allows it), written upright as JPEG.
   func takePhoto(_ done: @escaping (Result<[String: Any], Error>) -> Void) {
+    if wideMode {
+      guard let buffer = wide?.latest?.buffer else {
+        done(.failure(LensiError.unavailable("The camera isn't ready yet.")))
+        return
+      }
+      visionQueue.async {
+        let result = self.writePhoto(buffer, maxSide: 3024)
+        DispatchQueue.main.async { done(result) }
+      }
+      return
+    }
     let session = sceneView.session
     // The JS shutter waits on this promise, so it must settle exactly once,
     // even if ARKit never calls back (a session paused mid-capture).
@@ -1429,6 +2038,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   func startRecording(_ done: @escaping (Error?) -> Void) {
     guard recorder == nil else {
       done(nil)
+      return
+    }
+    guard !wideMode else {
+      done(LensiError.unavailable("Video records at 1x and up."))
       return
     }
     guard running, let frame = sceneView.session.currentFrame else {
@@ -1526,6 +2139,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// `x`/`y` are 0...1 inside the crop that was sent with onSelect.
   func addCallout(parentId: String, id: String, x: Double, y: Double, text: String) {
+    // On a thing pinned at 0.5x and not yet in the world: placed with it.
+    if flatPins.contains(parentId), pins[parentId] != nil, pins[id] == nil {
+      flatCallouts[parentId, default: []].append((id: id, x: x, y: y, text: text))
+      return
+    }
     guard pins[id] == nil, let parent = pins[parentId], let ctx = contexts[parentId] else { return }
     let upright = CGPoint(
       x: ctx.crop.minX + CGFloat(x) * ctx.crop.width,
@@ -1542,6 +2160,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       pins[pid]?.removeFromSuperview()
       pins[pid] = nil
       contexts[pid] = nil
+      flatPins.remove(pid)
+      flatCallouts[pid] = nil
     }
     pinOrder.removeAll { pins[$0] == nil }
   }
@@ -1551,6 +2171,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     pins.removeAll()
     pinOrder.removeAll()
     contexts.removeAll()
+    flatPins.removeAll()
+    flatCallouts.removeAll()
   }
 
   // MARK: - Live guide
@@ -1733,6 +2355,47 @@ private struct Tracked {
   var target: CGRect
   var shown: CGRect
   var missed = 0
+}
+
+/// LiDAR's depth with one frame (ARFrame.smoothedSceneDepth: metres, lying on its side as the
+/// camera image does, at a fraction of its size) and how sure of it LiDAR is.
+private struct DepthSample {
+  let depth: CVPixelBuffer
+  let confidence: CVPixelBuffer?
+
+  /// Nil on a phone without LiDAR.
+  init?(_ frame: ARFrame) {
+    guard let d = frame.smoothedSceneDepth ?? frame.sceneDepth else { return nil }
+    depth = d.depthMap
+    confidence = d.confidenceMap
+  }
+
+  /// The median depth inside an upright outline (LiveShape.depthInside), leaving out what LiDAR
+  /// isn't sure of; nil when too little of it has a depth.
+  func inside(_ ring: [CGPoint]) -> Float? {
+    guard CVPixelBufferGetPixelFormatType(depth) == kCVPixelFormatType_DepthFloat32 else { return nil }
+    CVPixelBufferLockBaseAddress(depth, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(depth) else { return nil }
+    let w = CVPixelBufferGetWidth(depth), h = CVPixelBufferGetHeight(depth)
+    let row = CVPixelBufferGetBytesPerRow(depth)
+    var sure: UnsafeMutableRawPointer?
+    var sureRow = 0
+    if let confidence {
+      CVPixelBufferLockBaseAddress(confidence, .readOnly)
+      sure = CVPixelBufferGetBaseAddress(confidence)
+      sureRow = CVPixelBufferGetBytesPerRow(confidence)
+    }
+    defer { if let confidence { CVPixelBufferUnlockBaseAddress(confidence, .readOnly) } }
+    let medium = UInt8(ARConfidenceLevel.medium.rawValue)
+    return LiveShape.depthInside(ring) { p in
+      let s = FrozenCamera.sensor(p)
+      let x = min(max(Int(s.x * CGFloat(w)), 0), w - 1)
+      let y = min(max(Int(s.y * CGFloat(h)), 0), h - 1)
+      if let sure, sure.load(fromByteOffset: y * sureRow + x, as: UInt8.self) < medium { return nil }
+      return base.load(fromByteOffset: y * row + x * 4, as: Float32.self)
+    }
+  }
 }
 
 /// A guide frame: its frozen pose plus the feature points ARKit had tracked,

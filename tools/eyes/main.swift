@@ -132,6 +132,7 @@ let liveOK = checkLivePath(images)
 let mathOK = checkOutlineMath()
 let trackerOK = checkTracker()
 let shapeOK = checkShape()
+let depthOK = checkDepth()
 let flowOK = checkFlow(images)
 let cameraOK = checkCamera()
-if !liveOK || !mathOK || !trackerOK || !shapeOK || !flowOK || !cameraOK { exit(1) }
+if !liveOK || !mathOK || !trackerOK || !shapeOK || !depthOK || !flowOK || !cameraOK { exit(1) }

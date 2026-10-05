@@ -94,10 +94,13 @@ final class OutlineNode: SCNNode {
       lineNode.geometry = nil
       return
     }
-    let halo = world.map { eye.metres(width + 2.5, at: $0) }
-    let line = world.map { eye.metres(width, at: $0) }
-    haloNode.geometry = OutlineNode.band(world, widths: halo, eye: eye.position, material: haloMaterial)
-    lineNode.geometry = OutlineNode.band(world, widths: line, eye: eye.position, material: lineMaterial)
+    // The line and its halo as a smooth curve through the ring (no corners up close); the faint
+    // fill, under the line, as the ring itself.
+    let smooth = OutlineMath.curve(world)
+    let halo = smooth.map { eye.metres(width + 2.5, at: $0) }
+    let line = smooth.map { eye.metres(width, at: $0) }
+    haloNode.geometry = OutlineNode.band(smooth, widths: halo, eye: eye.position, material: haloMaterial)
+    lineNode.geometry = OutlineNode.band(smooth, widths: line, eye: eye.position, material: lineMaterial)
     fillNode.geometry = fillNode.isHidden ? nil : OutlineNode.inside(world, material: fillMaterial)
   }
 

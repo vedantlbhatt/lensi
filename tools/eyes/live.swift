@@ -309,6 +309,97 @@ func checkShape() -> Bool {
 }
 
 
+/// How far away a pinned thing is (LiveShape.setRange, setDepth, depthInside, FrozenCamera.
+/// medianDepth), and which gate a still thing is asked about with, on cases with known answers.
+func checkDepth() -> Bool {
+  var failures: [String] = []
+  func expect(_ condition: Bool, _ what: String) { if !condition { failures.append(what) } }
+  let k = simd_float3x3(columns: (simd_float3(1450, 0, 0), simd_float3(0, 1452, 0), simd_float3(962.5, 718.3, 1)))
+  /// A camera at `p` looking at `target` (ARKit's axes: -z ahead, y up).
+  func camera(at p: simd_float3, looking target: simd_float3) -> FrozenCamera {
+    let back = simd_normalize(p - target)
+    let right = simd_normalize(simd_cross(simd_float3(0, 1, 0), back))
+    let upward = simd_cross(back, right)
+    let m = simd_float4x4(columns: (simd_float4(right, 0), simd_float4(upward, 0), simd_float4(back, 0), simd_float4(p, 1)))
+    return FrozenCamera(transform: m, intrinsics: k, resolution: CGSize(width: 1920, height: 1440))
+  }
+  // A 40 cm disc 2 m in front of the camera, facing it.
+  let target = simd_float3(0, 1, -2)
+  let disc = (0..<64).map { i -> simd_float3 in
+    let a = Float(i) / 64 * 2 * .pi
+    return target + simd_float3(0.2 * cos(a), 0.2 * sin(a), 0)
+  }
+  let home = simd_float3(0, 1, 0)
+  let toward = simd_normalize(target - home)
+  let from = camera(at: home, looking: target)
+
+  // Laid 40% too far, then moved along the lines of sight from the camera: nothing it sees moves.
+  if let picture = from.upright(disc) {
+    let plane = from.withPlane(through: home + toward * 2.8)
+    let laid = picture.compactMap { plane.onPlane($0) }
+    var shape = LiveShape(world: laid, at: 0, follows: true)
+    shape.setRange(2, from: from.position, weight: 1)
+    let after = from.upright(shape.world) ?? []
+    let moved = zip(picture, after).map { hypot(($0.x - $1.x) * 1440, ($0.y - $1.y) * 1920) }.max() ?? 1
+    expect(moved < 0.05, "put nearer, it moved \(moved) px in the picture")
+    expect(abs(simd_distance(OutlineMath.centre(shape.world), from.position) - 2) < 0.01, "put 2 m off: \(simd_distance(OutlineMath.centre(shape.world), from.position))")
+    var measured = LiveShape(world: laid, at: 0, follows: true)
+    measured.setDepth(2, seenBy: from, weight: 1)
+    let ahead = -simd_mul(from.transform.inverse, simd_float4(OutlineMath.centre(measured.world), 1)).z
+    expect(abs(ahead - 2) < 0.01, "measured 2 m ahead, put \(ahead) m ahead")
+    var halfway = LiveShape(world: laid, at: 0, follows: true)
+    halfway.setDepth(2, seenBy: from, weight: 0.5)
+    let between = simd_distance(OutlineMath.centre(halfway.world), from.position)
+    expect(between > 2.05 && between < 2.75, "half the way from 2.8 m to 2 m: \(between)")
+  } else {
+    failures.append("the disc isn't in front of the camera")
+  }
+
+  // LiDAR's depth inside a cut: the median, holes and the edge of the picture left out.
+  let square = [CGPoint(x: 0.3, y: 0.3), CGPoint(x: 0.7, y: 0.3), CGPoint(x: 0.7, y: 0.7), CGPoint(x: 0.3, y: 0.7)]
+  let inside = LiveShape.depthInside(square) { p in p.x < 0.35 ? nil : (p.y < 0.4 ? 3 : 1.5) }
+  expect(inside == 1.5, "depth inside a cut: \(String(describing: inside))")
+  let offEdge = [CGPoint(x: 0.8, y: 0.4), CGPoint(x: 1.4, y: 0.4), CGPoint(x: 1.4, y: 0.6), CGPoint(x: 0.8, y: 0.6)]
+  let edgeDepth = LiveShape.depthInside(offEdge) { p in p.x > 1 ? 9 : 2 }
+  expect(edgeDepth == 2, "depth inside a cut half off the picture: \(String(describing: edgeDepth))")
+
+  // ARKit's points inside an outline: the median depth of those in it, none outside counted.
+  let inRing = [simd_float3(-0.05, 1, -2), simd_float3(0.05, 1.02, -2.1), simd_float3(0, 0.97, -1.9), simd_float3(0.02, 1, -2.05),
+                simd_float3(-0.03, 1.03, -1.95), simd_float3(0.04, 0.99, -2.0), simd_float3(-0.01, 1.01, -2.02), simd_float3(0.01, 0.98, -1.98)]
+  let outside = [simd_float3(1.5, 1, -1), simd_float3(-1.2, 1, -0.8), simd_float3(0, 1, 2)]
+  if let ring = from.upright(disc) {
+    let d = from.medianDepth(of: inRing + outside, inside: ring)
+    expect(d.map { abs($0 - 2) < 0.06 } ?? false, "ARKit's points inside the disc: \(String(describing: d))")
+    expect(from.medianDepth(of: Array(inRing.prefix(5)), inside: ring) == nil, "five points said how far it is")
+  }
+
+  // A measured depth that agrees with where it is says its depth is known; one far off doesn't.
+  if let picture = from.upright(disc) {
+    let laid = picture.compactMap { from.withPlane(through: target).onPlane($0) }
+    var right = LiveShape(world: laid, at: 0, follows: true)
+    right.setDepth(2.1, seenBy: from, weight: 0.3)
+    var wrong = LiveShape(world: laid, at: 0, follows: true)
+    wrong.setDepth(2.8, seenBy: from, weight: 0.3)
+    expect(right.depthKnown && !wrong.depthKnown, "depth known: \(right.depthKnown) agreeing, \(wrong.depthKnown) 40% off")
+  }
+  // A still thing seen from about where it was last cut is asked about with the tight gate.
+  var seen = LiveShape(world: disc, at: 0, follows: true)
+  seen.take(disc, at: 0.1, how: .still, seenFrom: home)
+  let near = seen.turned(from: home + simd_float3(0.1, 0, 0)) ?? 9
+  let round = seen.turned(from: home + simd_float3(1.2, 0, 0)) ?? 0
+  expect(near < LiveTracker.tightTurn && LiveTracker.asking(still: true, turned: near).gate.minIoU == LiveTracker.Gate.tight.minIoU,
+         "a step aside: turned \(near), tight gate")
+  expect(round > LiveTracker.tightTurn && LiveTracker.asking(still: true, turned: round).gate.minIoU == LiveTracker.Gate.strict.minIoU,
+         "walked round: turned \(round), strict gate")
+  expect(LiveTracker.asking(still: false, turned: near).gate.minIoU == LiveTracker.Gate.loose.minIoU, "a moving thing: loose gate")
+  if failures.isEmpty {
+    print("depth: ok")
+    return true
+  }
+  for f in failures { print("FAIL depth: \(f)") }
+  return false
+}
+
 /// `image` drawn at `w` x `h`, moved `dx` px right and `dy` px down (top-left origin).
 private func drawn(_ image: CGImage, _ w: Int, _ h: Int, dx: CGFloat, dy: CGFloat) -> CGImage? {
   guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,

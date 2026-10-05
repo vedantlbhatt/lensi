@@ -147,6 +147,114 @@ enum OutlineMath {
     return (zip(old, shape).map { o, n in middle + (o - co) * keep + n * (1 - keep) }, change)
   }
 
+  /// The outline to show next on a flat picture (the ultra-wide at 0.5x, with no world to hold it
+  /// in): the last one carried onto the new one by the affine map that fits it best, so motion,
+  /// zoom and the view turning pass straight through, and only what's left over (mostly the
+  /// mask's edge noise) let in `alpha` of the way a frame; all of it once that's more than `fast`
+  /// of the outline's size, a real change of shape. Points in pixels, z unused. On the bottle clip
+  /// (tools/edgetam/smooth.py) it shook less than `steady` at the same overlap with the reference.
+  static func glide(_ old: [simd_float3]?, _ new: [simd_float3], alpha: Float = 0.5, fast: Float = 0.08) -> [simd_float3] {
+    guard let old, old.count == new.count, new.count >= 3 else { return new }
+    let size = max(spread(old), 1e-6)
+    let co = centre(old), cn = centre(new)
+    guard simd_distance(co, cn) / size < 1 else { return new }
+    let lined = align(new.map { $0 - cn }, to: old.map { $0 - co }).points.map { $0 + cn }
+    guard let moved = affine(old, onto: lined) else { return new }
+    var sum: Float = 0
+    for i in 0..<new.count { sum += simd_distance_squared(lined[i], moved[i]) }
+    let left = (sum / Float(new.count)).squareRoot() / size
+    let a: Float = left < fast ? alpha : 1
+    return zip(moved, lined).map { $0 + ($1 - $0) * a }
+  }
+
+  /// `a` mapped onto `b` (paired points, x and y) by the affine map that fits best (least
+  /// squares); nil when `a` is degenerate (all on a line).
+  static func affine(_ a: [simd_float3], onto b: [simd_float3]) -> [simd_float3]? {
+    // Normal equations in double: sum of [x y 1]^T [x y 1], and of [x y 1]^T times b's x and y.
+    var m = simd_double3x3()
+    var bx = simd_double3.zero, by = simd_double3.zero
+    let c = centre(a)
+    for (p, q) in zip(a, b) {
+      let v = simd_double3(Double(p.x - c.x), Double(p.y - c.y), 1)
+      m += simd_double3x3(v * v.x, v * v.y, v * v.z)
+      bx += v * Double(q.x)
+      by += v * Double(q.y)
+    }
+    guard abs(m.determinant) > 1e-9 else { return nil }
+    let inv = m.inverse
+    let mx = inv * bx, my = inv * by
+    return a.map { p in
+      let v = simd_double3(Double(p.x - c.x), Double(p.y - c.y), 1)
+      return simd_float3(Float(simd_dot(mx, v)), Float(simd_dot(my, v)), p.z)
+    }
+  }
+
+  /// Rings at least this dense are drawn as a curve (`curve`, `curvePath`); a coarser one (a box,
+  /// a few corners) keeps its corners.
+  static let curveFrom = 24
+
+  /// A closed ring drawn as a smooth curve: the quadratic B-spline through the midpoints of its
+  /// sides, each corner its control point, `per` points a side. Drawn straight from point to
+  /// point, a ring of 64 shows its corners up close; this has none, and stays within a fraction
+  /// of a side of the ring (it never overshoots, as a curve through the points can).
+  static func curve(_ ring: [simd_float3], per: Int = 4) -> [simd_float3] {
+    let n = ring.count
+    guard n >= curveFrom, per >= 2 else { return ring }
+    var out: [simd_float3] = []
+    out.reserveCapacity(n * per)
+    for i in 0..<n {
+      let a = (ring[(i + n - 1) % n] + ring[i]) * 0.5
+      let c = ring[i]
+      let b = (ring[i] + ring[(i + 1) % n]) * 0.5
+      for k in 0..<per {
+        let t = Float(k) / Float(per), u = 1 - t
+        out.append(a * (u * u) + c * (2 * u * t) + b * (t * t))
+      }
+    }
+    return out
+  }
+
+  /// The same curve as a closed path on a flat picture (Core Graphics draws its quadratic
+  /// segments exactly); a coarse ring straight from corner to corner.
+  static func curvePath(_ ring: [CGPoint]) -> CGPath {
+    let path = CGMutablePath()
+    let n = ring.count
+    guard n >= 3 else { return path }
+    guard n >= curveFrom else {
+      path.addLines(between: ring)
+      path.closeSubpath()
+      return path
+    }
+    func mid(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
+    path.move(to: mid(ring[n - 1], ring[0]))
+    for i in 0..<n { path.addQuadCurve(to: mid(ring[i], ring[(i + 1) % n]), control: ring[i]) }
+    path.closeSubpath()
+    return path
+  }
+
+  /// A closed ring's points smoothed along it (a Gaussian `sigma` points wide): the stair-steps of
+  /// a mask's edge, not its shape.
+  static func blurred(_ ring: [CGPoint], sigma: CGFloat) -> [CGPoint] {
+    let n = ring.count
+    guard sigma > 0, n >= 5 else { return ring }
+    let r = Int(3 * sigma + 0.5)
+    var weights: [CGFloat] = []
+    for k in -r...r {
+      let z = CGFloat(k) / sigma
+      weights.append(exp(-0.5 * z * z))
+    }
+    let total = weights.reduce(0, +)
+    return (0..<n).map { i in
+      var x: CGFloat = 0, y: CGFloat = 0
+      for (j, w) in weights.enumerated() {
+        let p = ring[((i + j - r) % n + n) % n]
+        x += p.x * w
+        y += p.y * w
+      }
+      return CGPoint(x: x / total, y: y / total)
+    }
+  }
+
   /// Triangles covering a simple polygon (indices into `p`, three a triangle), by clipping ears;
   /// a fan from the first point if the polygon crosses itself and runs out of ears.
   static func triangulate(_ p: [SIMD2<Float>]) -> [Int] {

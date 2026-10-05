@@ -131,6 +131,44 @@ scenario 10c-slide-to-pin 16 "lensi:///?scene=cars&scrub=0.05,0.35,0.6"
 # tools/strip followed through it with the app's own Swift; the person held on stays pinned
 # while they walk.
 scenario 10f-slide-to-pin-video 18 "lensi:///?scene=aisle&scrub=0.05,0.6,0.88"
+# Handheld and upright: a shaker bottle filmed walking round it, up close, back out, turning and
+# down to 0.5x. The bottle is pinned from the strip and followed by EdgeTAM, the app's own Swift
+# and Core ML (tools/edgetam), through the whole clip and round again.
+scenario 10g-slide-to-pin-shaker 34 "lensi:///?scene=shaker&scrub=0.3,0.5"
+# The app's own EdgeTAM on that clip, with the models it ships, on the Simulator's CPU: pinned on
+# the bottle in the first frame and followed through every frame, as the phone follows a pinned
+# thing. The app leaves what it found in Documents (lensi-edgetam.json) with the clip drawn as the
+# phone draws it (lensi-edgetam.mp4, written by the app), and from then on its virtual camera
+# shows its own run in place of the bundled tracks: that's what's filmed, once the run is done.
+launch "lensi:///?scene=shaker&edgetam=shaker&scrub=0.3,0.5"
+EDGE_START=$(date +%s)
+if [ -n "$DATA" ]; then
+  for _ in $(seq 1 180); do
+    [ -s "$DATA/Documents/lensi-edgetam.json" ] && break
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 5
+  done
+fi
+tl "EdgeTAM in the app: waited $(( $(date +%s) - EDGE_START )) s"
+rec 10h-edgetam-in-app
+sleep 26
+shot 10h-edgetam-in-app 0
+alive 10h-edgetam-in-app
+unrec
+if [ -n "$DATA" ] && cp "$DATA/Documents/lensi-edgetam.json" "$OUT/" 2>/dev/null; then
+  cp "$DATA/Documents/lensi-edgetam.mp4" "$OUT/edgetam-in-app.mp4" 2>/dev/null || echo "EdgeTAM in the app drew no video" >> "$OUT/problems.txt"
+  found=$(python3 - "$OUT/lensi-edgetam.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+print("followed in %d of %d frames (every %d), median %.0f ms a frame, models loaded in %.0f ms" % (r["seen"], r["count"], r["every"], r["medianMs"], r["loadMs"]))
+PY
+)
+  tl "EdgeTAM in the app: $found"
+else
+  tl "EdgeTAM in the app: nothing written"
+  echo "EdgeTAM in the app wrote nothing" >> "$OUT/problems.txt"
+  cp "$DATA"/Documents/lensi-edgetam-error.txt "$OUT/" 2>/dev/null || true
+fi
 # The zoom dial: turned to 2.7x and left up, so the shot shows the dial itself.
 scenario 10d-zoom-dial 12 "lensi:///?scene=truck&zoom=2.7"
 # Over the air, the whole path: this build fetches the JavaScript ota.yml published for its

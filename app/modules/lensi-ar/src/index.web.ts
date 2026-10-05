@@ -3,9 +3,10 @@
 // and screenshotted in a browser.
 import type { ComponentType } from 'react';
 
-import { DEMO_SCENES, sceneForUri, type DemoScene } from './demo';
+import { DEMO_SCENES, onSceneTracks, sceneForUri, sceneTracks, setSceneTracks, type DemoScene } from './demo';
 import type {
   Analysis,
+  DemoVideoProps,
   IntelligenceEvent,
   IntelligenceStatus,
   LensiAREvents,
@@ -14,11 +15,14 @@ import type {
   NPt,
   Segment,
   SpeechEvent,
+  TrackRun,
 } from './types';
 
 export * from './types';
 export type { DemoScene, VideoThing, VideoTracks } from './demo';
-export { DEMO_SCENES, sceneForUri };
+/** No native player on the web: the virtual camera draws its footage with expo-video and SVG. */
+export const DemoVideoView: ComponentType<DemoVideoProps> | null = null;
+export { DEMO_SCENES, onSceneTracks, sceneForUri, sceneTracks, setSceneTracks };
 
 type Listener<K extends keyof LensiAREvents> = LensiAREvents[K];
 const listeners: { [K in keyof LensiAREvents]: Set<Listener<K>> } = {
@@ -129,6 +133,11 @@ export const LensiAR = {
   },
 
   async intelligencePrewarm() {},
+
+  // No Core ML on the web.
+  async trackVideo(): Promise<TrackRun> {
+    throw new Error('EdgeTAM runs on iOS only');
+  },
 
   async intelligenceStatus(): Promise<IntelligenceStatus> {
     return { available: true, images: true, reason: 'Scripted demo (web preview)' };

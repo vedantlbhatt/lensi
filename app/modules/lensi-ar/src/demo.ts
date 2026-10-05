@@ -57,15 +57,24 @@ export type DemoScene = {
 /** A video scene's whole picture as its outline (nothing in particular is the subject). */
 const WHOLE: Outline = { size: [640, 360], box: [0, 0, 1, 1], polygon: [[0, 0], [1, 0], [1, 1], [0, 1]] };
 
-/** Footage: Intel IoT Devkit sample videos (CC BY 4.0), cut to 10 s at 640x360, 15 fps. */
-function videoScene(key: string, caption: string, title: string, source: number, poster: number, tracks: VideoTracks | null, labels: string[]): DemoScene {
+/** Footage: Intel IoT Devkit sample videos (CC BY 4.0), cut to 10 s at 640x360, 15 fps; and the shaker bottle, filmed for Lensi (360x640). */
+function videoScene(
+  key: string,
+  caption: string,
+  title: string,
+  source: number,
+  poster: number,
+  tracks: VideoTracks | null,
+  labels: string[],
+  size: [number, number] = [640, 360],
+): DemoScene {
   return {
     key,
     caption,
     asset: poster,
-    width: 640,
-    height: 360,
-    outline: WHOLE,
+    width: size[0],
+    height: size[1],
+    outline: { ...WHOLE, size },
     parts: [],
     text: [],
     objects: [],
@@ -261,9 +270,36 @@ DEMO_SCENES.push(
   videoScene('workers', 'Warehouse floor, moving', 'Warehouse floor', DEMO_VIDEO.workers, require('../../../assets/demo/video/workers.jpg'), require('../../../assets/demo/video/workers.tracks.json'), ['warehouse', 'person', 'safety vest']),
   videoScene('aisle', 'A store aisle, moving', 'Store aisle', DEMO_VIDEO.aisle, require('../../../assets/demo/video/aisle.jpg'), require('../../../assets/demo/video/aisle.tracks.json'), ['store', 'person', 'shelf']),
   videoScene('bottles', 'Bottles being moved', 'Bottles', DEMO_VIDEO.bottles, require('../../../assets/demo/video/bottles.jpg'), require('../../../assets/demo/video/bottles.tracks.json'), ['bottle', 'water', 'hand']),
+  // Handheld and upright: walking round a black shaker bottle on a striped rug, up close, back
+  // out, turning, and down to 0.5x. Followed by EdgeTAM, the app's own code (tools/edgetam).
+  videoScene('shaker', 'A shaker bottle, handheld', 'Shaker bottle', DEMO_VIDEO.shaker, require('../../../assets/demo/video/shaker.jpg'), require('../../../assets/demo/video/shaker.tracks.json'), ['bottle', 'shaker', 'rug'], [360, 640]),
 );
 
 export function sceneForUri(uri: string): DemoScene | null {
   const u = uri.toLowerCase();
   return DEMO_SCENES.find((s) => u.includes(`/${s.key}`) || u.includes(`${s.key}.`)) ?? null;
+}
+
+// A clip's tracks replaced while the app runs: the app's own EdgeTAM run on a demo clip
+// (`edgetam=`) shows what it found in place of the bundled tracks.
+const liveTracks = new Map<string, VideoTracks>();
+const trackListeners = new Set<() => void>();
+
+/** Shows `tracks` on scene `key` from now on (until the app restarts). */
+export function setSceneTracks(key: string, tracks: VideoTracks) {
+  liveTracks.set(key, tracks);
+  trackListeners.forEach((l) => l());
+}
+
+/** A video scene's tracks: the app's own run's, once there is one, else the bundled ones. */
+export function sceneTracks(scene: DemoScene): VideoTracks | null {
+  return liveTracks.get(scene.key) ?? scene.video?.tracks ?? null;
+}
+
+/** Calls `listener` whenever a scene's tracks are replaced; returns the unsubscribe. */
+export function onSceneTracks(listener: () => void): () => void {
+  trackListeners.add(listener);
+  return () => {
+    trackListeners.delete(listener);
+  };
 }

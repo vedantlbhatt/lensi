@@ -133,7 +133,7 @@ final class PinLabel: UIView {
 final class Pin {
   let id: String
   let parentId: String?
-  let world: simd_float3
+  var world: simd_float3
   let label: PinLabel
   let dot = CALayer()
   let line = CAShapeLayer()

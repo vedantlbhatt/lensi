@@ -5,4 +5,5 @@ export const DEMO_VIDEO = {
   workers: require('../../../assets/demo/video/workers.mp4') as number,
   aisle: require('../../../assets/demo/video/aisle.mp4') as number,
   bottles: require('../../../assets/demo/video/bottles.mp4') as number,
+  shaker: require('../../../assets/demo/video/shaker.mp4') as number,
 };

@@ -1,3 +1,4 @@
+import { Asset } from 'expo-asset';
 import { File, Paths } from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGlobalSearchParams } from 'expo-router';
@@ -7,7 +8,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DEMO_SCENES, isVirtual, LensiAR, setDemoTalk, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
+import { DEMO_SCENES, isVirtual, LensiAR, setDemoTalk, setSceneTracks, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
 import { BrainChip } from '../components/camera/BrainChip';
 import { CameraBlocked } from '../components/camera/CameraBlocked';
 import { CameraSurface, type CameraHandle } from '../components/camera/CameraSurface';
@@ -23,6 +24,7 @@ import { MicButton } from '../components/camera/MicButton';
 import { ScrubStrip } from '../components/camera/ScrubStrip';
 import { Shutter } from '../components/camera/Shutter';
 import { ToolRail } from '../components/camera/ToolRail';
+import { outlineAt } from '../components/camera/VirtualCamera';
 import { ZoomDial } from '../components/camera/ZoomDial';
 import { CaptureView, type Rect } from '../components/capture/CaptureView';
 import { MemoriesSheet } from '../components/memories/MemoriesSheet';
@@ -376,6 +378,42 @@ export default function Camera() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk]);
+
+  // Scripted: the app's EdgeTAM on a demo clip (?edgetam=shaker), with the models it ships, pinned
+  // on the clip's tracked thing as it is in the first frame and followed through every frame, as
+  // the phone follows a pinned thing. The virtual camera then shows what it found in place of the
+  // bundled tracks, and it's left in Documents for CI: lensi-edgetam.json, and the clip drawn with
+  // it as the phone draws it (lensi-edgetam.mp4, written by the app).
+  useEffect(() => {
+    if (!params.edgetam || Platform.OS === 'web') return;
+    const scene = DEMO_SCENES.find((s) => s.key === params.edgetam);
+    const tracks = scene?.video?.tracks;
+    const first = tracks ? outlineAt(tracks, 0, 0) : null;
+    if (!scene?.video || !first) return;
+    const xs = first.map((p) => p.x);
+    const ys = first.map((p) => p.y);
+    const box: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    const source = scene.video.source;
+    let alive = true;
+    void (async () => {
+      try {
+        const asset = Asset.fromModule(source);
+        await asset.downloadAsync();
+        const film = new File(Paths.document, 'lensi-edgetam.mp4');
+        const run = await LensiAR.trackVideo(asset.localUri ?? asset.uri, box, 1, film.uri, pen);
+        setSceneTracks(scene.key, run.tracks);
+        new File(Paths.document, 'lensi-edgetam.json').write(JSON.stringify(run));
+        console.log(`[lensi] EdgeTAM followed it in ${run.seen} of ${run.count} frames, ${Math.round(run.medianMs)} ms a frame`);
+        if (alive) toast(`EdgeTAM followed it in ${run.seen} of ${run.count} frames`);
+      } catch (e) {
+        devhooks.report('edgetam', e);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.edgetam]);
 
   // Scripted strip and dial (CI and the web demo film them): ?zoom=2.7 turns the dial there
   // and leaves it up; ?scrub=0.2,0.6 lands a finger on the strip, slides and holds (a pin).

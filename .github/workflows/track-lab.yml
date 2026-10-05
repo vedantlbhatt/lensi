@@ -20,7 +20,7 @@ jobs:
   footage:
     name: Live SAM on real footage
     runs-on: xcode-27
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,11 +41,32 @@ jobs:
           xcrun coremlcompiler compile build/sam/LensiSAMEncoder.mlpackage models-all/
           xcrun coremlcompiler compile build/sam/LensiSAMDecoder.mlpackage models-all/
           cp -R app/modules/lensi-ar/ios/Models/yolo11n.mlmodelc models-all/
+          cp -R app/modules/lensi-ar/ios/Models/EdgeTAM*.mlmodelc models-all/
       - uses: actions/cache@v4
         with:
           path: footage/DAVIS
           key: davis-2017-480p-tracking-v1
+      - name: Pinning on handheld walk-arounds, the depth guessed wrong (tools/walk)
+        env:
+          # The walks pass 1 found best last time (scans whose thing was hidden where it was
+          # pinned left out); empty to look through the scans again.
+          WALK_IDS: 42446522 44358435 47895556 47331322 42898497 42897538 47332911 42898826 47334234 47895534
+        run: bash tools/walk/ci.sh
+      - name: Push the walk-arounds to ci-track-lab
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          [ -d out/walk ] || exit 0
+          rm -rf ../ci-walk && mkdir -p ../ci-walk && cp -R out/walk ../ci-walk/walk && cd ../ci-walk
+          echo "$SHA" > COMMIT.txt
+          git init -q && git checkout -q -b ci-track-lab && git add -A
+          git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "Walk-arounds for $SHA"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-track-lab
       - name: ARKit pinning on real ARKit recordings
+        if: always()
         run: bash tools/pin/ci.sh
       - name: Live SAM on real footage
         if: always()
@@ -59,6 +80,7 @@ jobs:
         run: |
           mkdir -p out/track
           [ -d out/pin ] && cp -R out/pin out/track/pin
+          [ -d out/walk ] && cp -R out/walk out/track/walk
           [ -n "$(ls out/track)" ] || exit 0
           rm -rf ../ci-track && cp -R out/track ../ci-track && cd ../ci-track
           echo "$SHA" > COMMIT.txt

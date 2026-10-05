@@ -1,6 +1,8 @@
 import type { Ref } from 'react';
 import type { ViewProps } from 'react-native';
 
+import type { VideoTracks } from './demo';
+
 export type NPt = { x: number; y: number };
 /** Normalized rect, 0…1 in the upright image, top-left origin. */
 export type NBox = { x: number; y: number; w: number; h: number };
@@ -177,4 +179,50 @@ export type LensiARModuleShape = {
   speechStop(): Promise<void>;
   /** Keep the screen from locking (a hands-free job has no touches for minutes). */
   setKeepAwake(on: boolean): Promise<void>;
+  /**
+   * The app's EdgeTAM tracker on a video file with the models it ships: pinned with `box`
+   * (x0, y0, x1, y1, fractions of the picture) on the first frame, followed through every
+   * `every`-th frame after. With `render` (a file path or URI), the clip is written there again
+   * with what it followed drawn on every frame in `color`, as the phone draws a pinned thing.
+   */
+  trackVideo(
+    uri: string,
+    box: [number, number, number, number],
+    every: number,
+    render: string | null,
+    color: string | null,
+  ): Promise<TrackRun>;
+};
+
+/**
+ * What `trackVideo` found: each frame it looked at and how long that took, and what it drew in
+ * every frame of the clip as the virtual camera's tracks (all zeros where it saw nothing).
+ */
+export type TrackRun = {
+  frames: { frame: number; score: number; area: number; ms: number; outline: number[] }[];
+  seen: number;
+  count: number;
+  every: number;
+  medianMs: number;
+  loadMs: number;
+  tracks: VideoTracks;
+  /** Where the drawn clip was written, with `render`. */
+  video?: string;
+};
+
+/** A pinned thing on the virtual camera's footage: which tracked thing, in what colour, named what. */
+export type DemoPin = { track: number; color: string; label: string };
+
+/** The virtual camera's footage with its pinned things outlined in the same frame (iOS: DemoVideoView). */
+export type DemoVideoProps = {
+  /** The clip, a local file URI. */
+  source: string;
+  /** Its packed tracks (tools/strip/pack.py's format), as JSON. */
+  tracks: string;
+  pins: DemoPin[];
+  /** The strip's highlighted thing, if any. */
+  highlight: DemoPin | null;
+  /** The video frame showing (each time it changes). */
+  onFrame?: (e: { nativeEvent: { frame: number } }) => void;
+  style?: import('react-native').StyleProp<import('react-native').ViewStyle>;
 };
