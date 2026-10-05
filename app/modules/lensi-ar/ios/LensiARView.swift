@@ -321,10 +321,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let now = shape.placed(at: frame.timestamp)
       // A pinned thing SAM has lost (behind a hand, out of view) is only taken back where it
       // was and as it was: asked for as a still thing, strictly.
-      // Seen from about where it was last cut, a still thing takes only a cut that matches it
-      // closely: one that's grown onto a neighbour is refused.
+      // A still thing whose depth is known, seen from about where it was last cut, takes only a
+      // cut that matches it closely: one that's grown onto a neighbour is refused. (At a guessed
+      // depth where it should be is off as the phone moves, and that would refuse good cuts.)
       let still = shape.misses >= 2 || shape.still
-      let asking = LiveTracker.asking(still: still, turned: shape.turned(from: simd_make_float3(frame.camera.transform.columns.3)))
+      let turned = shape.depthKnown ? shape.turned(from: simd_make_float3(frame.camera.transform.columns.3)) : nil
+      let asking = LiveTracker.asking(still: still, turned: turned)
       // Up close only part of it is on the picture: SAM is asked about that part (and the rest
       // goes where that part goes: LiveTracker.follow), unless too little of it is left to say.
       guard let predicted = uprightPoints(now, camera: frame.camera, upright: upright),

@@ -27,20 +27,19 @@ CAPTIONS = {
     "arkit@far": "ARKit alone, pinned 40% too far",
     "app@true": "Before",
     "app@far": "Before, pinned 40% too far",
+    "lidar@far": "Before + LiDAR depth, pinned 40% too far",
     "steady@true": "Now",
     "steady@far": "Now, pinned 40% too far",
     "steadyl@far": "Now with LiDAR, pinned 40% too far",
-    "calmp@true": "Now (held still up close)",
-    "calmp@far": "Now (held still up close), pinned 40% too far",
-    "slow@true": "Now (blended slowly)",
-    "slowp@true": "Now (blended slowly, held still up close)",
-    "calm@true": "Now (held still)",
+    "clamp@true": "Now (up close, steadier)",
+    "clampl@far": "Now with LiDAR (up close, steadier), pinned 40% too far",
 }
 
 PAIRS = [
     ("before-after", "app@true", "steady@true"),
     ("far", "app@far", "steady@far"),
     ("lidar", "app@far", "steadyl@far"),
+    ("clamp", "app@true", "clamp@true"),
     ("depth", "arkit@far", "arkit@true"),
 ]
 

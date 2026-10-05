@@ -19,8 +19,11 @@
 //                it): a still thing whose depth is known isn't carried by the flow (ARKit holds
 //                it), and seen from about where it was last cut takes only a cut that matches
 //                it closely
-//   steady@far   the same, pinned 40% too far (a raycast's guess: the flow keeps carrying it)
+//   steady@far   the same, pinned 40% too far (a raycast's guess: until something measures it,
+//                just as before)
 //   steadyl@far  ...and LiDAR, as on a Pro iPhone
+//   clamp@*      steady, and partly off the picture one cut can make a still thing whose
+//                depth is known only 10% bigger or smaller, not 40%
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
@@ -547,6 +550,9 @@ final class Run {
   /// A still thing seen from about where it was last cut is asked about with the tight gate
   /// (LiveTracker.asking(still:turned:)).
   let tight: Bool
+  /// Partly off the picture, one cut can make a still thing whose depth is known only 10% bigger
+  /// or smaller (ARKit already scales it as the phone comes closer), not 40%.
+  let clamp: Bool
   var shape: LiveShape?
   var pending: Cut?
   var shown: [[CGPoint]] = []
@@ -556,13 +562,15 @@ final class Run {
   var depthRatio: [Double] = []
   var cuts = 0, refused = 0, carried = 0, measured = 0
 
-  init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false) {
+  init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
+       clamp: Bool = false) {
     self.label = label
     self.start = start
     self.once = once
     self.lidar = lidar
     self.noflow = noflow
     self.tight = tight
+    self.clamp = clamp
   }
 }
 
@@ -575,6 +583,8 @@ let runs = [
   Run("steady@true", start: 1, noflow: true, tight: true),
   Run("steady@far", start: 1.4, noflow: true, tight: true),
   Run("steadyl@far", start: 1.4, lidar: true, noflow: true, tight: true),
+  Run("clamp@true", start: 1, noflow: true, tight: true, clamp: true),
+  Run("clampl@far", start: 1.4, lidar: true, noflow: true, tight: true, clamp: true),
 ]
 /// SAM asked every 4th frame (7.5 times a second; LensiARView asks as often as the phone keeps
 /// up, at least 80 ms apart), its answer landing two frames (66 ms) after the frame it was asked about.
@@ -684,7 +694,8 @@ for (k, f) in window.enumerated() {
       // part on the picture, and the whole outline goes where that part went.
       let now = shape.placed(at: t)
       let still = shape.misses >= 2 || shape.still
-      let asking = run.tight ? LiveTracker.asking(still: still, turned: shape.turned(from: camera.position)) : LiveTracker.asking(still: still)
+      let turned = run.tight && shape.depthKnown ? shape.turned(from: camera.position) : nil
+      let asking = LiveTracker.asking(still: still, turned: turned)
       if let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) >= LiveTracker.minVisible,
          let prompt = LiveTracker.prompt(for: predicted, scale: size, grow: asking.grow) {
         let m = try sam.segment(id: "frame", points: [prompt.point], labels: [1], box: prompt.box, prior: predicted)
@@ -693,7 +704,8 @@ for (k, f) in window.enumerated() {
         var depth: Float?
         if m.score >= 0.5, m.polygon.count > 2 {
           let cut = OutlineMath.resample(m.polygon, scale: size)
-          if let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate) {
+          let limit: CGFloat = run.clamp && still && shape.depthKnown ? 1.1 : 1.4
+          if let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate, scaleLimit: limit) {
             let plane = camera.withPlane(through: OutlineMath.centre(now))
             let laid = ring.compactMap { plane.onPlane($0) }
             if laid.count == ring.count { world = laid }

@@ -49,12 +49,13 @@ enum LiveTracker {
   /// picture, and SAM can only cut that part: it's judged against the part of the prediction
   /// that's on the picture, and rather than shrinking the thing to what's in view, the whole
   /// prediction moves the way the cut's own edges moved (the ones not on the picture's edge).
-  static func follow(cut: [CGPoint], predicted: [CGPoint], gate: Gate = .loose) -> [CGPoint]? {
+  /// `scaleLimit`: how much bigger or smaller one cut can make it.
+  static func follow(cut: [CGPoint], predicted: [CGPoint], gate: Gate = .loose, scaleLimit: CGFloat = 1.4) -> [CGPoint]? {
     guard cut.count >= 3, predicted.count >= 3 else { return nil }
     let visible = clipped(predicted)
     guard visible.count >= 3, accepts(cut, predicted: visible, gate: gate) else { return nil }
     guard visibleFraction(predicted) < wholeVisible else { return cut }
-    let fit = edgeFit(from: bounds(visible), to: bounds(cut))
+    let fit = edgeFit(from: bounds(visible), to: bounds(cut), limit: scaleLimit)
     return predicted.map { CGPoint(x: fit.to.x + ($0.x - fit.from.x) * fit.scale, y: fit.to.y + ($0.y - fit.from.y) * fit.scale) }
   }
 
@@ -63,14 +64,14 @@ enum LiveTracker {
   /// middle of an axis with both sides free, else its free side; along an axis with neither,
   /// it didn't move as far as this can tell), where it went in `b`, and how much bigger `b` is
   /// (from an axis with both sides free; getting closer, a thing grows the same both ways).
-  static func edgeFit(from a: CGRect, to b: CGRect, margin: CGFloat = 0.01) -> (from: CGPoint, to: CGPoint, scale: CGFloat) {
+  static func edgeFit(from a: CGRect, to b: CGRect, margin: CGFloat = 0.01, limit: CGFloat = 1.4) -> (from: CGPoint, to: CGPoint, scale: CGFloat) {
     func free(_ v: CGFloat, low: Bool) -> Bool { low ? v > margin : v < 1 - margin }
     let lx = free(a.minX, low: true) && free(b.minX, low: true), hx = free(a.maxX, low: false) && free(b.maxX, low: false)
     let ly = free(a.minY, low: true) && free(b.minY, low: true), hy = free(a.maxY, low: false) && free(b.maxY, low: false)
     var scales: [CGFloat] = []
     if lx, hx, a.width > 0.005 { scales.append(b.width / a.width) }
     if ly, hy, a.height > 0.005 { scales.append(b.height / a.height) }
-    let scale = scales.isEmpty ? 1 : min(max(scales.reduce(0, +) / CGFloat(scales.count), 0.7), 1.4)
+    let scale = scales.isEmpty ? 1 : min(max(scales.reduce(0, +) / CGFloat(scales.count), 1 / limit), limit)
     func matched(_ lo: Bool, _ hi: Bool, _ a0: CGFloat, _ a1: CGFloat, _ b0: CGFloat, _ b1: CGFloat) -> (CGFloat, CGFloat) {
       if lo && hi { return ((a0 + a1) / 2, (b0 + b1) / 2) }
       if lo { return (a0, b0) }
@@ -136,8 +137,8 @@ enum LiveTracker {
     static let tight = Gate(minIoU: 0.7, areaRatio: 0.8...1.25)
   }
 
-  /// A still thing seen from within this angle (radians) of where its last cut was taken from
-  /// is asked about with the tight gate (`Gate.tight`).
+  /// A still thing (its depth known) seen from within this angle (radians) of where its last
+  /// cut was taken from is asked about with the tight gate (`Gate.tight`).
   static let tightTurn: Float = 0.15
 
   /// How to ask about a thing (`asking(still:)`), with the tight gate for a still one seen from
