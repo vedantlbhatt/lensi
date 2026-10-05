@@ -1092,16 +1092,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       guard let self else { return }
       var found: [String: [CGPoint]] = [:]
       var asked: [String] = []
+      var failed = false
       do {
         let stepped = try self.followWide(held, models: edge, buffer: buffer)
         found = stepped.found
         asked = stepped.asked
       } catch {
+        failed = true
         NSLog("[lensi] EdgeTAM on the ultra-wide failed: %@", error.localizedDescription)
       }
+      let stepMs = self.edgeStepMs
       DispatchQueue.main.async {
         self.samBusy = false
         guard self.wideMode, session == self.wideSession else { return }
+        // How often EdgeTAM answers here and how late (Settings' "Following"), as at 1x.
+        if !failed, !asked.isEmpty { self.edgeAnswered(taken: t, stepMs: stepMs, things: asked.count) }
         self.wideSize = size
         // Each thing EdgeTAM was asked about: where it is, or nil where it isn't in view (no
         // outline: it's drawn again once EdgeTAM finds it).
@@ -1177,6 +1182,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for key in following {
       guard let tracker = edgeTrackers[key] else { continue }
       let cut = try tracker.step(picture)
+      edgeStepMs = cut.ms.merging(["memory": tracker.lastMemoryMs]) { a, _ in a }
       asked.append(key)
       if cut.visible { found[key] = cut.outline }
     }
