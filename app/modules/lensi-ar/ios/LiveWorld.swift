@@ -309,6 +309,75 @@ struct LiveShape {
   /// A measured depth within this much of where it is agrees with it (`depthKnown`).
   static let depthAgrees: Float = 0.15
 
+  // MARK: How far it is, from where lines of sight cross
+  //
+  // A phone without LiDAR has only ARKit's points to say how far a thing is, and a black bottle
+  // or a plain mug has none on it. But a still thing is where the lines of sight through it, from
+  // everywhere the phone has been, cross: each cut of the whole thing gives one, through its
+  // middle, and once the phone has moved enough that they meet at an angle, where they meet is
+  // how far it is. A thing that moved meanwhile has lines that don't meet, and is left alone.
+
+  /// A line of sight through the middle of a whole cut, from where the camera was.
+  struct Sighting {
+    let origin: simd_float3
+    let direction: simd_float3
+    let t: CFTimeInterval
+  }
+
+  /// The lines of sight from the last `sightSeconds`.
+  var sightings: [Sighting] = []
+  static let sightSeconds: CFTimeInterval = 3
+  /// They're used once the newest meets another at this angle or more (radians: about 2.5
+  /// degrees, 2 cm of the phone's travel for a thing 45 cm away)...
+  static let sightSpread: Float = 0.045
+  /// ...and only if they cross at one place: within this much of the distance, on average.
+  static let sightMiss: Float = 0.03
+  /// How far one crossing moves it (`setRange`).
+  static let sightWeight: Float = 0.35
+
+  /// A cut of the whole thing (none of it off the picture), its middle `middle` (upright) as
+  /// `camera` saw it at `t`: its line of sight is kept, and where the lines kept cross puts how
+  /// far the thing is right (`setRange`), once they meet at a wide enough angle and do cross.
+  /// True when it moved it.
+  @discardableResult
+  mutating func sight(_ middle: CGPoint, seenBy camera: FrozenCamera, at t: CFTimeInterval,
+                      weight: Float = LiveShape.sightWeight) -> Bool {
+    let (origin, direction) = camera.ray(middle)
+    sightings.removeAll { t - $0.t > LiveShape.sightSeconds || $0.t > t }
+    sightings.append(Sighting(origin: origin, direction: direction, t: t))
+    if sightings.count > 40 { sightings.removeFirst(sightings.count - 40) }
+    guard sightings.count >= 4 else { return false }
+    var spread: Float = 0
+    for s in sightings { spread = max(spread, acos(min(max(simd_dot(s.direction, direction), -1), 1))) }
+    guard spread >= LiveShape.sightSpread else { return false }
+    // The point nearest every line (least squares), in double: the lines are nearly parallel.
+    var m = simd_double3x3()
+    var b = simd_double3.zero
+    for s in sightings {
+      let d = simd_double3(s.direction)
+      let o = simd_double3(s.origin)
+      let p = simd_double3x3(diagonal: simd_double3(repeating: 1)) - simd_double3x3(d * d.x, d * d.y, d * d.z)
+      m += p
+      b += p * o
+    }
+    guard abs(m.determinant) > 1e-12 else { return false }
+    let crossing = simd_float3(m.inverse * b)
+    let range = simd_dot(crossing - origin, direction)
+    guard range > 0.1, range < 8, range.isFinite else { return false }
+    var miss: Float = 0
+    for s in sightings {
+      let v = crossing - s.origin
+      miss += simd_length(v - simd_dot(v, s.direction) * s.direction)
+    }
+    miss /= Float(sightings.count)
+    guard miss < LiveShape.sightMiss * range else { return false }
+    let distance = simd_distance(crossing, origin)
+    let now = simd_distance(OutlineMath.centre(world), origin)
+    if now > 0.05, abs(distance / now - 1) < LiveShape.depthAgrees { depthKnown = true }
+    setRange(distance, from: origin, weight: weight)
+    return true
+  }
+
   /// Puts it `range` metres from `origin`, along the lines of sight from there (so from there it
   /// looks just the same), `weight` of the way, and at most twice or half as far in one go.
   mutating func setRange(_ range: Float, from origin: simd_float3, weight: Float) {

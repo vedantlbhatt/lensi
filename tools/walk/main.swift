@@ -24,6 +24,8 @@
 //   steadyl@far  ...and LiDAR, as on a Pro iPhone
 //   clamp@*      steady, and partly off the picture one cut can make a still thing whose
 //                depth is known only 10% bigger or smaller, not 40%
+//   sight@far    steady, pinned 40% too far, its depth put right by where the lines of sight
+//                through its whole cuts cross (LiveShape.sight): no LiDAR, no points on it
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
@@ -534,6 +536,8 @@ struct Cut {
   let world: [simd_float3]?
   let depth: Float?
   let smoothing: OutlineMath.Smoothing
+  /// The middle of a cut of the whole thing (none of it off the picture), upright.
+  var middle: CGPoint? = nil
 }
 
 final class Run {
@@ -553,6 +557,8 @@ final class Run {
   /// Partly off the picture, one cut can make a still thing whose depth is known only 10% bigger
   /// or smaller (ARKit already scales it as the phone comes closer), not 40%.
   let clamp: Bool
+  /// Its depth put right by where the lines of sight through its whole cuts cross (LiveShape.sight).
+  let sight: Bool
   var shape: LiveShape?
   var pending: Cut?
   var shown: [[CGPoint]] = []
@@ -563,7 +569,7 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0, measured = 0
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
-       clamp: Bool = false) {
+       clamp: Bool = false, sight: Bool = false) {
     self.label = label
     self.start = start
     self.once = once
@@ -571,6 +577,7 @@ final class Run {
     self.noflow = noflow
     self.tight = tight
     self.clamp = clamp
+    self.sight = sight
   }
 }
 
@@ -585,6 +592,8 @@ let runs = [
   Run("steadyl@far", start: 1.4, lidar: true, noflow: true, tight: true),
   Run("clamp@true", start: 1, noflow: true, tight: true, clamp: true),
   Run("clampl@far", start: 1.4, lidar: true, noflow: true, tight: true, clamp: true),
+  Run("sight@far", start: 1.4, noflow: true, tight: true, sight: true),
+  Run("sight@near", start: 0.7, noflow: true, tight: true, sight: true),
 ]
 /// SAM asked every 4th frame (7.5 times a second; LensiARView asks as often as the phone keeps
 /// up, at least 80 ms apart), its answer landing two frames (66 ms) after the frame it was asked about.
@@ -665,6 +674,8 @@ for (k, f) in window.enumerated() {
         if let depth = cut.depth {
           shape.setDepth(depth, seenBy: cut.camera, weight: LiveShape.lidarWeight)
           run.measured += 1
+        } else if run.sight, let middle = cut.middle, shape.sight(middle, seenBy: cut.camera, at: cut.t) {
+          run.measured += 1
         }
         run.shape = shape
       }
@@ -714,7 +725,13 @@ for (k, f) in window.enumerated() {
             run.refused += 1
           }
         }
-        run.pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: asking.smoothing)
+        var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: asking.smoothing)
+        if world != nil, m.polygon.count > 2, !m.polygon.contains(where: { $0.x < 0.006 || $0.x > 0.994 || $0.y < 0.006 || $0.y > 0.994 }) {
+          // A cut of the whole thing: its middle's line of sight (LiveShape.sight).
+          let ring = OutlineMath.resample(m.polygon, scale: size)
+          pending.middle = CGPoint(x: ring.map(\.x).reduce(0, +) / CGFloat(ring.count), y: ring.map(\.y).reduce(0, +) / CGFloat(ring.count))
+        }
+        run.pending = pending
       }
     }
     // What the screen shows (LensiARView.layoutLive): eased onto where it is.

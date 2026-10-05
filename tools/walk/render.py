@@ -33,6 +33,8 @@ CAPTIONS = {
     "steadyl@far": "Now with LiDAR, pinned 40% too far",
     "clamp@true": "Now (up close, steadier)",
     "clampl@far": "Now with LiDAR (up close, steadier), pinned 40% too far",
+    "sight@far": "Now, depth from lines of sight, pinned 40% too far",
+    "sight@near": "Now, depth from lines of sight, pinned 30% too near",
 }
 
 PAIRS = [
@@ -40,6 +42,7 @@ PAIRS = [
     ("far", "app@far", "steady@far"),
     ("lidar", "app@far", "steadyl@far"),
     ("clamp", "app@true", "clamp@true"),
+    ("sight", "steady@far", "sight@far"),
     ("depth", "arkit@far", "arkit@true"),
 ]
 

@@ -493,7 +493,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           } else if let d = camera.medianDepth(of: points, inside: cut) {
             depth = (d, LiveShape.pointsWeight)
           }
-          found[p.key] = LiveCut(world: world, depth: depth)
+          found[p.key] = LiveCut(world: world, depth: depth, middle: Self.touchesEdge(cut) ? nil : Self.middle(cut))
         }
       } catch {
         failure = error.localizedDescription
@@ -572,9 +572,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       } else if let d = camera.medianDepth(of: points, inside: seen) {
         depth = (d, LiveShape.pointsWeight)
       }
-      found[p.key] = LiveCut(world: world, depth: depth)
+      found[p.key] = LiveCut(world: world, depth: depth, middle: Self.touchesEdge(seen) ? nil : Self.middle(seen))
     }
     return found
+  }
+
+  /// The middle of an outline's points (evenly spaced: OutlineMath.resample).
+  private static func middle(_ ring: [CGPoint]) -> CGPoint {
+    let n = CGFloat(max(ring.count, 1))
+    return CGPoint(x: ring.reduce(0) { $0 + $1.x } / n, y: ring.reduce(0) { $0 + $1.y } / n)
   }
 
   /// An outline (upright 0…1) that reaches the picture's edge: the thing runs off it.
@@ -617,6 +623,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private struct LiveCut {
     let world: [simd_float3]
     let depth: (metres: Float, weight: Float)?
+    /// The middle of a cut of the whole thing (none of it off the picture), upright: its line of
+    /// sight says how far it is once the phone has moved (LiveShape.sight).
+    var middle: CGPoint? = nil
   }
 
   /// SAM's answers for one frame (captured at `t`, by `camera`): found shapes are blended into
@@ -635,6 +644,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           // thing's own speed.
           shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: camera.position)
           if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
+          // Without LiDAR, where its lines of sight cross says how far it is (a black bottle has
+          // no ARKit points on it).
+          if let middle = cut.middle, (cut.depth?.weight ?? 0) < LiveShape.lidarWeight {
+            shape.sight(middle, seenBy: camera, at: t)
+          }
           liveShapes[key] = shape
         } else {
           // New, or not seen for a while: start over.
