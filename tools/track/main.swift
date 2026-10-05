@@ -565,8 +565,8 @@ final class EdgeLiveRunner: Runner {
   let run: EdgeLiveRun
   let latency: Double
   let fps: Double
-  /// Between answers the outline is bent with the thing (LiveFlow.bend) rather than moved whole.
-  let bends: Bool
+  /// Between answers the outline is bent with the thing (LiveFlow.bend, so) rather than moved whole.
+  let bends: LiveFlow.Bending?
   /// Each answer glided into the last (OutlineMath.glide), or taken as it is.
   let glides: Bool
   private var flows: [Int: LiveFlow.Frame] = [:]
@@ -575,7 +575,7 @@ final class EdgeLiveRunner: Runner {
   private var stored: [CGPoint]?
   private var storedFrame = 0
 
-  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: Bool = false, glides: Bool = true) {
+  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: LiveFlow.Bending? = nil, glides: Bool = true) {
     self.run = run
     self.latency = latency
     self.fps = fps
@@ -590,7 +590,7 @@ final class EdgeLiveRunner: Runner {
     var now = o
     for k in a..<b {
       guard let f0 = flows[k], let f1 = flows[k + 1] else { continue }
-      if let next = bends ? LiveFlow.bend(now, from: f0, to: f1) : LiveFlow.carry(now, from: f0, to: f1) { now = next }
+      if let next = bends.map({ LiveFlow.bend(now, from: f0, to: f1, $0) }) ?? LiveFlow.carry(now, from: f0, to: f1) { now = next }
     }
     return now
   }
@@ -657,14 +657,27 @@ let runners = [
   guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models),
         let c = try? EdgeTAMTracker(models: models), let d = try? EdgeTAMTracker(models: models) else { return nil }
   let live = EdgeLiveRun(c)
-  return [
+  // LiveFlow.bend's settings tried next to its standard ones, from the same EdgeTAM looks.
+  func bending(_ change: (inout LiveFlow.Bending) -> Void) -> LiveFlow.Bending {
+    var how = LiveFlow.Bending.standard
+    change(&how)
+    return how
+  }
+  let bendings: [(String, LiveFlow.Bending)] = [
+    ("bend-in2", bending { $0.inset = 2 }), ("bend-in5", bending { $0.inset = 5 }),
+    ("bend-most4", bending { $0.most = 0.4 }), ("bend-sig1", bending { $0.sigma = 1 }),
+    ("bend-sig4", bending { $0.sigma = 4 }), ("bend-home2", bending { $0.home = 2 }),
+  ]
+  let runners: [Runner] = [
     EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b),
     EdgeLiveRunner("live", latency: 0.06, fps: fps, flow: flow, run: live),
-    EdgeLiveRunner("livebend", latency: 0.06, fps: fps, flow: flow, run: live, bends: true),
+    EdgeLiveRunner("livebend", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard),
     EdgeLiveRunner("livewhole", latency: 0.06, fps: fps, flow: flow, run: live, glides: false),
-    EdgeLiveRunner("livebendwhole", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, glides: false),
+    EdgeLiveRunner("livebendwhole", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard, glides: false),
+  ] + bendings.map { pair -> Runner in EdgeLiveRunner(pair.0, latency: 0.06, fps: fps, flow: flow, run: live, bends: pair.1) } + [
     EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, run: EdgeLiveRun(d)),
   ]
+  return runners
 } ?? [])
 var truthWobble: [Double] = []
 var truthCentres: [CGPoint?] = []

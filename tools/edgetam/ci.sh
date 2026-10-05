@@ -71,6 +71,12 @@ done
 # The outline moved whole between answers (LiveFlow.carry, the app before LiveFlow.bend).
 EDGETRACK_LIVE_MS=60 EDGETRACK_BEND=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60whole.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60whole.json" "$OUT" shaker-live60whole live 2>&1 | tee -a "$OUT/summary.txt"
+# LiveFlow.bend's settings tried on the bottle (tools/track tries the same on DAVIS, bend-*).
+for v in INSET=2 INSET=5 MOST=0.4 SIGMA=1 SIGMA=4 HOME=2; do
+  name="live60-$(echo "$v" | tr 'A-Z=.' 'a-z--')"
+  env "EDGETRACK_BEND_$v" EDGETRACK_LIVE_MS=60 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/$name.json" "$BOX" >/dev/null 2>&1
+  REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/$name.json" "$OUT" "shaker-$name" live 2>&1 | tee -a "$OUT/summary.txt"
+done
 # What the timing alone costs, with the outline moved perfectly between answers, or not at all.
 python tools/edgetam/timing.py "$REF" "$OUT/swift.json" 2 2 3 3 2>&1 | tee -a "$OUT/summary.txt"
 

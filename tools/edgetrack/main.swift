@@ -56,7 +56,7 @@ func r(_ v: Double, _ places: Double = 100000) -> Double { (v * places).rounded(
 /// has turned since (the gyro); a clip has no gyro, so here it's moved by the thing's own pixels
 /// (LiveFlow, the app's carry for things ARKit doesn't hold), frame by frame. Each answer is
 /// glided into the last one, moved on to the answer's frame (OutlineMath.glide, in pixels).
-func live(latency: Double, fps: Double, bends: Bool, glides: Bool) throws -> [String: Any] {
+func live(latency: Double, fps: Double, bends: Bool, glides: Bool, bending: LiveFlow.Bending = .standard) throws -> [String: Any] {
   struct Pending {
     let frame: Int
     let ready: Double
@@ -70,7 +70,7 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool) throws -> [St
     var now = o
     for k in a..<b {
       guard let f0 = flows[k], let f1 = flows[k + 1] else { continue }
-      if let next = bends ? LiveFlow.bend(now, from: f0, to: f1) : LiveFlow.carry(now, from: f0, to: f1) { now = next }
+      if let next = bends ? LiveFlow.bend(now, from: f0, to: f1, bending) : LiveFlow.carry(now, from: f0, to: f1) { now = next }
     }
     return now
   }
@@ -150,7 +150,13 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool) throws -> [St
 if let ms = Double(ProcessInfo.processInfo.environment["EDGETRACK_LIVE_MS"] ?? "") {
   let fps = Double(ProcessInfo.processInfo.environment["EDGETRACK_FPS"] ?? "") ?? 30
   let env = ProcessInfo.processInfo.environment
-  let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] != "0", glides: env["EDGETRACK_GLIDE"] != "0")
+  // LiveFlow.bend's settings, to try others (EDGETRACK_BEND_INSET, _MOST, _SIGMA, _HOME).
+  var bending = LiveFlow.Bending.standard
+  if let v = Float(env["EDGETRACK_BEND_INSET"] ?? "") { bending.inset = v }
+  if let v = Float(env["EDGETRACK_BEND_MOST"] ?? "") { bending.most = v }
+  if let v = Float(env["EDGETRACK_BEND_SIGMA"] ?? "") { bending.sigma = v }
+  if let v = Float(env["EDGETRACK_BEND_HOME"] ?? "") { bending.home = v }
+  let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] != "0", glides: env["EDGETRACK_GLIDE"] != "0", bending: bending)
   try JSONSerialization.data(withJSONObject: result).write(to: URL(fileURLWithPath: outPath))
   exit(0)
 }

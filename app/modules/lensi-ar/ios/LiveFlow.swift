@@ -244,6 +244,20 @@ enum LiveFlow {
     }
   }
 
+  /// How `bend` bends (tools/track measures the settings at the phone's timing).
+  struct Bending {
+    /// How far inside the edge each point is followed, pixels (of `width`).
+    var inset: Float = 3
+    /// How far a point may move beyond the whole outline's carry, of the outline's size.
+    var most: Float = 0.2
+    /// How far along the edge the points' own moves are smoothed (Gaussian, points).
+    var sigma: Float = 2
+    /// How near where it started a point must come back (tracked back again) to be believed, pixels.
+    var home: Float = 1
+
+    static let standard = Bending()
+  }
+
   /// `outline` in frame `a` carried into frame `b` bending with the thing: carried whole first
   /// (`carry`: moved, turned, scaled as one), then each point follows a point `inset` pixels
   /// inside the edge there, tracked on its own (and back again, to be sure of it), so an arm or a
@@ -251,7 +265,8 @@ enum LiveFlow {
   /// point moves beyond the whole outline's carry is smoothed along the edge and kept within
   /// `most` of the outline's size; a point that couldn't be followed keeps the whole carry. Nil
   /// when the outline can't be carried at all.
-  static func bend(_ outline: [CGPoint], from a: Frame, to b: Frame, inset: Float = 3, most: Float = 0.2) -> [CGPoint]? {
+  static func bend(_ outline: [CGPoint], from a: Frame, to b: Frame, _ how: Bending = .standard) -> [CGPoint]? {
+    let inset = how.inset, most = how.most
     guard let whole = carry(outline, from: a, to: b) else { return nil }
     let n = outline.count
     guard n >= 8, whole.count == n else { return whole }
@@ -288,12 +303,12 @@ enum LiveFlow {
     var extra = [SIMD2<Float>](repeating: .zero, count: n)
     var sure = [Float](repeating: 0, count: n)
     for (j, i) in found.enumerated() {
-      guard let home = back[j], simd_distance(home, inner[i]) < 1 else { continue }
+      guard let home = back[j], simd_distance(home, inner[i]) < how.home else { continue }
       extra[i] = (ahead[j] - inner[i]) - (c[i] - p[i])
       sure[i] = 1
     }
     // Smoothed along the edge (Gaussian, two points either way), only from the points that were sure.
-    let sigma: Float = 2, r = 6
+    let sigma = max(how.sigma, 0.5), r = Int(3 * sigma + 0.5)
     let cap = most * size
     return (0..<n).map { i in
       var sum = SIMD2<Float>.zero, weight: Float = 0
