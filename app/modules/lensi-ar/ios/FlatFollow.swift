@@ -22,6 +22,8 @@ final class FlatFollower {
     var shown: [CGPoint]
     var at: CFTimeInterval
     var history: [(t: CFTimeInterval, outline: [CGPoint])]
+    /// Answers in a row that didn't find it.
+    var misses = 0
   }
 
   /// Bent with its thing (LiveFlow.bend); false: moved whole (LiveFlow.carry).
@@ -46,6 +48,9 @@ final class FlatFollower {
   /// At most this many frames are kept (a few MB each): an answer later than that is turned on
   /// to the oldest by the gyro, and bent on from there.
   static let maxFrames = 8
+  /// Answers in a row that don't find a thing before it's let go: one look that misses it (small,
+  /// a blur, half behind something) doesn't make it blink out. Followed by the flow meanwhile.
+  static let maxMisses = 3
 
   /// The newest frame's capture time.
   var newest: CFTimeInterval? { frames.last?.t }
@@ -76,8 +81,9 @@ final class FlatFollower {
   }
 
   /// EdgeTAM's answers about the frame captured at `t`, each upright 0…1 (OutlineMath.count
-  /// points) or nil where it isn't in view (it's let go until it's found again). `size`: the picture
-  /// in pixels, which `glide` works in. Things not named are left as they are.
+  /// points) or nil where it isn't in view (after `maxMisses` of those in a row it's let go until
+  /// it's found again). `size`: the picture in pixels, which `glide` works in. Things not named are
+  /// left as they are.
   func answer(_ found: [String: [CGPoint]?], at t: CFTimeInterval, size: CGSize) {
     defer {
       if let d = due, d <= t + 1e-4 { due = nil }
@@ -85,7 +91,12 @@ final class FlatFollower {
     }
     for (key, said) in found {
       guard let outline = said, outline.count >= 3 else {
-        things[key] = nil
+        if var thing = things[key], thing.misses + 1 < FlatFollower.maxMisses {
+          thing.misses += 1
+          things[key] = thing
+        } else {
+          things[key] = nil
+        }
         continue
       }
       var glided = outline
@@ -123,6 +134,7 @@ final class FlatFollower {
     var thing = things[key] ?? Thing(shown: now, at: at, history: [])
     thing.shown = now
     thing.at = at
+    thing.misses = 0
     // What's shown on the newest frame is this now.
     thing.history.removeAll { $0.t >= at - 1e-4 }
     remember(&thing)
