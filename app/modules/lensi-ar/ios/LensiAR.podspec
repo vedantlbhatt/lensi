@@ -17,6 +17,12 @@ Pod::Spec.new do |s|
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
+    # Everything that follows a thing runs every frame in plain Swift: the flow's Lucas-Kanade,
+    # the outlines' math, EdgeTAM's memory and masks. Unoptimised, as a Debug build (`expo run:ios`)
+    # compiles it, that runs many times slower than what CI measures, and on a phone the outlines
+    # lag and jump. Optimised in every configuration.
+    'SWIFT_OPTIMIZATION_LEVEL' => '-O',
+    'SWIFT_COMPILATION_MODE' => 'wholemodule',
   }
 
   s.source_files = "**/*.{h,m,mm,swift}"

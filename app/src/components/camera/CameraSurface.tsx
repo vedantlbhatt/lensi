@@ -14,6 +14,7 @@ import {
   type ZoomRange,
 } from '../../../modules/lensi-ar/src';
 import type { GuidePart } from '../../lib/guide';
+import { setLiveStats } from '../../lib/liveStats';
 import type { Picked } from '../../lib/media';
 import type { Pt } from '../../lib/types';
 import type { ScrubThing } from './ScrubStrip';
@@ -263,7 +264,8 @@ export const CameraSurface = forwardRef<
       onGuideChange={(e) => props.onGuideChange?.(e.nativeEvent)}
       onZoomRange={(e) => props.onZoomRange?.(e.nativeEvent)}
       onLiveStats={(e) => {
-        // In the terminal that runs the app: how EdgeTAM really runs on this phone.
+        // How EdgeTAM really runs on this phone: in Settings, and in the terminal that runs the app.
+        setLiveStats(e.nativeEvent);
         if (__DEV__) console.log(liveStatsLine(e.nativeEvent));
       }}
     />

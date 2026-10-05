@@ -51,7 +51,7 @@
   "scripts": {
     "start": "expo start --dev-client",
     "ios": "expo run:ios",
-    "device": "expo run:ios --device",
+    "device": "expo run:ios --device --configuration Release",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "test": "npx -y tsx --test src/lib/__tests__/*.test.ts",

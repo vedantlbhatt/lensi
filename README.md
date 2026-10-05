@@ -53,8 +53,16 @@ Apps built with the iOS 27 SDK must use the UIScene life cycle or they die at la
 ```sh
 cd app
 npm install
-npx expo run:ios --device
+npx expo prebuild --clean
+npx expo run:ios --device --configuration Release
 ```
+
+Build Release for a phone (`npm run device` does). `expo run:ios --device` alone builds Debug, which
+CI never measures: following a thing runs every frame in plain Swift (the flow, the outlines' math,
+EdgeTAM's memory and masks), and unoptimised that is many times slower, so outlines lag and jump.
+The native module is now optimised in Debug too (its podspec), which takes a `prebuild --clean` (or
+`pod install`) to reach an existing `ios/`. Settings shows how fast EdgeTAM really runs on the phone
+("Following": looks a second, and how late each answer is) once something is pinned.
 
 - **Simulator:** `npx expo run:ios`. The simulator has no ARKit, so the app shows a *virtual camera* over public demo scenes (swipe sideways to switch). Vision and SAM still run on the real stills. Four scenes are moving footage (`workers`, `aisle`, `bottles`: Intel's CC BY sample videos; `shaker`: a black shaker bottle filmed handheld for Lensi, walking round it, up close and back out, down to 0.5×), so the strip can be tried on things that move. What the strip offers in them was found and followed frame by frame by the app's own Swift ([`tools/strip`](tools/strip/main.swift), and for the bottle EdgeTAM in [`tools/edgetrack`](tools/edgetrack/main.swift), on CI), and a pin rides its thing's track.
 - **Web preview (UI and motion only):** `npm run web`. It uses the virtual camera, scripted model answers and simulated speech.
@@ -70,7 +78,7 @@ itms-services://?action=download-manifest&url=https://raw.githubusercontent.com/
 
 After that, **JavaScript changes arrive over the air**. Every push to `main` or `camera-first` publishes its JavaScript on the `ota` branch ([`ota.yml`](.github/workflows/ota.yml), [`tools/ota`](tools/ota/publish.py)). The app looks there at launch, downloads anything newer, and restarts into it once nothing is in hand ([`src/lib/ota.ts`](app/src/lib/ota.ts)). An update only runs on a build of the same native code: [`tools/ota/runtime.py`](tools/ota/runtime.py) hashes the Swift, the native packages and the app config, and the build carries that hash. A Swift change therefore needs a new install. If an update ever fails to start, the next launch sets it aside and runs the build's own JavaScript ([`plugins/withOTA.js`](app/plugins/withOTA.js)).
 
-With a Mac, `npx expo run:ios --device` installs straight over the cable as usual.
+With a Mac, `npx expo run:ios --device --configuration Release` installs straight over the cable as usual.
 
 ### SAM models
 
@@ -138,7 +146,7 @@ EdgeTAM, as pinned things are followed now, on the same footage against the same
 | dog | J 81.2%, 10.6 px | J 93.9%, 7.6 px | J 86.8%, 11.9 px | J 76.2%, 10.8 px | J 87.3%, 9.2 px |
 | parkour | J 73.4%, 7.5 px | J 93.0%, 4.0 px | J 78.5%, 10.5 px | J 61.8%, 11.4 px | J 76.8%, 8.1 px |
 
-From its memory of the thing EdgeTAM holds on where SAM's re-cuts drift (J 94.9% on average against 82.0%), and the more often it runs the better: the app asks it up to 20 times a second. As the phone runs it, bending takes the average from 81.0% to 88.4% and the drawn line from 6.7 px to 3.8 px off the real edge; taking each answer as it is rather than gliding into it adds a little on the cars (97.4%, 96.5%) and nothing elsewhere. 100 ms late, moved whole: 75.5%. The app's 1x path itself (`1x-*`: LiveShape's take, carry and draw with a camera that never moves, so the flow carries all the motion, as for a thing that moves) averages 77.5% moved whole, 78.6% bent, and 82.8% with a cut that lands late bent along as the outline was since its frame (`LiveShape.forwardsBent`), rather than moved only by how far its middle went (parkour 59.6% → 68.5%, the dog 73.8% → 82.2%). Bending's own settings (`LiveFlow.Bending`: how far inside the edge each point is followed, how far it may move beyond the whole, how far along the edge that's smoothed, how near home it must come back) were tried either side of the standard ones (`bend-*`): all within 0.4 points of it on average, but for twice the smoothing, which loses the dog's and the parkour's legs (85.2%, 73.9%).
+From its memory of the thing EdgeTAM holds on where SAM's re-cuts drift (J 94.9% on average against 82.0%), and the more often it runs the better: the app asks it up to 20 times a second. As the phone runs it, bending takes the average from 81.0% to 88.4% and the drawn line from 6.7 px to 3.8 px off the real edge; taking each answer as it is rather than gliding into it adds a little on the cars (97.4%, 96.5%) and nothing elsewhere. 100 ms late, moved whole: 75.5%. The app's 1x path itself (`1x-*`: LiveShape's take, carry and draw with a camera that never moves, so the flow carries all the motion, as for a thing that moves) averages 77.5% moved whole, 78.6% bent, and 82.8% with a cut that lands late bent along as the outline was since its frame (`LiveShape.forwardsBent`), rather than moved only by how far its middle went (parkour 59.6% → 68.5%, the dog 73.8% → 82.2%). Blending each answer in lighter than `OutlineMath.Smoothing.standard` (`1x-light`, `1x-minimal`) gains under a point (82.9% → 83.6%, 83.8%) for more wobble (9.3% → 9.7%), so a moving thing keeps the standard blend. Bending's own settings (`LiveFlow.Bending`: how far inside the edge each point is followed, how far it may move beyond the whole, how far along the edge that's smoothed, how near home it must come back) were tried either side of the standard ones (`bend-*`): all within 0.4 points of it on average, but for twice the smoothing, which loses the dog's and the parkour's legs (85.2%, 73.9%).
 
 At 4 cuts a second (a hot phone, or a guide part waiting its turn) coasting loses fast things (dog J 32%, drifting car 10%) and LiveFlow keeps them (73%, 53%). LiveFlow costs 2-3 ms a frame plus about 1 ms per outline on a Mac core. Not measured here: ARKit (the phone's own motion), SAM's speed on a phone's Neural Engine, heat. `bash tools/track/ci.sh` reproduces it on a Mac; results and videos land on the `ci-track` branch.
 

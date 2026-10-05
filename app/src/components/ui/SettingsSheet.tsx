@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LensiAR, type IntelligenceStatus } from '../../../modules/lensi-ar/src';
 import { cloudEngine, serverURL } from '../../lib/engines/cloud';
 import { cancel } from '../../lib/pipeline';
+import { useLiveStats } from '../../lib/liveStats';
 import { setSettings, useSettings, type Brain } from '../../lib/settings';
 import { clearCaptures, useCaptureList } from '../../lib/store';
 import { PressScale } from '../../motion/PressScale';
@@ -38,6 +39,7 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
   const screen = useWindowDimensions();
   const captures = useCaptureList();
   const [apple, setApple] = useState<IntelligenceStatus | null>(null);
+  const live = useLiveStats();
   // Pull the sheet down by its handle to put it away.
   const pull = useSharedValue(0);
   const drag = Gesture.Pan()
@@ -110,6 +112,13 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
             <View style={styles.status}>
               <StatusLine label="Apple Intelligence" ok={apple?.available ?? null} detail={apple ? (apple.available ? (apple.images ? 'Ready · sees images' : 'Ready · text only') : apple.reason) : 'Checking…'} pen={pen} />
               <StatusLine label="Lensi server" ok={cloudOk} detail={cloudOk === null ? 'Checking…' : cloudOk ? serverURL() : `Not reachable at ${serverURL()}`} pen={pen} />
+              {/* EdgeTAM's real speed here, once something's pinned: how often it looks, how late each answer is. */}
+              <StatusLine
+                label="Following"
+                ok={live ? live.looksPerSecond >= 10 && live.latencyMs <= 120 : null}
+                detail={live ? `${live.looksPerSecond.toFixed(1)} a second · ${Math.round(live.latencyMs)} ms late` : 'Pin something to measure'}
+                pen={pen}
+              />
             </View>
 
             <Text style={styles.section}>Behaviour</Text>
