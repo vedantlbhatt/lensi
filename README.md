@@ -160,6 +160,18 @@ The app's 0.5x on an iPhone 17 swaps cameras in an instant: the same thing is su
 
 (Into "1x" the scores are capped by the blown-up picture's blur, for every way alike.) Between EdgeTAM's outlines at 0.5x the gyro moves them by how far the phone has turned since their frame; [`tools/wide/warp_test.py`](tools/wide/warp_test.py) checks that warp against a pinhole camera turned for real (0.0000 px off over 200 random turns, in CoreMotion's right-handed convention).
 
+### Pinned while you walk round it, on ARKit walk-arounds
+
+[`tools/walk`](tools/walk/main.swift) runs the app's 1x path over the stretches of ARKitScenes scans where the camera walks round a still thing, from far to close enough that it runs off the picture and back (1.1 to 4.2 m of travel, 86 to 200 degrees of turn, nine scans): each cut laid in the world and held by ARKit between cuts, as on the phone, and scored against SAM asked with the thing's hand-drawn 3D box from each frame's pose. Lost is how often the overlap falls below 0.5; slip is how far the outline moves against the box from one frame to the next (what a person sees as jitter), lurch how far its middle jumps. Means over the nine:
+
+| | J | lost | slip | lurch |
+|---|---|---|---|---|
+| SAM's cuts, gated (the path before EdgeTAM) | 75.3% | 12.8% | 1.4 px | 1.7 px |
+| EdgeTAM as first wired in | 76.8% | 8.9% | 4.8 px | 6.0 px |
+| EdgeTAM now | 75.9% | 7.4% | 2.9 px | 3.3 px |
+
+(The first EdgeTAM row is from an earlier run; the harness's Core ML isn't bit-for-bit the same from run to run.) EdgeTAM keeps hold of things SAM loses (a TV lost in 33% of frames, against SAM's 78%). As first wired in, up close it threw the whole outline about: the part of a sink or washer on the picture moved and rescaled the whole outline unchecked, and where that failed the part was laid as the whole thing (lurch 26 and 13 px). Now that part moves a still thing whose depth is known by 10% at most, has to be plausibly the same thing, and is never laid as the whole. Lines of sight put a washer filling three quarters of the picture at 0.55 of its distance (a big thing's outline is mostly its near face, so its middle isn't one place in the world as you go round it); only a cut wholly on the picture and at most 40% of it across is sighted now (a sofa that ended at 0.53 of its distance ends at 1.01). What jitter is left is mostly where a big thing fills the picture; a bottle doesn't. `bash tools/walk/ci.sh` on a Mac reproduces it (`track-lab`); results and videos land on the `ci-track-lab` branch.
+
 ### Pinned while the phone moves, on real ARKit recordings
 
 The footage above has no camera pose. `tools/pin` runs the app's world anchoring on Apple's ARKitScenes (iPad Pro captures with ARKit's own recorded pose and lens for every frame, and 3D boxes drawn around the furniture by hand; CC BY-NC-SA): `FrozenCamera` and `LiveShape` (`LiveWorld.swift`, shared with the app), LiveTracker, LiveFlow and SAM, over 3 s stretches where a still thing stays in view while the camera moves the most. "On the box" is how much of the outline lies on the thing's hand-drawn 3D box as each pose sees it (no SAM in that check); lurch is next to the box's own, which is all camera motion. The app's camera math puts the boxes' corners within 0.00 px of the dataset's own projection.
