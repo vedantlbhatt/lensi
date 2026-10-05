@@ -27,10 +27,13 @@
 //   sight@far    steady, pinned 40% too far, its depth put right by where the lines of sight
 //                through its whole cuts cross (LiveShape.sight): no LiDAR, no points on it
 //   edge@*       the app now on a phone: followed by EdgeTAM (EdgeTAMTracker, Meta's on-device
-//                SAM 2, from its memory of the thing: no prompts, no gates) every other frame,
-//                its cuts laid in the world as above, up close the whole outline going where
-//                the part on the picture went; edge@far's depth from lines of sight, edgel@far's
-//                from LiDAR (with the EdgeTAM models in LENSI_MODELS_DIR; left out without them)
+//                SAM 2, from its memory of the thing: no prompts) every other frame, its cuts
+//                laid in the world as above, up close the whole outline going where the part on
+//                the picture went (a still thing's part only through the strict gate, and at
+//                most 10% bigger or smaller once its depth is known); edge@far's depth from lines
+//                of sight, edgel@far's from LiDAR (with the EdgeTAM models in LENSI_MODELS_DIR;
+//                left out without them)
+//   edgeg@*      edge, with a still thing's part up close taken through the loose gate
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
@@ -566,6 +569,9 @@ final class Run {
   let sight: Bool
   /// Followed by EdgeTAM instead of asking SAM (LensiARView.followEdge).
   let edge: Bool
+  /// EdgeTAM's part of a still thing up close taken through the loose gate (still limited to
+  /// 10% bigger or smaller once its depth is known, and never laid as the whole thing).
+  let loose: Bool
   var tracker: EdgeTAMTracker?
   var shape: LiveShape?
   var pending: Cut?
@@ -577,7 +583,7 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0, measured = 0
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
-       clamp: Bool = false, sight: Bool = false, edge: Bool = false) {
+       clamp: Bool = false, sight: Bool = false, edge: Bool = false, loose: Bool = false) {
     self.label = label
     self.start = start
     self.once = once
@@ -587,6 +593,7 @@ final class Run {
     self.clamp = clamp
     self.sight = sight
     self.edge = edge
+    self.loose = loose
   }
 }
 
@@ -607,6 +614,8 @@ let runs = [
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
+  Run("edgeg@true", start: 1, noflow: true, sight: true, edge: true, loose: true),
+  Run("edgeg@far", start: 1.4, noflow: true, sight: true, edge: true, loose: true),
 ])
 /// EdgeTAM every other frame (15 times a second: LensiARView asks it up to 20).
 let edgeEvery = 2
@@ -741,7 +750,7 @@ for (k, f) in window.enumerated() {
         // still thing whose depth is known only a little (as LensiARView.segmentLive asks).
         var taken = true
         if edgeOf(seen), let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
-          let gate = LiveTracker.asking(still: shape.still).gate
+          let gate = run.loose ? LiveTracker.Gate.loose : LiveTracker.asking(still: shape.still).gate
           let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
           if let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: limit) {
             ring = whole
