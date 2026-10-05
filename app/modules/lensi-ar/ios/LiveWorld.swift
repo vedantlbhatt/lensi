@@ -53,18 +53,23 @@ struct FrozenCamera {
   /// nil when any is behind it.
   func upright(_ world: [simd_float3]) -> [CGPoint]? {
     let toCamera = transform.inverse
-    let fx = intrinsics[0][0], fy = intrinsics[1][1]
-    let cx = intrinsics[2][0], cy = intrinsics[2][1]
     var out: [CGPoint] = []
     out.reserveCapacity(world.count)
     for w in world {
       let c = simd_mul(toCamera, simd_float4(w, 1))
       guard c.z < -0.02 else { return nil }
-      let px = cx + fx * c.x / -c.z
-      let py = cy - fy * c.y / -c.z
-      out.append(CGPoint(x: 1 - CGFloat(py) / resolution.height, y: CGFloat(px) / resolution.width))
+      out.append(picture(c))
     }
     return out
+  }
+
+  /// A point in the camera's own space (in front of it: z < 0) where it lands in the upright picture.
+  private func picture(_ c: simd_float4) -> CGPoint {
+    let fx = intrinsics[0][0], fy = intrinsics[1][1]
+    let cx = intrinsics[2][0], cy = intrinsics[2][1]
+    let px = cx + fx * c.x / -c.z
+    let py = cy - fy * c.y / -c.z
+    return CGPoint(x: 1 - CGFloat(py) / resolution.height, y: CGFloat(px) / resolution.width)
   }
 
   /// An upright picture point laid on the plane (`withPlane`); nil when its ray misses it.
@@ -74,6 +79,42 @@ struct FrozenCamera {
     guard abs(denom) > 1e-4 else { return nil }
     let t = simd_dot(planePoint - origin, planeNormal) / denom
     return t > 0 ? origin + dir * t : nil
+  }
+
+  /// Where the camera is, in the world.
+  var position: simd_float3 { simd_make_float3(transform.columns.3) }
+
+  /// An upright picture point in the sensor image's own 0...1 space (lying on its side, top-left
+  /// origin), where ARKit's depth maps are.
+  static func sensor(_ upright: CGPoint) -> CGPoint { CGPoint(x: upright.y, y: 1 - upright.x) }
+
+  /// How far from the camera, along the line of sight through upright point `middle`, a thing
+  /// is whose depth (straight ahead of the camera, metres: what LiDAR measures) is `depth`.
+  func range(depth: Float, through middle: CGPoint) -> Float {
+    let (_, dir) = ray(middle)
+    let ahead = simd_normalize(-simd_make_float3(transform.columns.2))
+    return depth / max(simd_dot(dir, ahead), 0.2)
+  }
+
+  /// The median depth (straight ahead, metres) of the world points (ARKit's feature points) this
+  /// camera sees inside the upright outline `ring`; nil when fewer than `minimum` are. Points ARKit
+  /// found in a frame are ones it saw in it: inside a thing's outline, they're on the thing.
+  func medianDepth(of points: [simd_float3], inside ring: [CGPoint], minimum: Int = 8) -> Float? {
+    let visible = LiveTracker.clipped(ring)
+    guard visible.count >= 3 else { return nil }
+    let toCamera = transform.inverse
+    let box = LiveTracker.bounds(visible)
+    var depths: [Float] = []
+    for p in points {
+      let c = simd_mul(toCamera, simd_float4(p, 1))
+      guard c.z < -0.05 else { continue }
+      let u = picture(c)
+      guard box.contains(u), LiveTracker.contains(visible, u) else { continue }
+      depths.append(-c.z)
+    }
+    guard depths.count >= minimum else { return nil }
+    depths.sort()
+    return depths[depths.count / 2]
   }
 }
 
@@ -114,6 +155,16 @@ struct LiveShape {
   /// LiveTracker.movingAbove and as still again under LiveTracker.stillBelow, so one noisy
   /// cut doesn't swap how it's asked about, blended and drawn.
   private(set) var still = true
+  /// Its last looks, from each camera that cut it wholly (`sighted`).
+  private(set) var sights: [Sight] = []
+
+  /// One camera's look at a whole cut: where the camera was, which way it saw the cut's middle,
+  /// and how big the cut looked from there (its spread over its range: radians).
+  struct Sight {
+    let origin: simd_float3
+    let toward: simd_float3
+    let size: Float
+  }
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
@@ -164,7 +215,8 @@ struct LiveShape {
   /// outline past `t`, the cut is brought along the same way first. `measure` false (the phone
   /// itself was moving fast, so where the cut landed says little about the thing's own speed):
   /// its speed only fades.
-  mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval, how: OutlineMath.Smoothing = .standard, measure: Bool = true) {
+  mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval, how: OutlineMath.Smoothing = .standard, measure: Bool = true,
+                     seenFrom origin: simd_float3? = nil) {
     var forwarded = fresh
     var at = t
     if seen > t {
@@ -188,6 +240,146 @@ struct LiveShape {
     seen = at
     cut = t
     misses = 0
+    // The cut was laid at the depth it already had; from where the camera was, the way to its
+    // middle and how big it looked hold wherever it really is (`sighted`).
+    if let origin { sighted(fresh, from: origin) }
+  }
+
+  // MARK: How far away it is
+  //
+  // Where a thing is laid starts as a guess (a raycast through it that hits the wall behind,
+  // ARKit's points on the floor beside it), and every cut is laid at the depth it already has.
+  // At the wrong depth an outline slides off its thing whenever the phone moves (by the phone's
+  // step times how wrong the depth is), and each cut drags it back: on a phone carried about,
+  // off and jumping all the time. Moving it nearer or further along the lines of sight from the
+  // camera that just cut it changes nothing from there, so it's put right as soon as something
+  // says how far it is: LiDAR or ARKit's points inside a cut (`setDepth`), or the cuts
+  // themselves, seen from different places (`sighted`). tools/walk measures all of it on
+  // handheld walk-arounds.
+
+  /// A cut of it seen whole is a look at it (`Sight`): the way to its middle and how big it
+  /// looked. A step sideways and a still thing is seen another way, a step closer and it looks
+  /// bigger; how much says how far it is (`meet`), and it moves there. Not only while it's
+  /// judged still: laid at the wrong depth, a still thing seems to move whenever the phone does
+  /// (that's what's wrong), so the looks themselves say whether they fit one place; a thing that
+  /// really moves leaves looks that don't, and nothing changes.
+  mutating func sighted(_ fresh: [simd_float3], from origin: simd_float3) {
+    let middle = OutlineMath.centre(fresh)
+    let range = simd_distance(middle, origin)
+    guard range > 0.05, range.isFinite else { return }
+    sights.append(Sight(origin: origin, toward: (middle - origin) / range, size: OutlineMath.spread(fresh) / range))
+    if sights.count > LiveShape.maxSights { sights.removeFirst(sights.count - LiveShape.maxSights) }
+    let now = OutlineMath.centre(world)
+    let current = simd_distance(now, origin)
+    guard current > 0.05, let best = LiveShape.meet(sights, along: (now - origin) / current, from: origin) else { return }
+    setRange(best, from: origin, weight: LiveShape.sightWeight)
+  }
+
+  /// About four seconds of looks at the phone's pace.
+  static let maxSights = 30
+  /// How far each look moves it towards where they say it is, and each depth measured inside a
+  /// cut: LiDAR's (a phone with one) and ARKit's points' (sparser, and only where there's texture).
+  static let sightWeight: Float = 0.5
+  static let lidarWeight: Float = 0.6
+  static let pointsWeight: Float = 0.3
+  /// The phone itself turning (radians a second) or moving (metres a second) faster than this:
+  /// the picture is a blur, and where a cut or the flow puts a thing says little about its own
+  /// motion (LensiARView.phoneFast, tools/walk).
+  static let fastTurn: Float = 1.0
+  static let fastMove: Float = 0.5
+  /// How far off one look can be and still count: which way SAM's cut has its middle (radians,
+  /// about 6 px across a phone's picture, and a solid thing's outline shifts as it's seen from
+  /// round the side), and how big it is (log: a few percent, more seen from another side).
+  static let sightNoise: Float = 0.015
+  static let sizeNoise: Float = 0.08
+  /// A range must explain the looks this much better (in `meet`'s cost) than one a quarter
+  /// nearer or further, or they can't yet say how far it is; and at it, they must fit (at most
+  /// `sightMisfit` a look), or it isn't still and they can't say at all.
+  static let sightMargin: Float = 2
+  static let sightMisfit: Float = 2.5
+
+  /// How far from `origin` along `toward` (a line of sight to the thing) it is, by its looks:
+  /// at the right range each was seen the way it was, and the size it is in metres is the same
+  /// from every one. Each look's misfit counts for less the bigger it is (log(1 + x²)), so a bad
+  /// cut is let go. Nil when they can't say: too few, too close together, no range clearly
+  /// better than the others, or none they fit (it moved).
+  static func meet(_ sights: [Sight], along toward: simd_float3, from origin: simd_float3) -> Float? {
+    guard sights.count >= 3 else { return nil }
+    func cost(_ r: Float) -> Float {
+      let x = origin + toward * r
+      var sizes: [Float] = []
+      sizes.reserveCapacity(sights.count)
+      var c: Float = 0
+      for s in sights {
+        let v = x - s.origin
+        let d = simd_length(v)
+        guard d > 0.05, simd_dot(v, s.toward) > 0 else { return .greatestFiniteMagnitude }
+        let off = simd_length(simd_cross(v / d, s.toward)) / sightNoise
+        c += log(1 + off * off)
+        sizes.append(log(s.size * d))
+      }
+      let typical = sizes.reduce(0, +) / Float(sizes.count)
+      for l in sizes {
+        let off = (l - typical) / sizeNoise
+        c += log(1 + off * off)
+      }
+      return c
+    }
+    let nearest: Float = 0.15, furthest: Float = 8, step: Float = 1.02
+    var best = (r: Float(0), c: Float.greatestFiniteMagnitude)
+    var r = nearest
+    while r <= furthest {
+      let c = cost(r)
+      if c < best.c { best = (r, c) }
+      r *= step
+    }
+    guard best.c <= Float(sights.count) * sightMisfit, best.r > nearest * step, best.r < furthest / step else { return nil }
+    let clearly = min(cost(best.r / 1.25), cost(best.r * 1.25)) - best.c
+    return clearly >= sightMargin ? best.r : nil
+  }
+
+  /// The median of `depth` (metres straight ahead; nil where it has none) over a grid inside an
+  /// upright outline, the part of it on the picture: what a depth map (LiDAR) says about the
+  /// thing a cut found. Nil when too little of it has a depth.
+  static func depthInside(_ ring: [CGPoint], grid: Int = 14, depth: (CGPoint) -> Float?) -> Float? {
+    let visible = LiveTracker.clipped(ring)
+    guard visible.count >= 3 else { return nil }
+    let r = LiveTracker.bounds(visible)
+    var found: [Float] = []
+    for gy in 0..<grid {
+      for gx in 0..<grid {
+        let p = CGPoint(x: r.minX + (CGFloat(gx) + 0.5) / CGFloat(grid) * r.width,
+                        y: r.minY + (CGFloat(gy) + 0.5) / CGFloat(grid) * r.height)
+        guard LiveTracker.contains(visible, p), let d = depth(p), d.isFinite, d > 0.1 else { continue }
+        found.append(d)
+      }
+    }
+    guard found.count >= 8 else { return nil }
+    found.sort()
+    return found[found.count / 2]
+  }
+
+  /// Puts it `depth` metres straight ahead of `camera` (measured inside a cut: LiDAR, or ARKit's
+  /// points on it), along the lines of sight from that camera, `weight` of the way (`setRange`).
+  mutating func setDepth(_ depth: Float, seenBy camera: FrozenCamera, weight: Float) {
+    let middle = OutlineMath.centre(world)
+    let ahead = -simd_mul(camera.transform.inverse, simd_float4(middle, 1)).z
+    guard ahead > 0.05, depth > 0.05, depth.isFinite else { return }
+    setRange(simd_distance(middle, camera.position) * depth / ahead, from: camera.position, weight: weight)
+  }
+
+  /// Puts it `range` metres from `origin`, along the lines of sight from there (so from there it
+  /// looks just the same), `weight` of the way, and at most twice or half as far in one go.
+  mutating func setRange(_ range: Float, from origin: simd_float3, weight: Float) {
+    let current = simd_distance(OutlineMath.centre(world), origin)
+    guard current > 0.05, range > 0.1, range < 10, range.isFinite else { return }
+    let f = 1 + (min(max(range / current, 0.5), 2) - 1) * min(max(weight, 0), 1)
+    guard abs(f - 1) > 0.002 else { return }
+    world = world.map { origin + ($0 - origin) * f }
+    if let d = drawn { drawn = d.map { origin + ($0 - origin) * f } }
+    if let d = lastChange { lastChange = d.map { $0 * f } }
+    moves = moves.map { (t: $0.t, by: $0.by * f) }
+    velocity *= f
   }
 
   /// One frame to the next (`a`, seen by camera `ca` at `ta`; `b`, by `cb` at `tb`): the

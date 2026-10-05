@@ -47,15 +47,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// the camera image, so they never slide against it (OutlineNode).
   private let outlines = SCNNode()
   /// How fast the phone itself turns (radians a second) and moves (metres a second), steadied:
-  /// past `fastTurn` or `fastMove` the picture is a blur and what the flow and SAM say about a
-  /// thing's own motion is mostly the phone's, so it isn't taken as the thing's (ARKit already
-  /// keeps every outline where it is in the world).
+  /// past LiveShape.fastTurn or fastMove the picture is a blur and what the flow and SAM say
+  /// about a thing's own motion is mostly the phone's, so it isn't taken as the thing's (ARKit
+  /// already keeps every outline where it is in the world).
   private var phoneTurn: Float = 0
   private var phoneMove: Float = 0
   private var lastPhonePose: (transform: simd_float4x4, t: TimeInterval)?
-  static let fastTurn: Float = 1.0
-  static let fastMove: Float = 0.5
-  private var phoneFast: Bool { phoneTurn > Self.fastTurn || phoneMove > Self.fastMove }
+  private var phoneFast: Bool { phoneTurn > LiveShape.fastTurn || phoneMove > LiveShape.fastMove }
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -238,6 +236,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
       config.sceneReconstruction = .mesh
     }
+    // LiDAR's depth with every frame, on a phone that has one: how far a pinned thing is,
+    // measured inside each cut of it (LiveShape.setDepth).
+    if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+      config.frameSemantics.insert(.smoothedSceneDepth)
+    }
     // A format that can also deliver full-resolution stills on demand.
     if let format = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
       config.videoFormat = format
@@ -376,10 +379,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let buffer = frame.capturedImage
     let captured = frame.timestamp
     let camera = FrozenCamera(frame: frame, crop: unit)
+    // What says how far each thing is: LiDAR's depth, or ARKit's points.
+    let measured = DepthSample(frame)
+    let points = frame.rawFeaturePoints?.points ?? []
     samQueue.async { [weak self] in
       let started = CACurrentMediaTime()
       var encodeMs: Double = 0
-      var found: [String: [simd_float3]] = [:]
+      var found: [String: LiveCut] = [:]
       var refused = 0
       var failure: String?
       do {
@@ -393,11 +399,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             prior: p.predicted)
           guard mask.score >= (p.predicted == nil ? 0.6 : 0.5), mask.polygon.count > 2 else { continue }
           // Evenly spaced (in pixels).
-          var ring = OutlineMath.resample(mask.polygon, scale: upright)
+          let cut = OutlineMath.resample(mask.polygon, scale: upright)
+          var ring = cut
           // Following a thing: a cut that doesn't fit where it should be is something else. Up
           // close the cut is only the part on the picture, and the whole outline goes where it went.
           if let predicted = p.predicted {
-            guard let taken = LiveTracker.follow(cut: ring, predicted: predicted, gate: p.gate) else {
+            guard let taken = LiveTracker.follow(cut: cut, predicted: predicted, gate: p.gate) else {
               refused += 1
               continue
             }
@@ -406,7 +413,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           // Onto the thing's plane in the world.
           let plane = camera.withPlane(through: p.anchor)
           let world = ring.compactMap { plane.onPlane($0) }
-          if world.count == ring.count { found[p.key] = world }
+          guard world.count == ring.count else { continue }
+          // How far it really is, measured inside the cut: LiDAR's depth, else ARKit's points on it.
+          var depth: (metres: Float, weight: Float)?
+          if let d = measured?.inside(cut) {
+            depth = (d, LiveShape.lidarWeight)
+          } else if let d = camera.medianDepth(of: points, inside: cut) {
+            depth = (d, LiveShape.pointsWeight)
+          }
+          let whole = p.predicted.map { LiveTracker.visibleFraction($0) >= LiveTracker.wholeVisible } ?? false
+          found[p.key] = LiveCut(world: world, whole: whole, depth: depth)
         }
       } catch {
         failure = error.localizedDescription
@@ -431,7 +447,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           }
         }
         guard self.liveSegments else { return }
-        self.takeLive(results, asked: prompts, at: captured)
+        self.takeLive(results, asked: prompts, at: captured, seenBy: camera)
       }
     }
   }
@@ -466,19 +482,30 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     return OutlineMath.centre(shape.placed(at: t)) + offset
   }
 
-  /// SAM's answers for one frame (captured at `t`): found shapes are blended into what's
-  /// shown and their motion measured; asked-for ones it didn't find, or whose cut didn't fit,
-  /// count a miss (two in a row and they go).
-  private func takeLive(_ found: [String: [simd_float3]], asked: [LivePrompt], at t: CFTimeInterval) {
+  /// One of SAM's cuts, laid in the world: whether all of the thing was on the picture, and
+  /// how far away it is as measured inside the cut (and how much to go by that), if anything did.
+  private struct LiveCut {
+    let world: [simd_float3]
+    let whole: Bool
+    let depth: (metres: Float, weight: Float)?
+  }
+
+  /// SAM's answers for one frame (captured at `t`, by `camera`): found shapes are blended into
+  /// what's shown, their motion measured and their depth put right (LiveShape: a cut is laid at
+  /// the depth the outline already had, a guess to start with); asked-for ones it didn't find, or
+  /// whose cut didn't fit, count a miss (two in a row and they go).
+  private func takeLive(_ found: [String: LiveCut], asked: [LivePrompt], at t: CFTimeInterval, seenBy camera: FrozenCamera) {
     for prompt in asked {
       let key = prompt.key
-      if let world = found[key] {
+      if let cut = found[key] {
+        let world = cut.world
         // A pinned thing is blended back however long it was lost: its cut was asked for where
         // it should be, and had to fit it there.
         if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
           // While the phone itself moves fast, where the cut landed says little about the
-          // thing's own speed.
-          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast)
+          // thing's own speed. A whole cut is a look at it from here (LiveShape.sighted).
+          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: cut.whole ? camera.position : nil)
+          if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
           liveShapes[key] = shape
         } else {
           // New, or not seen for a while: start over.
@@ -492,6 +519,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             let offset = pin.world - OutlineMath.centre(world)
             shape.tagOffset = simd_length(offset) < 0.5 ? offset : .zero
           }
+          if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
           liveShapes[key] = shape
         }
       } else if var shape = liveShapes[key] {
@@ -1197,11 +1225,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     }
     let camera = FrozenCamera(frame: frame, crop: unit)
     let points = frame.rawFeaturePoints?.points ?? []
+    let measured = DepthSample(frame)
     let res = frame.camera.imageResolution
     let upright = CGSize(width: res.height, height: res.width)
     guard let sam else {
       // No SAM on this phone: YOLO's boxes are the things.
-      done(scrubLay(objects, camera: camera, points: points, upright: upright))
+      done(scrubLay(objects, camera: camera, points: points, depth: measured, upright: upright))
       return
     }
     let buffer = frame.capturedImage
@@ -1230,7 +1259,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           done([])
           return
         }
-        let things = self.scrubLay(found, camera: camera, points: points, upright: upright)
+        let things = self.scrubLay(found, camera: camera, points: points, depth: measured, upright: upright)
         NSLog("[lensi] strip: %ld things in view (%ld found) in %.0f ms", things.count, found.count, ms)
         done(things)
       }
@@ -1239,7 +1268,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// The strip's finds laid in the world, the same thing found twice kept once, in order across
   /// the screen; each gets a layer (drawn by `layoutScrub`).
-  private func scrubLay(_ found: [ScrubFind], camera: FrozenCamera, points: [simd_float3], upright: CGSize) -> [[String: Any]] {
+  private func scrubLay(_ found: [ScrubFind], camera: FrozenCamera, points: [simd_float3], depth: DepthSample?,
+                        upright: CGSize) -> [[String: Any]] {
     let look = GuideFrameContext(selection: camera, points: points)
     var kept: [ScrubFind] = []
     for f in found where !kept.contains(where: { LiveTracker.iou($0.polygon, f.polygon) > 0.6 }) {
@@ -1249,7 +1279,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for f in kept {
       let ring = OutlineMath.resample(f.polygon, scale: upright)
       let middle = LiveTracker.interiorPoint(f.polygon, scale: upright)
-      let plane = camera.withPlane(through: look.anchor(at: middle, session: sceneView.session))
+      // How far it is: LiDAR's depth inside it, else ARKit's points on it, else a raycast through
+      // its middle (which can hit the wall behind it: LiveShape puts that right as it's followed).
+      let anchor: simd_float3
+      if let d = depth?.inside(ring) ?? camera.medianDepth(of: points, inside: ring) {
+        let (origin, dir) = camera.ray(middle)
+        anchor = origin + dir * camera.range(depth: d, through: middle)
+      } else {
+        anchor = look.anchor(at: middle, session: sceneView.session)
+      }
+      let plane = camera.withPlane(through: anchor)
       let world = ring.compactMap { plane.onPlane($0) }
       guard world.count == ring.count, let (p, _) = project(OutlineMath.centre(world)), bounds.contains(p) else { continue }
       laid.append((world: world, find: f, at: p))
@@ -1733,6 +1772,47 @@ private struct Tracked {
   var target: CGRect
   var shown: CGRect
   var missed = 0
+}
+
+/// LiDAR's depth with one frame (ARFrame.smoothedSceneDepth: metres, lying on its side as the
+/// camera image does, at a fraction of its size) and how sure of it LiDAR is.
+private struct DepthSample {
+  let depth: CVPixelBuffer
+  let confidence: CVPixelBuffer?
+
+  /// Nil on a phone without LiDAR.
+  init?(_ frame: ARFrame) {
+    guard let d = frame.smoothedSceneDepth ?? frame.sceneDepth else { return nil }
+    depth = d.depthMap
+    confidence = d.confidenceMap
+  }
+
+  /// The median depth inside an upright outline (LiveShape.depthInside), leaving out what LiDAR
+  /// isn't sure of; nil when too little of it has a depth.
+  func inside(_ ring: [CGPoint]) -> Float? {
+    guard CVPixelBufferGetPixelFormatType(depth) == kCVPixelFormatType_DepthFloat32 else { return nil }
+    CVPixelBufferLockBaseAddress(depth, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(depth) else { return nil }
+    let w = CVPixelBufferGetWidth(depth), h = CVPixelBufferGetHeight(depth)
+    let row = CVPixelBufferGetBytesPerRow(depth)
+    var sure: UnsafeMutableRawPointer?
+    var sureRow = 0
+    if let confidence {
+      CVPixelBufferLockBaseAddress(confidence, .readOnly)
+      sure = CVPixelBufferGetBaseAddress(confidence)
+      sureRow = CVPixelBufferGetBytesPerRow(confidence)
+    }
+    defer { if let confidence { CVPixelBufferUnlockBaseAddress(confidence, .readOnly) } }
+    let medium = UInt8(ARConfidenceLevel.medium.rawValue)
+    return LiveShape.depthInside(ring) { p in
+      let s = FrozenCamera.sensor(p)
+      let x = min(max(Int(s.x * CGFloat(w)), 0), w - 1)
+      let y = min(max(Int(s.y * CGFloat(h)), 0), h - 1)
+      if let sure, sure.load(fromByteOffset: y * sureRow + x, as: UInt8.self) < medium { return nil }
+      return base.load(fromByteOffset: y * row + x * 4, as: Float32.self)
+    }
+  }
 }
 
 /// A guide frame: its frozen pose plus the feature points ARKit had tracked,

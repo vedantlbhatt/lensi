@@ -1,0 +1,664 @@
+// The app's pinning on real handheld walk-arounds: Apple's ARKitScenes (people walking about
+// rooms holding an iPad Pro, with ARKit's own pose and lens for every frame, its LiDAR depth,
+// and 3D boxes drawn around the furniture by hand). tools/pin takes calm stretches where a thing
+// stays wholly in view, and starts each outline at the thing's true depth. A phone gets neither:
+// people walk up close (the thing runs off the picture) and back out, and how far the thing is
+// was a guess (a raycast through it that hits the wall behind). This takes the stretch where
+// the camera goes furthest from far to close and back, pins the thing as the strip does, at a
+// depth that's right or guessed wrong, and runs the app's own code on it end to end
+// (FrozenCamera and LiveShape, LiveTracker, LiveFlow, OutlineMath, SAMSegmenter), SAM's answer
+// landing two frames after the frame it was asked about, the flow off while the camera moves
+// fast, as on the phone:
+//
+//   arkit@true  cut once at its true depth, then ARKit alone
+//   arkit@far   cut once 40% too far (a raycast that hit the wall behind), then ARKit alone
+//   app@true    the app before its depth was put right, pinned at the true depth
+//   app@far     the same, pinned 40% too far
+//   app@near    the same, pinned 30% too near (ARKit's points on something in front)
+//   fix@far     the app now, pinned 40% too far: its depth put right by its looks (LiveShape.sighted)
+//   fix@near    ...pinned 30% too near
+//   lidar@far   ...and by LiDAR inside each cut, as on a Pro iPhone (LiveShape.setDepth)
+//
+// Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
+// frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
+// box at all, for slip (how far the outline moves against the box from one frame to the next,
+// which is what a person sees as jitter), and for how far off its depth is.
+//
+//   swiftc -O -o walk tools/walk/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,LiveWorld,LiveSeg,Analyzer,Detector}.swift
+//   LENSI_MODELS_DIR=<models> ./walk <scene dir> <out dir> <name> [frames, default 240]
+//
+// <scene dir> holds an ARKitScenes raw scan: vga_wide/*.png (640x480, 30 fps),
+// vga_wide_intrinsics/*.pincam, lowres_wide.traj, lowres_depth/*.png and the annotation json.
+import CoreGraphics
+import CoreImage
+import Foundation
+import ImageIO
+import simd
+
+let args = CommandLine.arguments
+guard args.count >= 4 else {
+  print("usage: walk <scene dir> <out dir> <name> [frames]")
+  exit(2)
+}
+let sceneDir = URL(fileURLWithPath: args[1])
+let outDir = URL(fileURLWithPath: args[2])
+let name = args[3]
+let windowLength = args.count > 4 ? Int(args[4]) ?? 240 : 240
+try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+// MARK: - The recording
+
+/// ARKitScenes' camera: world-to-camera rotation (axis-angle) and translation, OpenCV axes
+/// (x right, y down, z forward). As ARKit reports it: camera to world, x right, y up, z back.
+func arkitTransform(axisAngle a: simd_float3, translation t: simd_float3) -> simd_float4x4 {
+  let angle = simd_length(a)
+  let worldToCamera = angle > 1e-9 ? simd_float3x3(simd_quatf(angle: angle, axis: a / angle)) : matrix_identity_float3x3
+  let r = worldToCamera.transpose
+  let position = -(r * t)
+  return simd_float4x4(columns: (simd_float4(r.columns.0, 0), simd_float4(-r.columns.1, 0),
+                                 simd_float4(-r.columns.2, 0), simd_float4(position, 1)))
+}
+
+struct Pose {
+  let t: Double
+  let transform: simd_float4x4
+}
+
+/// lowres_wide.traj: one line per pose, `timestamp ax ay az tx ty tz`.
+func loadTrajectory(_ url: URL) -> [Pose] {
+  guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+  return text.split(separator: "\n").compactMap { line in
+    let v = line.split(separator: " ").compactMap { Double($0) }
+    guard v.count == 7 else { return nil }
+    return Pose(t: v[0], transform: arkitTransform(axisAngle: simd_float3(Float(v[1]), Float(v[2]), Float(v[3])),
+                                                    translation: simd_float3(Float(v[4]), Float(v[5]), Float(v[6]))))
+  }.sorted { $0.t < $1.t }
+}
+
+/// The pose at `t`, between the two recorded around it (rotation slerped, position lerped).
+func pose(at t: Double, in poses: [Pose]) -> simd_float4x4? {
+  guard let first = poses.first, let last = poses.last else { return nil }
+  if t <= first.t { return first.transform }
+  if t >= last.t { return last.transform }
+  var lo = 0, hi = poses.count - 1
+  while hi - lo > 1 {
+    let mid = (lo + hi) / 2
+    if poses[mid].t <= t { lo = mid } else { hi = mid }
+  }
+  let a = poses[lo], b = poses[hi]
+  let f = Float((t - a.t) / max(b.t - a.t, 1e-9))
+  let ra = simd_float3x3(columns: (simd_make_float3(a.transform.columns.0), simd_make_float3(a.transform.columns.1), simd_make_float3(a.transform.columns.2)))
+  let rb = simd_float3x3(columns: (simd_make_float3(b.transform.columns.0), simd_make_float3(b.transform.columns.1), simd_make_float3(b.transform.columns.2)))
+  let r = simd_float3x3(simd_slerp(simd_quatf(ra), simd_quatf(rb), f))
+  let p = simd_make_float3(a.transform.columns.3) * (1 - f) + simd_make_float3(b.transform.columns.3) * f
+  return simd_float4x4(columns: (simd_float4(r.columns.0, 0), simd_float4(r.columns.1, 0), simd_float4(r.columns.2, 0), simd_float4(p, 1)))
+}
+
+/// A .pincam: `width height fx fy cx cy`, in pixels of the (sideways) sensor image.
+func loadIntrinsics(_ url: URL) -> (simd_float3x3, CGSize)? {
+  guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+  let v = text.split(whereSeparator: { $0 == " " || $0 == "\n" }).compactMap { Float($0) }
+  guard v.count >= 6 else { return nil }
+  let k = simd_float3x3(columns: (simd_float3(v[2], 0, 0), simd_float3(0, v[3], 0), simd_float3(v[4], v[5], 1)))
+  return (k, CGSize(width: CGFloat(v[0]), height: CGFloat(v[1])))
+}
+
+struct Box {
+  let label: String
+  let centre: simd_float3
+  let corners: [simd_float3]
+}
+
+/// The hand-drawn 3D boxes: `data[].segments.obbAligned` (centroid, axesLengths, normalizedAxes
+/// as rows), in the trajectory's world.
+func loadBoxes(_ url: URL) -> [Box] {
+  guard let data = try? Data(contentsOf: url),
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let items = json["data"] as? [[String: Any]] else { return [] }
+  return items.compactMap { item in
+    guard let label = item["label"] as? String,
+          let obb = (item["segments"] as? [String: Any])?["obbAligned"] as? [String: Any],
+          let c = (obb["centroid"] as? [NSNumber])?.map({ $0.floatValue }), c.count == 3,
+          let size = (obb["axesLengths"] as? [NSNumber])?.map({ $0.floatValue }), size.count == 3,
+          let axes = (obb["normalizedAxes"] as? [NSNumber])?.map({ $0.floatValue }), axes.count == 9 else { return nil }
+    let centre = simd_float3(c[0], c[1], c[2])
+    let rows = (0..<3).map { i in simd_float3(axes[3 * i], axes[3 * i + 1], axes[3 * i + 2]) * (size[i] / 2) }
+    var corners: [simd_float3] = []
+    for sx in [Float(1), -1] { for sy in [Float(1), -1] { for sz in [Float(1), -1] {
+      corners.append(centre + rows[0] * sx + rows[1] * sy + rows[2] * sz)
+    } } }
+    return Box(label: label, centre: centre, corners: corners)
+  }
+}
+
+func listing(_ dir: URL, _ ext: String) -> [URL] {
+  ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+    .filter { $0.pathExtension.lowercased() == ext }
+}
+
+/// `<video>_<timestamp>.png` -> timestamp.
+func timestamp(_ url: URL) -> Double? {
+  url.deletingPathExtension().lastPathComponent.split(separator: "_").last.flatMap { Double($0) }
+}
+
+let poses = loadTrajectory(sceneDir.appendingPathComponent("lowres_wide.traj"))
+let boxes = listing(sceneDir, "json").first.map(loadBoxes) ?? []
+let pngs = listing(sceneDir.appendingPathComponent("vga_wide"), "png")
+  .compactMap { url in timestamp(url).map { (url: url, t: $0) } }
+  .sorted { $0.t < $1.t }
+let pincams = Dictionary(listing(sceneDir.appendingPathComponent("vga_wide_intrinsics"), "pincam")
+  .compactMap { url in timestamp(url).map { (String(format: "%.3f", $0), url) } }, uniquingKeysWith: { a, _ in a })
+/// LiDAR's depth for the frames (lowres_depth: 256 x 192, millimetres in 16 bits), by time.
+let depthFiles = listing(sceneDir.appendingPathComponent("lowres_depth"), "png")
+  .compactMap { url in timestamp(url).map { (url: url, t: $0) } }
+  .sorted { $0.t < $1.t }
+print("\(name): \(pngs.count) frames, \(poses.count) poses, \(boxes.count) boxes, \(pincams.count) lenses, \(depthFiles.count) depth maps")
+guard pngs.count > windowLength / 2, poses.count > 10, !boxes.isEmpty else {
+  print("\(name): not enough to go on")
+  exit(1)
+}
+
+/// Each frame's camera, as LensiARView makes one from an ARFrame.
+var cameras: [FrozenCamera?] = []
+var lastLens: (simd_float3x3, CGSize)?
+for f in pngs {
+  let lens = pincams[String(format: "%.3f", f.t)].flatMap(loadIntrinsics) ?? lastLens
+  lastLens = lens
+  guard let lens, let transform = pose(at: f.t, in: poses) else {
+    cameras.append(nil)
+    continue
+  }
+  cameras.append(FrozenCamera(transform: transform, intrinsics: lens.0, resolution: lens.1))
+}
+
+// MARK: - Which thing, which stretch
+
+func bounds(_ p: [CGPoint]) -> CGRect { LiveTracker.bounds(p) }
+
+/// The convex hull of some points (monotone chain), counter-clockwise.
+func hull(_ points: [CGPoint]) -> [CGPoint] {
+  let p = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+  guard p.count > 2 else { return p }
+  func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
+  var lower: [CGPoint] = [], upper: [CGPoint] = []
+  for q in p {
+    while lower.count >= 2, cross(lower[lower.count - 2], lower[lower.count - 1], q) <= 0 { lower.removeLast() }
+    lower.append(q)
+  }
+  for q in p.reversed() {
+    while upper.count >= 2, cross(upper[upper.count - 2], upper[upper.count - 1], q) <= 0 { upper.removeLast() }
+    upper.append(q)
+  }
+  return Array(lower.dropLast() + upper.dropLast())
+}
+
+/// A box as a camera sees it: how much of it is on the picture, how much of the picture it
+/// covers there, and how far it is; nil when any of it is behind the camera.
+func view(_ box: Box, _ camera: FrozenCamera?) -> (visible: CGFloat, area: CGFloat, distance: Float)? {
+  guard let camera, let p = camera.upright(box.corners) else { return nil }
+  let h = hull(p)
+  let whole = LiveTracker.area(h)
+  guard whole > 0 else { return nil }
+  let shown = LiveTracker.area(LiveTracker.clipped(h))
+  return (visible: shown / whole, area: shown, distance: simd_distance(camera.position, box.centre))
+}
+
+// The stretch, and the thing, where the camera goes furthest from far to close and back while
+// the thing stays at least partly in view, starting with all of it in view (that's when it's
+// pinned); solid fixtures first, as tools/pin. A shorter stretch if no long one will do.
+let solid: Set<String> = ["sink", "toilet", "washer", "dishwasher", "oven", "stove", "refrigerator", "cabinet",
+                          "bathtub", "tv_monitor", "fireplace", "shelf", "bed", "sofa"]
+var bestChoice: (start: Int, length: Int, box: Int, ratio: Float, close: Int, score: Float)?
+for length in [windowLength, windowLength * 3 / 4, windowLength / 2] where bestChoice == nil && pngs.count > length {
+  for start in stride(from: 0, to: pngs.count - length, by: 10) {
+    for (i, box) in boxes.enumerated() {
+      guard let first = view(box, cameras[start]), first.visible >= 0.9, first.area >= 0.03, first.area <= 0.5 else { continue }
+      var near = Float.greatestFiniteMagnitude, far: Float = 0, close = 0, fits = true
+      for f in start..<(start + length) {
+        guard let v = view(box, cameras[f]), v.visible >= 0.2, v.area >= 0.01 else {
+          fits = false
+          break
+        }
+        near = min(near, v.distance)
+        far = max(far, v.distance)
+        if v.visible < 0.9 || v.area > 0.45 { close += 1 }
+      }
+      guard fits, near > 0.1 else { continue }
+      let ratio = far / near
+      let label = box.label.lowercased().replacingOccurrences(of: " ", with: "_")
+        .replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: "/", with: "_")
+      let score = ratio * (1 + Float(close) / Float(length) * 3) * (solid.contains(label) ? 1.5 : 1)
+      if ratio >= 1.3, score > (bestChoice.map { $0.score } ?? -1) {
+        bestChoice = (start: start, length: length, box: i, ratio: ratio, close: close, score: score)
+      }
+    }
+  }
+}
+guard let best = bestChoice else {
+  print("\(name): no thing goes from far to close and back while staying in view")
+  exit(1)
+}
+let thing = boxes[best.box]
+let window = Array(best.start..<(best.start + best.length))
+var travel: Float = 0, turn: Float = 0
+for f in window.dropFirst() {
+  guard let a = cameras[f - 1], let b = cameras[f] else { continue }
+  travel += simd_distance(a.position, b.position)
+  let za = simd_normalize(simd_make_float3(a.transform.columns.2)), zb = simd_normalize(simd_make_float3(b.transform.columns.2))
+  turn += acos(min(max(simd_dot(za, zb), -1), 1))
+}
+let distances = window.map { view(thing, cameras[$0])?.distance ?? 0 }
+let visibles = window.map { view(thing, cameras[$0])?.visible ?? 0 }
+print(String(format: "%@: the %@, frames %ld-%ld (%.1f s); %.2f m to %.2f m away (x%.1f), partly off the picture or close up in %ld frames; the camera travels %.0f cm and turns %.0f degrees",
+             name, thing.label, window.first!, window.last!, pngs[window.last!].t - pngs[window.first!].t,
+             distances.min() ?? 0, distances.max() ?? 0, best.ratio, best.close, travel * 100, turn * 180 / .pi))
+
+/// Up, in the recording's world: the axis the hand-drawn boxes stand along (they're drawn
+/// upright), pointing from the things to the camera.
+func worldUp() -> simd_float3 {
+  let axes = [simd_float3(1, 0, 0), simd_float3(0, 1, 0), simd_float3(0, 0, 1)]
+  var votes = [0, 0, 0]
+  for box in boxes {
+    // Edges from corner 0: the box's three axes.
+    for k in [1, 2, 4] where k < box.corners.count {
+      let e = simd_normalize(box.corners[k] - box.corners[0])
+      for (i, a) in axes.enumerated() where abs(simd_dot(e, a)) > 0.99 { votes[i] += 1 }
+    }
+  }
+  let up = axes[votes.firstIndex(of: votes.max() ?? 0) ?? 1]
+  let above = window.compactMap { cameras[$0] }.reduce(Float(0)) { $0 + simd_dot($1.position - thing.centre, up) }
+  return above >= 0 ? up : -up
+}
+let up = worldUp()
+/// Which way up points in the recorded (sideways) image: (right, up) in the camera's x and y.
+let upInImage = window.compactMap { cameras[$0] }.reduce(simd_float2.zero) { sum, camera in
+  let r = simd_float3x3(columns: (simd_make_float3(camera.transform.columns.0), simd_make_float3(camera.transform.columns.1),
+                                  simd_make_float3(camera.transform.columns.2)))
+  let c = r.transpose * up
+  return sum + simd_float2(c.x, c.y)
+}
+
+// MARK: - Frames as the app sees them
+
+let ci = CIContext(options: [.useSoftwareRenderer: false])
+/// The sensor image turned upright, as LensiARView turns ARKit's buffer (`.right`).
+func upright(_ url: URL) -> CGImage? {
+  guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+        let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+  let turned = CIImage(cgImage: image).oriented(.right)
+  return ci.createCGImage(turned, from: turned.extent)
+}
+
+guard let sam = SAMSegmenter.shared else {
+  print("SAM models not found")
+  exit(1)
+}
+
+/// A polygon (0-1) filled into a w x h 0/1 mask, row 0 at the top.
+func raster(_ poly: [CGPoint], w: Int, h: Int) -> [UInt8] {
+  var bits = [UInt8](repeating: 0, count: w * h)
+  guard poly.count > 2 else { return bits }
+  bits.withUnsafeMutableBytes { raw in
+    guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                              space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
+    ctx.translateBy(x: 0, y: CGFloat(h))
+    ctx.scaleBy(x: 1, y: -1)
+    ctx.setFillColor(gray: 1, alpha: 1)
+    ctx.move(to: CGPoint(x: poly[0].x * CGFloat(w), y: poly[0].y * CGFloat(h)))
+    for p in poly.dropFirst() { ctx.addLine(to: CGPoint(x: p.x * CGFloat(w), y: p.y * CGFloat(h))) }
+    ctx.closePath()
+    ctx.fillPath()
+  }
+  return bits.map { $0 > 127 ? 1 : 0 }
+}
+
+func maskIoU(_ a: [UInt8], _ b: [UInt8]) -> Double {
+  var inter = 0, union = 0
+  for i in 0..<min(a.count, b.count) {
+    if a[i] != 0 && b[i] != 0 { inter += 1 }
+    if a[i] != 0 || b[i] != 0 { union += 1 }
+  }
+  return union == 0 ? 1 : Double(inter) / Double(union)
+}
+
+/// How much of `bits` lies inside `inside` (0...1; 1 when it's empty).
+func share(_ bits: [UInt8], inside: [UInt8]) -> Double {
+  var n = 0, hit = 0
+  for i in 0..<min(bits.count, inside.count) where bits[i] != 0 {
+    n += 1
+    if inside[i] != 0 { hit += 1 }
+  }
+  return n == 0 ? 1 : Double(hit) / Double(n)
+}
+
+func jerk(_ c: [CGPoint?]) -> Double {
+  var sum = 0.0, n = 0
+  for i in 2..<max(c.count, 2) {
+    guard let a = c[i - 2], let b = c[i - 1], let d = c[i] else { continue }
+    sum += Double(hypot(d.x - 2 * b.x + a.x, d.y - 2 * b.y + a.y))
+    n += 1
+  }
+  return n == 0 ? -1 : sum / Double(n)
+}
+
+/// How far `c` moves against `against` from one frame to the next (px): an outline sliding
+/// about on a thing that stands still.
+func slip(_ c: [CGPoint?], against: [CGPoint?]) -> Double {
+  var sum = 0.0, n = 0
+  for i in 1..<max(c.count, 1) {
+    guard let a = c[i - 1], let b = c[i], let p = against[i - 1], let q = against[i] else { continue }
+    sum += Double(hypot((b.x - q.x) - (a.x - p.x), (b.y - q.y) - (a.y - p.y)))
+    n += 1
+  }
+  return n == 0 ? -1 : sum / Double(n)
+}
+
+func mean(_ x: [Double]) -> Double { x.isEmpty ? -1 : x.reduce(0, +) / Double(x.count) }
+
+// MARK: - LiDAR
+
+/// One of LiDAR's depth maps, in metres (0: none), lying on its side as the sensor image does.
+struct DepthMap {
+  let width: Int
+  let height: Int
+  let metres: [Float]
+
+  /// The depth at an upright picture point (the nearest of its pixels); nil where there's none.
+  func at(upright u: CGPoint) -> Float? {
+    let s = FrozenCamera.sensor(u)
+    let x = Int(s.x * CGFloat(width)), y = Int(s.y * CGFloat(height))
+    guard x >= 0, y >= 0, x < width, y < height else { return nil }
+    let d = metres[y * width + x]
+    return d > 0 ? d : nil
+  }
+}
+
+/// A lowres_depth PNG: one 16-bit channel of millimetres. ImageIO hands the bytes over as the
+/// PNG has them or swapped; read the wrong way round, neighbours jump about, so whichever
+/// reading is smooth is the depth.
+func loadDepth(_ url: URL) -> DepthMap? {
+  guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+        let image = CGImageSourceCreateImageAtIndex(src, 0, nil),
+        image.bitsPerComponent == 16, image.bitsPerPixel == 16,
+        let provided = image.dataProvider?.data else { return nil }
+  let data = provided as Data
+  let w = image.width, h = image.height, row = image.bytesPerRow
+  guard w > 1, h > 0, data.count >= row * (h - 1) + w * 2 else { return nil }
+  var big = [Float](repeating: 0, count: w * h)
+  var little = big
+  data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+    for y in 0..<h {
+      for x in 0..<w {
+        let i = y * row + x * 2
+        let hi = UInt16(raw[i]), lo = UInt16(raw[i + 1])
+        big[y * w + x] = Float((hi << 8) | lo) / 1000
+        little[y * w + x] = Float((lo << 8) | hi) / 1000
+      }
+    }
+  }
+  func rough(_ v: [Float]) -> Float {
+    var sum: Float = 0
+    for y in 0..<h {
+      for x in 1..<w { sum += abs(v[y * w + x] - v[y * w + x - 1]) }
+    }
+    return sum
+  }
+  return DepthMap(width: w, height: h, metres: rough(big) <= rough(little) ? big : little)
+}
+
+/// LiDAR's depth map nearest in time to `t` (within 50 ms).
+func depthMap(at t: Double) -> DepthMap? {
+  guard !depthFiles.isEmpty else { return nil }
+  var lo = 0, hi = depthFiles.count - 1
+  while hi - lo > 1 {
+    let mid = (lo + hi) / 2
+    if depthFiles[mid].t <= t { lo = mid } else { hi = mid }
+  }
+  let nearest = abs(depthFiles[lo].t - t) <= abs(depthFiles[hi].t - t) ? depthFiles[lo] : depthFiles[hi]
+  return abs(nearest.t - t) < 0.05 ? loadDepth(nearest.url) : nil
+}
+
+// MARK: - The runs
+
+/// What the thing looks like from here, as SAM cuts it asked with its hand-drawn 3D box as this
+/// pose sees it (the part of the box on the picture, and a point well inside that): the outline
+/// it should have, near or far, whole or partly off the picture.
+func truthPrompt(_ camera: FrozenCamera, scale: CGSize) -> (point: CGPoint, box: CGRect)? {
+  guard let p = camera.upright(thing.corners) else { return nil }
+  let shown = LiveTracker.clipped(hull(p))
+  guard shown.count >= 3, LiveTracker.area(shown) > 0.002 else { return nil }
+  let r = bounds(shown)
+  let grown = r.insetBy(dx: -r.width * 0.05, dy: -r.height * 0.05).intersection(LiveTracker.picture)
+  guard !grown.isNull, grown.width > 0.01, grown.height > 0.01 else { return nil }
+  return (point: LiveTracker.interiorPoint(shown, scale: scale), box: grown)
+}
+
+/// A cut on its way back from SAM: made from frame `t`'s picture, it lands at frame `due`.
+struct Cut {
+  let due: Int
+  let t: Double
+  let camera: FrozenCamera
+  let world: [simd_float3]?
+  let whole: Bool
+  let depth: Float?
+  let smoothing: OutlineMath.Smoothing
+}
+
+final class Run {
+  let label: String
+  /// Where it's pinned: its true depth times this (1.4: a raycast through it that hit the wall
+  /// behind; 0.7: ARKit's points on something in front of it).
+  let start: Float
+  /// Cut once, then ARKit alone: no SAM after, no flow.
+  let once: Bool
+  /// Its depth put right by its looks (LiveShape.sighted), and by LiDAR inside each cut.
+  let sights: Bool
+  let lidar: Bool
+  var shape: LiveShape?
+  var pending: Cut?
+  var shown: [[CGPoint]] = []
+  var j: [Double] = []
+  var onBox: [Double] = []
+  var middles: [CGPoint?] = []
+  var depthRatio: [Double] = []
+  var cuts = 0, refused = 0, carried = 0, measured = 0
+
+  init(_ label: String, start: Float, once: Bool = false, sights: Bool = false, lidar: Bool = false) {
+    self.label = label
+    self.start = start
+    self.once = once
+    self.sights = sights
+    self.lidar = lidar
+  }
+}
+
+let runs = [
+  Run("arkit@true", start: 1, once: true),
+  Run("arkit@far", start: 1.4, once: true),
+  Run("app@true", start: 1),
+  Run("app@far", start: 1.4),
+  Run("app@near", start: 0.7),
+  Run("fix@far", start: 1.4, sights: true),
+  Run("fix@near", start: 0.7, sights: true),
+  Run("lidar@far", start: 1.4, sights: true, lidar: true),
+]
+/// SAM asked every 4th frame (7.5 times a second; LensiARView asks as often as the phone keeps
+/// up, at least 80 ms apart), its answer landing two frames (66 ms) after the frame it was asked about.
+let every = 4
+let latency = 2
+
+var reference: [[CGPoint]] = []
+var boxMiddles: [CGPoint?] = []
+var frameNames: [String] = []
+var lidarCheck: [Double] = []
+var fastFrames = 0
+var previous: (frame: LiveFlow.Frame, camera: FrozenCamera, t: Double)?
+var lastPose: (transform: simd_float4x4, t: Double)?
+var phoneTurn: Float = 0, phoneMove: Float = 0
+var size = CGSize(width: 480, height: 640)
+
+for (k, f) in window.enumerated() {
+  guard let camera = cameras[f], let image = upright(pngs[f].url) else { continue }
+  frameNames.append(pngs[f].url.lastPathComponent)
+  size = CGSize(width: image.width, height: image.height)
+  let w = Int(size.width), h = Int(size.height)
+  let t = pngs[f].t
+  try sam.prepare(image: image, id: "frame", force: true)
+  let flowFrame = LiveFlow.frame(image)
+
+  // How fast the phone itself turns and moves (LensiARView.trackPhone).
+  if let last = lastPose {
+    let dt = Float(t - last.t)
+    if dt > 0.001, dt < 0.5 {
+      let a = last.transform, m = camera.transform
+      let r = simd_float3x3(simd_make_float3(a.columns.0), simd_make_float3(a.columns.1), simd_make_float3(a.columns.2)).transpose
+        * simd_float3x3(simd_make_float3(m.columns.0), simd_make_float3(m.columns.1), simd_make_float3(m.columns.2))
+      let turned = acos(min(max((r[0][0] + r[1][1] + r[2][2] - 1) / 2, -1), 1))
+      let moved = simd_distance(simd_make_float3(a.columns.3), simd_make_float3(m.columns.3))
+      phoneTurn = phoneTurn * 0.6 + turned / dt * 0.4
+      phoneMove = phoneMove * 0.6 + moved / dt * 0.4
+    }
+  }
+  lastPose = (transform: camera.transform, t: t)
+  let fast = phoneTurn > LiveShape.fastTurn || phoneMove > LiveShape.fastMove
+  if fast { fastFrames += 1 }
+
+  // What it should look like from here.
+  let truthAsk = truthPrompt(camera, scale: size)
+  var truth: [CGPoint] = []
+  if let truthAsk {
+    let m = try sam.segment(id: "frame", points: [truthAsk.point], labels: [1], box: truthAsk.box)
+    if m.polygon.count > 2 { truth = OutlineMath.resample(m.polygon, scale: size) }
+  }
+  reference.append(truth)
+  let truthBits = raster(truth, w: w, h: h)
+  let boxBits = camera.upright(thing.corners).map { raster(hull($0), w: w, h: h) }
+  boxMiddles.append(camera.upright([thing.centre])?.first.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) })
+  let trueAhead = -simd_mul(camera.transform.inverse, simd_float4(thing.centre, 1)).z
+  let lidarMap = depthMap(at: t)
+  if let lidarMap, !truth.isEmpty, trueAhead > 0.05,
+     let d = LiveShape.depthInside(truth, depth: { lidarMap.at(upright: $0) }) {
+    lidarCheck.append(Double(d / trueAhead))
+  }
+
+  for run in runs {
+    // Between cuts, its own pixels (LensiARView.flowLive), not while the phone moves fast.
+    if !run.once, !fast, var shape = run.shape, shape.misses < 2, let previous, let flowFrame {
+      if shape.carry(from: previous.frame, previous.camera, at: previous.t, to: flowFrame, camera, at: t) { run.carried += 1 }
+      run.shape = shape
+    }
+    // A cut back from SAM (LensiARView.takeLive): blended in, and what it says about how far
+    // the thing is.
+    if let cut = run.pending, cut.due <= k {
+      run.pending = nil
+      if var shape = run.shape {
+        if let world = cut.world {
+          shape.take(world, at: cut.t, how: cut.smoothing, measure: !fast,
+                     seenFrom: run.sights && cut.whole ? cut.camera.position : nil)
+          if let depth = cut.depth {
+            shape.setDepth(depth, seenBy: cut.camera, weight: LiveShape.lidarWeight)
+            run.measured += 1
+          }
+        } else {
+          shape.misses += 1
+          shape.velocity *= 0.5
+        }
+        run.shape = shape
+      }
+    }
+    if k == 0 {
+      // Pinned from the strip (LensiARView.scrubLay): SAM's cut, laid on a plane facing the
+      // camera at the depth the phone took it to be, through a point well inside it.
+      guard truth.count > 2, trueAhead > 0.05 else {
+        print("\(name): SAM found nothing to pin in the first frame")
+        exit(1)
+      }
+      let middle = LiveTracker.interiorPoint(truth, scale: size)
+      let (origin, dir) = camera.ray(middle)
+      let plane = camera.withPlane(through: origin + dir * camera.range(depth: trueAhead * run.start, through: middle))
+      let laid = truth.compactMap { plane.onPlane($0) }
+      guard laid.count == truth.count else {
+        print("\(name): the first cut couldn't be laid in the world")
+        exit(1)
+      }
+      var shape = LiveShape(world: laid, at: t, follows: true)
+      shape.pinned = true
+      run.shape = shape
+    } else if !run.once, run.pending == nil, k % every == 0, let shape = run.shape {
+      // SAM asked where it should be now (LensiARView.segmentLive's follow): up close, about the
+      // part on the picture, and the whole outline goes where that part went.
+      let now = shape.placed(at: t)
+      let asking = LiveTracker.asking(still: shape.misses >= 2 || shape.still)
+      if let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) >= LiveTracker.minVisible,
+         let prompt = LiveTracker.prompt(for: predicted, scale: size, grow: asking.grow) {
+        let m = try sam.segment(id: "frame", points: [prompt.point], labels: [1], box: prompt.box, prior: predicted)
+        run.cuts += 1
+        var world: [simd_float3]?
+        var depth: Float?
+        if m.score >= 0.5, m.polygon.count > 2 {
+          let cut = OutlineMath.resample(m.polygon, scale: size)
+          if let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate) {
+            let plane = camera.withPlane(through: OutlineMath.centre(now))
+            let laid = ring.compactMap { plane.onPlane($0) }
+            if laid.count == ring.count { world = laid }
+            if run.lidar, let lidarMap { depth = LiveShape.depthInside(cut, depth: { lidarMap.at(upright: $0) }) }
+          } else {
+            run.refused += 1
+          }
+        }
+        run.pending = Cut(due: k + latency, t: t, camera: camera, world: world,
+                          whole: LiveTracker.visibleFraction(predicted) >= LiveTracker.wholeVisible,
+                          depth: depth, smoothing: asking.smoothing)
+      }
+    }
+    // What the screen shows (LensiARView.layoutLive): eased onto where it is.
+    var outline: [CGPoint] = []
+    var centre: simd_float3?
+    if var shape = run.shape {
+      let drawn = run.once ? shape.world : shape.draw(at: t)
+      run.shape = shape
+      outline = camera.upright(drawn) ?? []
+      centre = OutlineMath.centre(drawn)
+    }
+    run.shown.append(outline)
+    let bits = raster(outline, w: w, h: h)
+    if !truth.isEmpty { run.j.append(maskIoU(bits, truthBits)) }
+    if let boxBits, !outline.isEmpty { run.onBox.append(share(bits, inside: boxBits)) }
+    run.middles.append(centre.flatMap { camera.upright([$0])?.first }.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) })
+    if let centre, trueAhead > 0.05 {
+      let ahead = -simd_mul(camera.transform.inverse, simd_float4(centre, 1)).z
+      if ahead > 0 { run.depthRatio.append(Double(ahead / trueAhead)) }
+    }
+  }
+  if let flowFrame { previous = (frame: flowFrame, camera: camera, t: t) }
+}
+
+let lidarRatio = lidarCheck.isEmpty ? -1 : lidarCheck.sorted()[lidarCheck.count / 2]
+print(String(format: "%@: the phone moved fast in %ld of %ld frames; the 3D box's own lurch %.1f px; LiDAR inside the cut / the box's middle: %.2f (%ld frames)",
+             name, fastFrames, frameNames.count, jerk(boxMiddles), lidarRatio, lidarCheck.count))
+var runsOut: [[String: Any]] = []
+for run in runs {
+  let lost = run.j.isEmpty ? -1 : Double(run.j.filter { $0 < 0.5 }.count) / Double(run.j.count)
+  let depthOff = mean(run.depthRatio.map { abs(log($0)) })
+  let lastDepth = run.depthRatio.last ?? -1
+  let slipped = slip(run.middles, against: boxMiddles)
+  print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  depth off %.0f%% (ends x%.2f)  (%ld cuts, %ld refused, %ld carried, %ld measured)",
+               run.label.padding(toLength: 10, withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
+               slipped, jerk(run.middles), (exp(depthOff) - 1) * 100, lastDepth, run.cuts, run.refused, run.carried, run.measured))
+  runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
+                  "depthOff": depthOff, "lastDepth": lastDepth, "cuts": run.cuts, "refused": run.refused, "carried": run.carried,
+                  "measured": run.measured, "jPerFrame": run.j, "depthPerFrame": run.depthRatio,
+                  "outlines": run.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } }])
+}
+let summary: [String: Any] = [
+  "name": name, "thing": thing.label, "frames": frameNames.count, "frameNames": frameNames,
+  "first": window.first!, "seconds": pngs[window.last!].t - pngs[window.first!].t,
+  "nearest": Double(distances.min() ?? 0), "furthest": Double(distances.max() ?? 0), "closeFrames": best.close,
+  "distances": distances.map { Double($0) }, "visible": visibles.map { Double($0) },
+  "travelCm": Double(travel * 100), "turnDegrees": Double(turn * 180 / .pi), "fastFrames": fastFrames,
+  "lidarRatio": lidarRatio, "truthJerk": jerk(boxMiddles), "width": Int(size.width), "height": Int(size.height),
+  "upInImage": [Double(upInImage.x), Double(upInImage.y)],
+  "reference": reference.map { $0.flatMap { [Double($0.x), Double($0.y)] } }, "runs": runsOut,
+]
+let data = try JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys])
+try data.write(to: outDir.appendingPathComponent("\(name).json"))

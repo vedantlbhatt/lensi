@@ -309,6 +309,121 @@ func checkShape() -> Bool {
 }
 
 
+/// How far away a pinned thing is (LiveShape.meet, sighted, setRange, setDepth), on cameras
+/// with known answers: a 40 cm disc 2 m off, pinned at the wrong depth, looked at as a phone
+/// carried about looks at it.
+func checkDepth() -> Bool {
+  var failures: [String] = []
+  func expect(_ condition: Bool, _ what: String) { if !condition { failures.append(what) } }
+  let k = simd_float3x3(columns: (simd_float3(1450, 0, 0), simd_float3(0, 1452, 0), simd_float3(962.5, 718.3, 1)))
+  /// A camera at `p` looking at `target` (ARKit's axes: -z ahead, y up).
+  func camera(at p: simd_float3, looking target: simd_float3) -> FrozenCamera {
+    let back = simd_normalize(p - target)
+    let right = simd_normalize(simd_cross(simd_float3(0, 1, 0), back))
+    let upward = simd_cross(back, right)
+    let m = simd_float4x4(columns: (simd_float4(right, 0), simd_float4(upward, 0), simd_float4(back, 0), simd_float4(p, 1)))
+    return FrozenCamera(transform: m, intrinsics: k, resolution: CGSize(width: 1920, height: 1440))
+  }
+  let target = simd_float3(0, 1, -2)
+  let disc = (0..<64).map { i -> simd_float3 in
+    let a = Float(i) / 64 * 2 * .pi
+    return target + simd_float3(0.2 * cos(a), 0.2 * sin(a), 0)
+  }
+  /// What `seen` cuts of the disc, laid on a plane facing it through `anchor` (LensiARView's way).
+  func cut(_ seen: FrozenCamera, through anchor: simd_float3) -> [simd_float3]? {
+    guard let picture = seen.upright(disc) else { return nil }
+    let plane = seen.withPlane(through: anchor)
+    let laid = picture.compactMap { plane.onPlane($0) }
+    return laid.count == picture.count ? laid : nil
+  }
+  func look(_ seen: FrozenCamera, of thing: [simd_float3]) -> LiveShape.Sight {
+    let middle = OutlineMath.centre(thing)
+    let range = simd_distance(middle, seen.position)
+    return LiveShape.Sight(origin: seen.position, toward: (middle - seen.position) / range, size: OutlineMath.spread(thing) / range)
+  }
+  let home = simd_float3(0, 1, 0)
+  let toward = simd_normalize(target - home)
+
+  // Steps sideways: the looks meet 2 m off.
+  let sideways = [-0.2, -0.1, 0, 0.1, 0.2].map { (x: Float) in look(camera(at: home + simd_float3(x, 0, 0), looking: target), of: disc) }
+  let lastSide = camera(at: home + simd_float3(0.2, 0, 0), looking: target)
+  let sideRange = LiveShape.meet(sideways, along: simd_normalize(target - lastSide.position), from: lastSide.position)
+  let sideWant = simd_distance(target, lastSide.position)
+  expect(sideRange.map { abs($0 / sideWant - 1) < 0.03 } ?? false, "steps sideways: \(String(describing: sideRange)) m, not \(sideWant)")
+  // Steps straight back, from 2 m to 3.5 m: only how big it looks says how far it is.
+  let back = (0..<12).map { (i: Int) in look(camera(at: home + simd_float3(0, 0, 1.5 * Float(i) / 11), looking: target), of: disc) }
+  let lastBack = home + simd_float3(0, 0, 1.5)
+  let backRange = LiveShape.meet(back, along: toward, from: lastBack)
+  let backWant = simd_distance(target, lastBack)
+  expect(backRange.map { abs($0 / backWant - 1) < 0.05 } ?? false, "steps back: \(String(describing: backRange)) m, not \(backWant)")
+  // From one place: no telling.
+  let still = Array(repeating: look(camera(at: home, looking: target), of: disc), count: 5)
+  expect(LiveShape.meet(still, along: toward, from: home) == nil, "looks from one place say how far it is")
+  // It walks across, and to and fro, in front of a phone held about still: its looks don't
+  // meet anywhere. (A thing moving straight while the phone moves straight can look just like
+  // a still one at another depth; that's no worse than the guess it started with.)
+  var moving: [LiveShape.Sight] = []
+  for i in 0..<6 {
+    let shifted = disc.map { $0 + simd_float3(0.2 * Float(i), 0, -0.3 * Float(i % 2)) }
+    let seen = camera(at: home + simd_float3(0.01 * Float(i % 3), 0, 0), looking: target)
+    moving.append(look(seen, of: shifted))
+  }
+  expect(LiveShape.meet(moving, along: toward, from: home) == nil, "a thing that moved about still met somewhere")
+
+  // Moving it along the lines of sight from a camera changes nothing that camera sees.
+  let from = camera(at: home, looking: target)
+  if let laid = cut(from, through: home + toward * 2.8), let before = from.upright(laid) {
+    var shape = LiveShape(world: laid, at: 0, follows: true)
+    shape.setRange(2, from: from.position, weight: 1)
+    let after = from.upright(shape.world) ?? []
+    let moved = zip(before, after).map { hypot(($0.x - $1.x) * 1440, ($0.y - $1.y) * 1920) }.max() ?? 1
+    expect(moved < 0.05, "put nearer, it moved \(moved) px in the picture")
+    expect(abs(simd_distance(OutlineMath.centre(shape.world), from.position) - 2) < 0.01, "put 2 m off: \(simd_distance(OutlineMath.centre(shape.world), from.position))")
+    var measured = LiveShape(world: laid, at: 0, follows: true)
+    measured.setDepth(2, seenBy: from, weight: 1)
+    let ahead = -simd_mul(from.transform.inverse, simd_float4(OutlineMath.centre(measured.world), 1)).z
+    expect(abs(ahead - 2) < 0.01, "measured 2 m ahead, put \(ahead) m ahead")
+  } else {
+    failures.append("couldn't lay the disc 2.8 m off")
+  }
+
+  // Pinned 40% too far, then carried about as a phone is (sideways, back, a little up and
+  // down, 8 cuts a second): the looks put it right.
+  for (name, wrong) in [("too far", Float(1.4)), ("too near", Float(0.7))] {
+    guard let first = cut(from, through: home + toward * 2 * wrong) else {
+      failures.append("couldn't pin the disc \(name)")
+      continue
+    }
+    var shape = LiveShape(world: first, at: 0, follows: true)
+    shape.pinned = true
+    var last = from
+    for i in 1...24 {
+      let s = Float(i) / 24
+      let at = home + simd_float3(0.3 * sin(s * 2 * .pi), 0.04 * sin(s * 9), 0.4 * s)
+      last = camera(at: at, looking: target)
+      guard let fresh = cut(last, through: OutlineMath.centre(shape.world)) else { continue }
+      shape.take(fresh, at: Double(i) * 0.125, how: .still, measure: true, seenFrom: last.position)
+    }
+    let got = simd_distance(OutlineMath.centre(shape.world), last.position)
+    let want = simd_distance(target, last.position)
+    expect(abs(got / want - 1) < 0.05, "pinned \(name), carried about: \(got) m off, not \(want) m (\(shape.sights.count) looks)")
+  }
+
+  // LiDAR's depth inside a cut: the median, holes and the edge of the picture left out.
+  let square = [CGPoint(x: 0.3, y: 0.3), CGPoint(x: 0.7, y: 0.3), CGPoint(x: 0.7, y: 0.7), CGPoint(x: 0.3, y: 0.7)]
+  let inside = LiveShape.depthInside(square) { p in p.x < 0.35 ? nil : (p.y < 0.4 ? 3 : 1.5) }
+  expect(inside == 1.5, "depth inside a cut: \(String(describing: inside))")
+  let offEdge = [CGPoint(x: 0.8, y: 0.4), CGPoint(x: 1.4, y: 0.4), CGPoint(x: 1.4, y: 0.6), CGPoint(x: 0.8, y: 0.6)]
+  let edgeDepth = LiveShape.depthInside(offEdge) { p in p.x > 1 ? 9 : 2 }
+  expect(edgeDepth == 2, "depth inside a cut half off the picture: \(String(describing: edgeDepth))")
+  if failures.isEmpty {
+    print("depth: ok")
+    return true
+  }
+  for f in failures { print("FAIL depth: \(f)") }
+  return false
+}
+
 /// `image` drawn at `w` x `h`, moved `dx` px right and `dy` px down (top-left origin).
 private func drawn(_ image: CGImage, _ w: Int, _ h: Int, dx: CGFloat, dy: CGFloat) -> CGImage? {
   guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
