@@ -244,6 +244,73 @@ enum LiveFlow {
     }
   }
 
+  /// `outline` in frame `a` carried into frame `b` bending with the thing: carried whole first
+  /// (`carry`: moved, turned, scaled as one), then each point follows a point `inset` pixels
+  /// inside the edge there, tracked on its own (and back again, to be sure of it), so an arm or a
+  /// leg that moves differently from the body takes its part of the outline with it. What each
+  /// point moves beyond the whole outline's carry is smoothed along the edge and kept within
+  /// `most` of the outline's size; a point that couldn't be followed keeps the whole carry. Nil
+  /// when the outline can't be carried at all.
+  static func bend(_ outline: [CGPoint], from a: Frame, to b: Frame, inset: Float = 3, most: Float = 0.2) -> [CGPoint]? {
+    guard let whole = carry(outline, from: a, to: b) else { return nil }
+    let n = outline.count
+    guard n >= 8, whole.count == n else { return whole }
+    let sw = Float(a.w), sh = Float(a.h)
+    let p = outline.map { SIMD2<Float>(Float($0.x) * sw, Float($0.y) * sh) }
+    let c = whole.map { SIMD2<Float>(Float($0.x) * sw, Float($0.y) * sh) }
+    let middle = p.reduce(SIMD2<Float>.zero, +) / Float(n)
+    let size = (p.map { simd_length_squared($0 - middle) }.reduce(0, +) / Float(n)).squareRoot()
+    // Too small to bend (a few pixels across here): carried whole.
+    guard size > 4 * inset else { return whole }
+    var area: Float = 0
+    for i in 0..<n {
+      let q = p[(i + 1) % n]
+      area += p[i].x * q.y - q.x * p[i].y
+    }
+    let inward: Float = area > 0 ? 1 : -1
+    let inner: [SIMD2<Float>] = (0..<n).map { i in
+      let t = p[(i + 1) % n] - p[(i + n - 1) % n]
+      let len = simd_length(t)
+      return len > 1e-3 ? p[i] + SIMD2<Float>(-t.y, t.x) / len * inward * inset : p[i]
+    }
+    let there = track(inner, from: a, to: b)
+    var found: [Int] = []
+    var ahead: [SIMD2<Float>] = []
+    for (i, q) in there.enumerated() {
+      if let q {
+        found.append(i)
+        ahead.append(q)
+      }
+    }
+    guard found.count >= n / 4 else { return whole }
+    let back = track(ahead, from: b, to: a)
+    // Each point's move beyond the whole outline's, where it came home again.
+    var extra = [SIMD2<Float>](repeating: .zero, count: n)
+    var sure = [Float](repeating: 0, count: n)
+    for (j, i) in found.enumerated() {
+      guard let home = back[j], simd_distance(home, inner[i]) < 1 else { continue }
+      extra[i] = (ahead[j] - inner[i]) - (c[i] - p[i])
+      sure[i] = 1
+    }
+    // Smoothed along the edge (Gaussian, two points either way), only from the points that were sure.
+    let sigma: Float = 2, r = 6
+    let cap = most * size
+    return (0..<n).map { i in
+      var sum = SIMD2<Float>.zero, weight: Float = 0
+      for k in -r...r {
+        let j = ((i + k) % n + n) % n
+        let w = exp(-0.5 * Float(k * k) / (sigma * sigma)) * sure[j]
+        sum += extra[j] * w
+        weight += w
+      }
+      var e = weight > 0.5 ? sum / weight : .zero
+      let len = simd_length(e)
+      if len > cap { e *= cap / len }
+      let q = c[i] + e
+      return CGPoint(x: CGFloat(q.x / sw), y: CGFloat(q.y / sh))
+    }
+  }
+
   static func median(_ v: [Float]) -> Float {
     guard !v.isEmpty else { return 0 }
     let s = v.sorted()

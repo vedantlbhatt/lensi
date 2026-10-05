@@ -24,7 +24,10 @@
 //   live       EdgeTAM as the phone runs it: the footage at its own frame rate (TRACK_FPS, 24), a
 //              look started only once the last answer is in and 50 ms after the last start, each
 //              answer ready 60 ms after its frame and moved on from there to the frame shown by
-//              the flow (the phone moves it by ARKit or the gyro); live100 the same 100 ms late
+//              the flow (the phone moves it by ARKit or the gyro); live100 the same 100 ms late;
+//              livebend with the outline bent by the flow (LiveFlow.bend: each point followed on
+//              its own) rather than moved whole; livewhole and livebendwhole taking each answer as
+//              it is rather than gliding into it (all four from the same EdgeTAM looks)
 //   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -541,20 +544,43 @@ func edgeError(_ outline: [CGPoint], _ truth: [SIMD2<Float>], w: Int, h: Int) ->
 /// `latency` seconds after that frame and is used from the first frame after that. Each answer is
 /// kept in its own frame's place and moved on to the frame shown, by the thing's own pixels here
 /// (LiveFlow; the phone has ARKit or the gyro), and glided into the last one moved to its frame.
-final class EdgeLiveRunner: Runner {
+/// One EdgeTAM run several live runners with the same timing share: each look's answer once.
+final class EdgeLiveRun {
   let tracker: EdgeTAMTracker
+  private var at = -1
+  private var last: EdgeTAMTracker.Cut?
+
+  init(_ tracker: EdgeTAMTracker) { self.tracker = tracker }
+
+  func cut(_ f: Int, _ picture: EdgeTAMTracker.Encoded, box: CGRect) throws -> EdgeTAMTracker.Cut {
+    if let last, f == at { return last }
+    let cut = try f == 0 ? tracker.start(picture, box: box) : tracker.step(picture)
+    last = cut
+    at = f
+    return cut
+  }
+}
+
+final class EdgeLiveRunner: Runner {
+  let run: EdgeLiveRun
   let latency: Double
   let fps: Double
+  /// Between answers the outline is bent with the thing (LiveFlow.bend) rather than moved whole.
+  let bends: Bool
+  /// Each answer glided into the last (OutlineMath.glide), or taken as it is.
+  let glides: Bool
   private var flows: [Int: LiveFlow.Frame] = [:]
   private var pending: (frame: Int, ready: Double, cut: EdgeTAMTracker.Cut)?
   private var lastStart = -Double.infinity
   private var stored: [CGPoint]?
   private var storedFrame = 0
 
-  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, tracker: EdgeTAMTracker) {
-    self.tracker = tracker
+  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: Bool = false, glides: Bool = true) {
+    self.run = run
     self.latency = latency
     self.fps = fps
+    self.bends = bends
+    self.glides = glides
     super.init(label, tracking: true, smoothing: nil, every: 1, flow: flow, scaling: true)
   }
 
@@ -563,7 +589,8 @@ final class EdgeLiveRunner: Runner {
     guard a < b else { return o }
     var now = o
     for k in a..<b {
-      if let f0 = flows[k], let f1 = flows[k + 1], let next = LiveFlow.carry(now, from: f0, to: f1) { now = next }
+      guard let f0 = flows[k], let f1 = flows[k + 1] else { continue }
+      if let next = bends ? LiveFlow.bend(now, from: f0, to: f1) : LiveFlow.carry(now, from: f0, to: f1) { now = next }
     }
     return now
   }
@@ -578,7 +605,7 @@ final class EdgeLiveRunner: Runner {
       if p.cut.visible {
         let px = { (q: CGPoint) in simd_float3(Float(q.x * scale.width), Float(q.y * scale.height), 0) }
         let ring = OutlineMath.resample(p.cut.outline, scale: scale).map(px)
-        let last = stored.map { carried($0, from: storedFrame, to: p.frame).map(px) }
+        let last = glides ? stored.map { carried($0, from: storedFrame, to: p.frame).map(px) } : nil
         let glided = OutlineMath.glide(last, ring).map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
         stored = glided
         storedFrame = p.frame
@@ -590,7 +617,7 @@ final class EdgeLiveRunner: Runner {
     }
     if f == 0, let picture = edgeFrame {
       // Pinned on this frame: the strip's outline is there at once.
-      let cut = try tracker.start(picture, box: seedBox)
+      let cut = try run.cut(f, picture, box: seedBox)
       cuts += 1
       if cut.visible {
         stored = OutlineMath.resample(cut.outline, scale: scale)
@@ -598,7 +625,7 @@ final class EdgeLiveRunner: Runner {
       }
       lastStart = t
     } else if pending == nil, t - lastStart > 0.05, let picture = edgeFrame {
-      let cut = try tracker.step(picture)
+      let cut = try run.cut(f, picture, box: seedBox)
       cuts += 1
       pending = (frame: f, ready: t + latency, cut: cut)
       lastStart = t
@@ -629,10 +656,14 @@ let runners = [
 ] + (edgeModels.flatMap { models -> [Runner]? in
   guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models),
         let c = try? EdgeTAMTracker(models: models), let d = try? EdgeTAMTracker(models: models) else { return nil }
+  let live = EdgeLiveRun(c)
   return [
     EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b),
-    EdgeLiveRunner("live", latency: 0.06, fps: fps, flow: flow, tracker: c),
-    EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, tracker: d),
+    EdgeLiveRunner("live", latency: 0.06, fps: fps, flow: flow, run: live),
+    EdgeLiveRunner("livebend", latency: 0.06, fps: fps, flow: flow, run: live, bends: true),
+    EdgeLiveRunner("livewhole", latency: 0.06, fps: fps, flow: flow, run: live, glides: false),
+    EdgeLiveRunner("livebendwhole", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, glides: false),
+    EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, run: EdgeLiveRun(d)),
   ]
 } ?? [])
 var truthWobble: [Double] = []

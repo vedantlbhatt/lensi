@@ -15,6 +15,8 @@
 // at their own times (EDGETRACK_FPS, 30), EdgeTAM started on a frame only when the app would
 // start it, each answer ready that many milliseconds after its frame and drawn from the first
 // frame after that, and the outline moved between answers. Writes each frame's "live" outline.
+// EDGETRACK_BEND=1 bends it between answers (LiveFlow.bend) rather than moving it whole;
+// EDGETRACK_GLIDE=0 takes each answer as it is rather than gliding into it.
 import CoreImage
 import Foundation
 import ImageIO
@@ -53,7 +55,7 @@ func r(_ v: Double, _ places: Double = 100000) -> Double { (v * places).rounded(
 /// has turned since (the gyro); a clip has no gyro, so here it's moved by the thing's own pixels
 /// (LiveFlow, the app's carry for things ARKit doesn't hold), frame by frame. Each answer is
 /// glided into the last one, moved on to the answer's frame (OutlineMath.glide, in pixels).
-func live(latency: Double, fps: Double) throws -> [String: Any] {
+func live(latency: Double, fps: Double, bends: Bool, glides: Bool) throws -> [String: Any] {
   struct Pending {
     let frame: Int
     let ready: Double
@@ -66,7 +68,8 @@ func live(latency: Double, fps: Double) throws -> [String: Any] {
     guard a < b else { return o }
     var now = o
     for k in a..<b {
-      if let f0 = flows[k], let f1 = flows[k + 1], let next = LiveFlow.carry(now, from: f0, to: f1) { now = next }
+      guard let f0 = flows[k], let f1 = flows[k + 1] else { continue }
+      if let next = bends ? LiveFlow.bend(now, from: f0, to: f1) : LiveFlow.carry(now, from: f0, to: f1) { now = next }
     }
     return now
   }
@@ -99,7 +102,7 @@ func live(latency: Double, fps: Double) throws -> [String: Any] {
       if p.cut.visible {
         let px = { (q: CGPoint) in simd_float3(Float(q.x * w), Float(q.y * h), 0) }
         let ring = OutlineMath.resample(p.cut.outline, scale: size).map(px)
-        let last = stored.map { carried($0, from: storedFrame, to: p.frame).map(px) }
+        let last = glides ? stored.map { carried($0, from: storedFrame, to: p.frame).map(px) } : nil
         let glided = OutlineMath.glide(last, ring).map { CGPoint(x: CGFloat($0.x) / w, y: CGFloat($0.y) / h) }
         stored = glided
         storedFrame = p.frame
@@ -145,7 +148,8 @@ func live(latency: Double, fps: Double) throws -> [String: Any] {
 
 if let ms = Double(ProcessInfo.processInfo.environment["EDGETRACK_LIVE_MS"] ?? "") {
   let fps = Double(ProcessInfo.processInfo.environment["EDGETRACK_FPS"] ?? "") ?? 30
-  let result = try live(latency: ms / 1000, fps: fps)
+  let env = ProcessInfo.processInfo.environment
+  let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] == "1", glides: env["EDGETRACK_GLIDE"] != "0")
   try JSONSerialization.data(withJSONObject: result).write(to: URL(fileURLWithPath: outPath))
   exit(0)
 }
