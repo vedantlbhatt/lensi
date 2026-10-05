@@ -162,6 +162,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// size: drawn, it's moved on by how the phone has turned since (UltraWideCamera.warp).
   private var wideTimes: [String: CFTimeInterval] = [:]
   private var wideSize = CGSize(width: 1080, height: 1920)
+  /// Things pinned at 0.5x, where there's no world to lay them in: followed on the ultra-wide by
+  /// EdgeTAM from the frame they were found in, and laid in the world from their first cut once
+  /// ARKit is back at 1x (where they're at, measured inside the cut, or a guess its lines of
+  /// sight put right: LiveShape.sight). Hidden at 1x until then.
+  private var flatPins: Set<String> = []
+  /// The strip at 0.5x: the frame its things were found in (their outlines are on it), and the
+  /// highlighted one's layer.
+  private var wideScrubFrame: (buffer: CVPixelBuffer, t: CFTimeInterval)?
+  private var wideScrubLayer: FlatOutline?
   /// 0.5x is there: ARKit's own ultra-wide, or the ultra-wide camera on its own.
   private var hasUltraWide: Bool { ultraWideFormat != nil || UltraWideCamera.available }
   private var recorder: Recorder?
@@ -339,6 +348,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     var smoothing: OutlineMath.Smoothing = .standard
     /// Followed by EdgeTAM (`box` starts it; after that it needs no prompt), not cut by SAM.
     var edge = false
+    /// Pinned at 0.5x and not yet in the world: its first cut at 1x is laid where it's measured
+    /// to be (`anchor` means nothing yet).
+    var unplaced = false
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -429,6 +441,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let box = visible.count >= 3 ? LiveTracker.bounds(visible) : nil
         prompts.append(LivePrompt(key: key, point: nil, box: box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
                                   follows: true, smoothing: LiveTracker.asking(still: shape.still).smoothing, edge: true))
+      }
+      // Pinned at 0.5x: EdgeTAM is already following them; their first cut here lays them in the world.
+      for key in pinOrder where flatPins.contains(key) {
+        prompts.append(LivePrompt(key: key, point: nil, box: nil, part: false, anchor: .zero, predicted: nil,
+                                  follows: true, edge: true, unplaced: true))
       }
     } else if !held.isEmpty {
       let ask = min(prompts.isEmpty ? 2 : 1, held.count)
@@ -569,7 +586,20 @@ final class LensiARView: ExpoView, ARSessionDelegate {
          let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose) {
         ring = whole
       }
-      let plane = camera.withPlane(through: p.anchor)
+      var anchor = p.anchor
+      if p.unplaced {
+        // Pinned at 0.5x, it has no place in the world yet: where it's measured to be (LiDAR, ARKit's
+        // points on it), else a metre off along its middle's line of sight, which its lines of
+        // sight put right as it's followed (LiveShape.sight).
+        let middle = Self.middle(seen)
+        let (origin, dir) = camera.ray(middle)
+        if let d = measured?.inside(seen) ?? camera.medianDepth(of: points, inside: seen) {
+          anchor = origin + dir * camera.range(depth: d, through: middle)
+        } else {
+          anchor = origin + dir
+        }
+      }
+      let plane = camera.withPlane(through: anchor)
       let world = ring.compactMap { plane.onPlane($0) }
       guard world.count == ring.count else { continue }
       var depth: (metres: Float, weight: Float)?
@@ -664,7 +694,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           outlines.addChildNode(node)
           liveLayers[key] = node
           var shape = LiveShape(world: world, at: t, follows: prompt.follows)
-          if let pin = pins[key] {
+          if prompt.unplaced, let pin = pins[key] {
+            // Pinned at 0.5x: in the world now, a pinned thing like any other.
+            shape.pinned = true
+            shape.tagOffset = .zero
+            shape.depthKnown = cut.depth != nil
+            pin.world = OutlineMath.centre(world)
+            flatPins.remove(key)
+          } else if let pin = pins[key] {
             let offset = pin.world - OutlineMath.centre(world)
             shape.tagOffset = simd_length(offset) < 0.5 ? offset : .zero
           }
@@ -888,6 +925,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     } else {
       for (_, l) in wideLayers { l.removeFromSuperlayer() }
       wideLayers = [:]
+      wideScrubLayer?.removeFromSuperlayer()
+      wideScrubLayer = nil
+      wideScrubFrame = nil
       wideOutlines = [:]
       wideTimes = [:]
       // Pinned things' tags go back to SceneKit, with their outlines.
@@ -912,7 +952,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// steadied into what's drawn (`layoutWide`).
   private func wideFrame(_ buffer: CVPixelBuffer, at t: CFTimeInterval) {
     guard wideMode, liveSegments, !samBusy, !scrubBusy, let edge = edgeTAM, t - lastWideTime > 0.05 else { return }
-    let held = pinOrder.filter { liveShapes[$0]?.pinned == true }
+    let held = pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) }
     guard !held.isEmpty else { return }
     samBusy = true
     lastWideTime = t
@@ -967,10 +1007,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   /// Every display frame at 0.5x without ARKit: each pinned thing's outline flat over the
-  /// ultra-wide's picture, its tag just above it.
+  /// ultra-wide's picture, its tag just above it, and the strip's highlighted thing.
   private func layoutWide() {
+    layoutWideScrub()
     guard let wide else { return }
-    let held = Set(pinOrder.filter { liveShapes[$0]?.pinned == true })
+    let held = Set(pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) })
     for (key, l) in wideLayers where !held.contains(key) {
       l.removeFromSuperlayer()
       wideLayers[key] = nil
@@ -1012,6 +1053,32 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       pin.label.center = CGPoint(x: min(max(box.midX, half), bounds.width - half),
                                  y: min(max(box.minY - h - 6, visible.minY + h), max(visible.minY + h, visible.maxY - h)))
     }
+  }
+
+  /// The strip's highlighted thing at 0.5x, bold in the lens colour, moved on from the frame it
+  /// was found in by how the phone has turned since (a pinned one is drawn as its pin).
+  private func layoutWideScrub() {
+    guard wideMode, let wide, let found = wideScrubFrame, let i = scrubIndex, scrubThings.indices.contains(i),
+          scrubThings[i].pinId == nil, let flat = scrubThings[i].flat else {
+      wideScrubLayer?.isHidden = true
+      return
+    }
+    let highlight: FlatOutline
+    if let existing = wideScrubLayer {
+      highlight = existing
+    } else {
+      highlight = FlatOutline()
+      layer.insertSublayer(highlight, above: wide.preview)
+      wideScrubLayer = highlight
+    }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+    highlight.frame = bounds
+    let now = wide.latest?.t ?? CACurrentMediaTime()
+    let moved = wide.warp(flat, from: found.t, to: now, size: wideSize)
+    highlight.draw(OutlineMath.curvePath(moved.map { zoomed(wide.layerPoint($0)) }), color: accent.cgColor, width: 2.5, fillOpacity: 0.16)
+    highlight.isHidden = false
   }
 
   /// Swaps the camera under the same session; the world (and every pin) carries on.
@@ -1234,6 +1301,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   }
 
   private func layoutPins() {
+    if wideMode {
+      layoutWide()
+      return
+    }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
@@ -1241,6 +1312,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let visible = bounds.inset(by: pinInsets)
     for id in pinOrder {
       guard let pin = pins[id] else { continue }
+      // Pinned at 0.5x and not yet in the world.
+      if flatPins.contains(id) {
+        pin.setHidden(true)
+        continue
+      }
       // A guide tag rides with its part when the part moves, and a pinned thing's with the
       // thing (their live outlines say where).
       let held = liveShapes[id]?.pinned == true
@@ -1502,6 +1578,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let depthKnown: Bool
     /// Its pin once it's pinned (holding on it again does nothing).
     var pinId: String?
+    /// At 0.5x: its outline on the ultra-wide's picture (upright 0…1), and no world.
+    var flat: [CGPoint]? = nil
   }
 
   /// The strip's highlighted thing, the only one drawn while a finger is on it.
@@ -1520,8 +1598,16 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   func scrubStart(top: Double, bottom: Double, done: @escaping ([[String: Any]]) -> Void) {
     scrubEnd()
     let session = scrubSession
-    // At 0.5x without ARKit there's no world to pin things in (they're pinned at 1x and up).
-    guard bounds.width > 0, !wideMode, let frame = sceneView.session.currentFrame else {
+    guard bounds.width > 0 else {
+      done([])
+      return
+    }
+    // At 0.5x without ARKit: things on the ultra-wide's picture.
+    if wideMode {
+      scrubStartWide(top: top, bottom: bottom, session: session, done: done)
+      return
+    }
+    guard let frame = sceneView.session.currentFrame else {
       done([])
       return
     }
@@ -1641,8 +1727,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// Pins thing `index`: a tag, an outline SAM keeps on it from now on, and its picture to JS
   /// (onSelect) to be named, as a tap's was. Answers its pin's id.
   func scrubPin(_ index: Int) -> String? {
-    guard scrubThings.indices.contains(index), let frame = sceneView.session.currentFrame else { return nil }
+    guard scrubThings.indices.contains(index) else { return nil }
     if let id = scrubThings[index].pinId { return id }
+    if scrubThings[index].flat != nil { return scrubPinWide(index) }
+    guard let frame = sceneView.session.currentFrame else { return nil }
     let thing = scrubThings[index]
     let id = UUID().uuidString
     let centre = OutlineMath.centre(thing.world)
@@ -1697,6 +1785,124 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     scrubNode = nil
     scrubThings = []
     scrubIndex = nil
+    wideScrubLayer?.isHidden = true
+    wideScrubFrame = nil
+  }
+
+  /// The strip at 0.5x without ARKit: SAM's parts on the ultra-wide's picture, between `top` and
+  /// `bottom` on screen, outlines on that picture (there's no world to lay them in), in order
+  /// across the screen. Pinned, one is followed there by EdgeTAM (`scrubPinWide`).
+  private func scrubStartWide(top: Double, bottom: Double, session: Int, done: @escaping ([[String: Any]]) -> Void) {
+    guard let wide, let latest = wide.latest, let sam else {
+      done([])
+      return
+    }
+    let buffer = latest.buffer
+    let size = CGSize(width: CVPixelBufferGetHeight(buffer), height: CVPixelBufferGetWidth(buffer)) // upright
+    let lo = CGFloat(max(0, top))
+    let hi = max(lo + 1, min(bounds.height, CGFloat(bottom)))
+    let a = wide.uprightPoint(unzoomed(CGPoint(x: 0, y: lo)))
+    let b = wide.uprightPoint(unzoomed(CGPoint(x: bounds.width, y: hi)))
+    let region = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+      .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    guard !region.isNull, region.width > 0.05, region.height > 0.05 else {
+      done([])
+      return
+    }
+    scrubBusy = true
+    samQueue.async { [weak self] in
+      let started = CACurrentMediaTime()
+      var found: [[CGPoint]] = []
+      do {
+        try sam.prepare(pixelBuffer: buffer, orientation: .right, id: "scrub")
+        let parts = try sam.proposeParts(id: "scrub", region: region, grid: 6, maxParts: 12,
+                                         minArea: 0.002, maxArea: 0.3, minScore: 0.8, budget: 0.6)
+        found = parts.map(\.polygon)
+      } catch {
+        NSLog("[lensi] strip at 0.5x: SAM failed: %@", error.localizedDescription)
+      }
+      let ms = (CACurrentMediaTime() - started) * 1000
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.scrubBusy = false
+        guard session == self.scrubSession, self.wideMode, let wide = self.wide else {
+          done([])
+          return
+        }
+        var kept: [[CGPoint]] = []
+        for f in found where !kept.contains(where: { LiveTracker.iou($0, f) > 0.6 }) {
+          kept.append(f)
+        }
+        var laid: [(flat: [CGPoint], at: CGPoint)] = []
+        for f in kept {
+          let at = self.zoomed(wide.layerPoint(LiveTracker.interiorPoint(f, scale: size)))
+          guard self.bounds.contains(at) else { continue }
+          laid.append((flat: OutlineMath.resample(f, scale: size), at: at))
+        }
+        laid.sort { ($0.at.x, $0.at.y) < ($1.at.x, $1.at.y) }
+        laid = Array(laid.prefix(14))
+        self.scrubThings = laid.map {
+          ScrubThing(world: [], label: nil, confidence: 0, depthKnown: false, pinId: nil, flat: $0.flat)
+        }
+        self.scrubIndex = nil
+        self.wideScrubFrame = (buffer: buffer, t: latest.t)
+        self.wideSize = size
+        NSLog("[lensi] strip at 0.5x: %ld things in view (%ld found) in %.0f ms", laid.count, found.count, ms)
+        let width = self.bounds.width, height = self.bounds.height
+        done(laid.map { l -> [String: Any] in
+          ["label": NSNull(), "x": Double(l.at.x / width), "y": Double(l.at.y / height)]
+        })
+      }
+    }
+  }
+
+  /// Pins thing `index` at 0.5x: a tag, and EdgeTAM started on it from the frame it was found in,
+  /// following it on the ultra-wide (`wideFrame`); it's laid in the world from its first cut
+  /// once ARKit is back at 1x. Its picture goes to JS (onSelect) to be named, as at 1x.
+  private func scrubPinWide(_ index: Int) -> String? {
+    guard let flat = scrubThings[index].flat, let found = wideScrubFrame else { return nil }
+    let id = UUID().uuidString
+    let pin = Pin(id: id, parentId: nil, world: .zero, text: "Looking", color: accent)
+    let tag = TagNode()
+    tag.isHidden = true
+    outlines.addChildNode(tag)
+    pin.tagNode = tag
+    addPin(pin)
+    flatPins.insert(id)
+    scrubThings[index].pinId = id
+    wideOutlines[id] = flat
+    wideTimes[id] = found.t
+    // EdgeTAM starts on it on samQueue, where its trackers live.
+    if let edge = edgeTAM {
+      let box = LiveTracker.bounds(flat)
+      let buffer = found.buffer
+      samQueue.async { [weak self] in
+        guard let self else { return }
+        do {
+          let encoder = try self.edgeEncoder ?? EdgeTAMTracker.Encoder(models: edge)
+          self.edgeEncoder = encoder
+          let tracker = try EdgeTAMTracker(models: edge)
+          _ = try tracker.start(encoder.encode(CIImage(cvPixelBuffer: buffer).oriented(.right)), box: box)
+          self.edgeTrackers[id] = tracker
+        } catch {
+          NSLog("[lensi] EdgeTAM couldn't start on a thing pinned at 0.5x: %@", error.localizedDescription)
+        }
+      }
+    }
+    layoutWide()
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    let r = LiveTracker.bounds(flat)
+    var crop = r.insetBy(dx: -r.width * 0.15, dy: -r.height * 0.15).intersection(unit)
+    if crop.isNull || crop.width < 0.02 || crop.height < 0.02 { crop = unit }
+    let buffer = found.buffer
+    visionQueue.async { [weak self] in
+      guard let self else { return }
+      let jpeg = self.detector.jpeg(buffer, crop: crop)
+      DispatchQueue.main.async {
+        self.onSelect(["id": id, "label": NSNull(), "confidence": 0, "image": jpeg?.base64EncodedString() ?? ""])
+      }
+    }
+    return id
   }
 
   /// Unpins every pinned thing, and whatever the brain added to it.
@@ -1707,6 +1913,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// The strip's highlighted thing where it is now, bold in the lens colour; nothing else is
   /// drawn (the strip's ticks say how many there are). A pinned one is drawn as its pin instead.
   private func layoutScrub() {
+    if wideMode {
+      layoutWideScrub()
+      return
+    }
     guard let node = scrubNode else { return }
     guard let i = scrubIndex, scrubThings.indices.contains(i), scrubThings[i].pinId == nil,
           let eye = outlineEye(), screenBounds(scrubThings[i].world, toCamera: eye.toCamera) != nil else {
@@ -1917,6 +2127,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       pins[pid]?.removeFromSuperview()
       pins[pid] = nil
       contexts[pid] = nil
+      flatPins.remove(pid)
     }
     pinOrder.removeAll { pins[$0] == nil }
   }
@@ -1926,6 +2137,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     pins.removeAll()
     pinOrder.removeAll()
     contexts.removeAll()
+    flatPins.removeAll()
   }
 
   // MARK: - Live guide
