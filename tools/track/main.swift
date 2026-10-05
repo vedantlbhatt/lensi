@@ -21,7 +21,11 @@
 //              from its memory of the thing, started from the seed box, every frame; what's
 //              shown glides from one outline to the next (OutlineMath.glide)
 //   edgetam@8  the same on every third frame, carried on its own pixels in between (the flow)
-//   (both only with the EdgeTAM models in LENSI_MODELS_DIR)
+//   live       EdgeTAM as the phone runs it: the footage at its own frame rate (TRACK_FPS, 24), a
+//              look started only once the last answer is in and 50 ms after the last start, each
+//              answer ready 60 ms after its frame and moved on from there to the frame shown by
+//              the flow (the phone moves it by ARKit or the gyro); live100 the same 100 ms late
+//   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
 // edge (how far the line drawn as the phone draws it is from the mask's edge, in pixels), wobble
@@ -531,7 +535,81 @@ func edgeError(_ outline: [CGPoint], _ truth: [SIMD2<Float>], w: Int, h: Int) ->
   return n > 0 ? total / Double(n) : nil
 }
 
+/// The app's pinned things as the phone runs them (tools/edgetrack's live mode; LensiARView on a
+/// flat picture). The footage plays at its own frame rate; a look starts on a frame only once the
+/// last answer is in and 50 ms have passed since the last one started; its answer is ready
+/// `latency` seconds after that frame and is used from the first frame after that. Each answer is
+/// kept in its own frame's place and moved on to the frame shown, by the thing's own pixels here
+/// (LiveFlow; the phone has ARKit or the gyro), and glided into the last one moved to its frame.
+final class EdgeLiveRunner: Runner {
+  let tracker: EdgeTAMTracker
+  let latency: Double
+  let fps: Double
+  private var flows: [Int: LiveFlow.Frame] = [:]
+  private var pending: (frame: Int, ready: Double, cut: EdgeTAMTracker.Cut)?
+  private var lastStart = -Double.infinity
+  private var stored: [CGPoint]?
+  private var storedFrame = 0
+
+  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, tracker: EdgeTAMTracker) {
+    self.tracker = tracker
+    self.latency = latency
+    self.fps = fps
+    super.init(label, tracking: true, smoothing: nil, every: 1, flow: flow, scaling: true)
+  }
+
+  /// `o` carried frame by frame from frame a to frame b, held where the flow can't say.
+  private func carried(_ o: [CGPoint], from a: Int, to b: Int) -> [CGPoint] {
+    guard a < b else { return o }
+    var now = o
+    for k in a..<b {
+      if let f0 = flows[k], let f1 = flows[k + 1], let next = LiveFlow.carry(now, from: f0, to: f1) { now = next }
+    }
+    return now
+  }
+
+  override func step(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
+    let t = Double(f) / fps
+    if let current = flow?.current { flows[f] = current }
+    flows[f - 16] = nil
+    if let o = outline { outline = carried(o, from: f - 1, to: f) }
+    if let p = pending, p.ready <= t + 1e-9 {
+      pending = nil
+      if p.cut.visible {
+        let px = { (q: CGPoint) in simd_float3(Float(q.x * scale.width), Float(q.y * scale.height), 0) }
+        let ring = OutlineMath.resample(p.cut.outline, scale: scale).map(px)
+        let last = stored.map { carried($0, from: storedFrame, to: p.frame).map(px) }
+        let glided = OutlineMath.glide(last, ring).map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
+        stored = glided
+        storedFrame = p.frame
+        outline = carried(glided, from: p.frame, to: f)
+      } else {
+        stored = nil
+        outline = nil
+      }
+    }
+    if f == 0, let picture = edgeFrame {
+      // Pinned on this frame: the strip's outline is there at once.
+      let cut = try tracker.start(picture, box: seedBox)
+      cuts += 1
+      if cut.visible {
+        stored = OutlineMath.resample(cut.outline, scale: scale)
+        outline = stored
+      }
+      lastStart = t
+    } else if pending == nil, t - lastStart > 0.05, let picture = edgeFrame {
+      let cut = try tracker.step(picture)
+      cuts += 1
+      pending = (frame: f, ready: t + latency, cut: cut)
+      lastStart = t
+    }
+    return outline
+  }
+}
+
 let flow = PixelFlow()
+/// The footage's frame rate, for the runners that play it as the phone's camera.
+let fps = Double(ProcessInfo.processInfo.environment["TRACK_FPS"] ?? "") ?? 24
 let edgeModels = EdgeTAMTracker.Models.shared
 let edgeEncoder = edgeModels.flatMap { try? EdgeTAMTracker.Encoder(models: $0) }
 let runners = [
@@ -549,8 +627,13 @@ let runners = [
   Runner("lensi@4", tracking: true, smoothing: .standard, every: 6, adaptive: true, flow: flow, scaling: true, glide: 0.75,
          bySpeed: true),
 ] + (edgeModels.flatMap { models -> [Runner]? in
-  guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models) else { return nil }
-  return [EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b)]
+  guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models),
+        let c = try? EdgeTAMTracker(models: models), let d = try? EdgeTAMTracker(models: models) else { return nil }
+  return [
+    EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b),
+    EdgeLiveRunner("live", latency: 0.06, fps: fps, flow: flow, tracker: c),
+    EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, tracker: d),
+  ]
 } ?? [])
 var truthWobble: [Double] = []
 var truthCentres: [CGPoint?] = []

@@ -35,14 +35,16 @@ swiftc -O -o track tools/track/main.swift app/modules/lensi-ar/ios/EdgeTAMTracke
   app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
   app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/LiveSeg.swift app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift || exit 1
 
-# One clip: <frames> <masks or -> <name> [seed box]
+# One clip: <frames> <masks or -> <name> [seed box] [frames a second, 24]
 clip() {
-  LENSI_MODELS_DIR=models-all ./track "$1" "$2" out/track "$3" $4 2>&1 | tee -a out/track/summary.txt || { echo "FAIL $3"; return; }
+  TRACK_FPS="${5:-24}" LENSI_MODELS_DIR=models-all ./track "$1" "$2" out/track "$3" $4 2>&1 | tee -a out/track/summary.txt || { echo "FAIL $3"; return; }
   for label in lensi@8 "${LABELS[@]}"; do
     python tools/track/render.py "$1" "out/track/$3.json" out/track "$label" || echo "FAIL $3 $label"
   done
   # The app now next to the app before LiveFlow.
   python tools/track/render.py "$1" "out/track/$3.json" out/track lensi@8 coast@8 || echo "FAIL $3 vs coast@8"
+  # EdgeTAM as the phone runs it (late, at its rate) next to EdgeTAM on every frame.
+  python tools/track/render.py "$1" "out/track/$3.json" out/track live edgetam || echo "FAIL $3 live vs edgetam"
 }
 LABELS=("$@")
 for s in $SEQS; do
@@ -51,5 +53,5 @@ done
 [ -d footage/carpark ] && clip footage/carpark - carpark 0.349,0.289,0.25,0.694
 [ -d footage/bolt ] && clip footage/bolt - bolt 0.488,0.352,0.25,0.125
 [ -d footage/bigbolt ] && clip footage/bigbolt - bigbolt 0.050,0.060,0.070,0.835
-[ -d footage/shaker ] && clip footage/shaker - shaker 0.4074,0.5417,0.2870,0.2000
+[ -d footage/shaker ] && clip footage/shaker - shaker 0.4074,0.5417,0.2870,0.2000 15
 exit 0
