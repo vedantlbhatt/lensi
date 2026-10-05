@@ -155,9 +155,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var wideMode = false
   private var lastWideTime: CFTimeInterval = 0
   /// Each pinned thing's outline on the ultra-wide picture (upright 0…1, OutlineMath.count
-  /// points, steadied as LiveShape steadies cuts), its last change, and the layer drawing it.
+  /// points, glided from one cut to the next: OutlineMath.glide), and the layer drawing it.
   private var wideOutlines: [String: [CGPoint]] = [:]
-  private var wideChanges: [String: [simd_float3]] = [:]
   private var wideLayers: [String: FlatOutline] = [:]
   /// 0.5x is there: ARKit's own ultra-wide, or the ultra-wide camera on its own.
   private var hasUltraWide: Bool { ultraWideFormat != nil || UltraWideCamera.available }
@@ -870,7 +869,6 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       for (_, l) in wideLayers { l.removeFromSuperlayer() }
       wideLayers = [:]
       wideOutlines = [:]
-      wideChanges = [:]
       // Pinned things' tags go back to SceneKit, with their outlines.
       for (_, pin) in pins where pin.tagNode != nil { pin.label.drawnElsewhere = true }
       // ARKit once the ultra-wide has let go of the camera.
@@ -912,15 +910,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let px = { (p: CGPoint) in simd_float3(Float(p.x * size.width), Float(p.y * size.height), 0) }
         for (key, outline) in found {
           let ring = OutlineMath.resample(outline, scale: size).map(px)
-          let steadied = OutlineMath.steady(self.wideOutlines[key]?.map(px), ring, previous: self.wideChanges[key], .standard)
-          self.wideChanges[key] = steadied.change
-          self.wideOutlines[key] = steadied.outline.map { CGPoint(x: CGFloat($0.x) / size.width, y: CGFloat($0.y) / size.height) }
+          let glided = OutlineMath.glide(self.wideOutlines[key]?.map(px), ring)
+          self.wideOutlines[key] = glided.map { CGPoint(x: CGFloat($0.x) / size.width, y: CGFloat($0.y) / size.height) }
         }
         // Not in view: no outline (it's drawn again once EdgeTAM finds it).
-        for key in held where found[key] == nil {
-          self.wideOutlines[key] = nil
-          self.wideChanges[key] = nil
-        }
+        for key in held where found[key] == nil { self.wideOutlines[key] = nil }
       }
     }
   }

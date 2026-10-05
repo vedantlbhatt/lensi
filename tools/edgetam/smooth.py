@@ -227,9 +227,61 @@ def steady_fit(old, new, previous, quiet=0.06, keep=0.7, loud=0.15):
     return moved + (1 - k) * r, r
 
 
+def closed(logits, k):
+    """The mask closed by a k x k square (dilated, then eroded): gaps narrower than k cells (the
+    top of a handle's loop) are bridged, so whether they're open doesn't flicker frame to frame."""
+    if k <= 1:
+        return logits
+    kernel = np.ones((k, k), np.uint8)
+    return cv2.erode(cv2.dilate(logits, kernel), kernel)
+
+
+def blurred(ring, sigma):
+    """A closed ring's points smoothed along it (Gaussian, `sigma` points)."""
+    if sigma <= 0 or len(ring) < 5:
+        return ring
+    r = int(3 * sigma + 0.5)
+    w = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    w /= w.sum()
+    n = len(ring)
+    out = np.zeros_like(ring)
+    for k, wk in zip(range(-r, r + 1), w):
+        out += wk * np.roll(ring, k, axis=0)
+    return out
+
+
+def affine_fit(a, b):
+    """a mapped onto b by the affine map that fits best (least squares; both N x 2, paired)."""
+    X = np.hstack([a, np.ones((len(a), 1))])
+    m, *_ = np.linalg.lstsq(X, b, rcond=None)
+    return X @ m
+
+
+def steady_affine(old, new, previous, alpha=0.4, fast=0.08, model="affine"):
+    """A candidate: the last outline carried onto the new one by the affine map (or similarity)
+    that fits best -- motion, zoom and the view turning pass straight through -- and what's left
+    (mostly the mask's edge noise) let in `alpha` of the way a frame; all of it once it's more
+    than `fast` of the outline's size (RMS), a real change of shape."""
+    if old is None or len(old) != len(new) or len(new) == 0:
+        return new, None
+    size = max(spread(old), 1e-6)
+    co, cn = old.mean(axis=0), new.mean(axis=0)
+    if float(np.linalg.norm(co - cn)) / size >= 1:
+        return new, None
+    shape, _ = align(new - cn, old - co)
+    lined = shape + cn
+    moved = affine_fit(old, lined) if model == "affine" else similarity_fit(old, lined)
+    r = lined - moved
+    rel = float(np.sqrt(np.mean(np.sum(r ** 2, axis=1)))) / size
+    a = alpha if rel < fast else 1.0
+    return moved + a * r, r
+
+
 def main():
     npz, frames_dir, ref_dir, out = sys.argv[1:5]
     how = sys.argv[5] if len(sys.argv) > 5 else "standard"
+    close = int(os.environ.get("SMOOTH_CLOSE", "1"))
+    sigma = float(os.environ.get("SMOOTH_SIGMA", "0"))
     data = np.load(npz)
     logits, scores = data["logits"].astype(np.float32), data["scores"]
     names = sorted(f for f in os.listdir(frames_dir) if f.endswith(".jpg"))
@@ -238,11 +290,17 @@ def main():
     frames = []
     shown, change = None, None
     for i, name in enumerate(names[: len(logits)]):
-        cells = contour(logits[i]) if scores[i] > 0 else np.zeros((0, 2))
+        cells = contour(closed(logits[i], close)) if scores[i] > 0 else np.zeros((0, 2))
+        cells = blurred(cells, sigma)
         outline = cells / n
         if len(outline) >= 3:
             ring = resample(outline, scale=(w, h)) * [w, h]
-            if how.startswith("fit"):
+            if how.startswith("affine") or how.startswith("similar"):
+                # affine[:alpha:fast]
+                parts = how.split(":")
+                args = [float(v) for v in parts[1:]]
+                shown, change = steady_affine(shown, ring, change, *args, model="affine" if parts[0] == "affine" else "similarity")
+            elif how.startswith("fit"):
                 # fit[:quiet:keep:loud]
                 args = [float(v) for v in how.split(":")[1:]]
                 shown, change = steady_fit(shown, ring, change, *args)

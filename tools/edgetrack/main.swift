@@ -6,8 +6,8 @@
 //
 // With LENSI_MODELS_DIR holding the four compiled models. Writes every frame's outline
 // (fractions of the frame), object score, IoU estimate and milliseconds per step, and "shown":
-// the outline as the phone draws it, each cut steadied into the last as LensiARView steadies
-// them at 0.5x (OutlineMath.steady, in pixels). EDGETRACK_EVERY=n runs EdgeTAM on every n-th frame
+// the outline as the phone draws it on a flat picture, each cut glided into the last as
+// LensiARView does at 0.5x (OutlineMath.glide, in pixels). EDGETRACK_EVERY=n runs EdgeTAM on every n-th frame
 // only, as a phone that keeps up with 30/n frames a second would; the frames between show the
 // last outline.
 import CoreImage
@@ -43,7 +43,6 @@ let every = max(1, Int(ProcessInfo.processInfo.environment["EDGETRACK_EVERY"] ??
 var frames: [[String: Any]] = []
 var totals: [String: [Double]] = [:]
 var shown: [simd_float3]?
-var change: [simd_float3]?
 var last: [String: Any]?
 for (i, name) in names.enumerated() {
   guard let picture = CIImage(contentsOf: framesDir.appendingPathComponent(name)) else {
@@ -68,16 +67,14 @@ for (i, name) in names.enumerated() {
   let total = (CFAbsoluteTimeGetCurrent() - wall) * 1000
   for (k, v) in cut.ms { totals[k, default: []].append(v) }
   totals["total", default: []].append(total)
-  // As the phone draws it: steadied into the last one, in pixels (LensiARView.wideFrame).
+  // As the phone draws it on a flat picture: glided from the last one, in pixels
+  // (LensiARView.wideFrame).
   if cut.visible {
     let size = CGSize(width: w, height: h)
     let ring = OutlineMath.resample(cut.outline, scale: size).map { simd_float3(Float($0.x * w), Float($0.y * h), 0) }
-    let steadied = OutlineMath.steady(shown, ring, previous: change, .standard)
-    shown = steadied.outline
-    change = steadied.change
+    shown = OutlineMath.glide(shown, ring)
   } else {
     shown = nil
-    change = nil
   }
   let drawn = (shown ?? []).flatMap { [r(Double($0.x) / Double(w)), r(Double($0.y) / Double(h))] }
   frames.append([

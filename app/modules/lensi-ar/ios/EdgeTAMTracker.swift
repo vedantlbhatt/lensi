@@ -109,7 +109,8 @@ final class EdgeTAMTracker {
     /// above zero inside). -1024 everywhere when the thing isn't in view.
     let logits: [Float]
     /// The thing's outline (its largest region, holes filled), traced between the mask's cells
-    /// so it moves smoothly; fractions of the picture, top-left origin. Empty when it isn't in view.
+    /// and smoothed along its edge, so it moves smoothly; fractions of the picture, top-left
+    /// origin. Empty when it isn't in view.
     let outline: [CGPoint]
     /// SAM 2's object score: above zero, the thing is in view.
     let score: Float
@@ -333,9 +334,10 @@ final class EdgeTAMTracker {
         MaskContour.largest($0, offset: 0, stride: n, width: n, height: n)
       }
       area = fraction
-      // Cell i's centre is i + 0.5 cells, and the 256 cells span the whole picture.
+      // Cell i's centre is i + 0.5 cells, and the 256 cells span the whole picture. Smoothed along
+      // the edge (its points are about a cell apart) so the cells' stair-steps don't shimmer.
       let scale = 1 / CGFloat(n)
-      outline = cells.map { CGPoint(x: min(max($0.x * scale, 0), 1), y: min(max($0.y * scale, 0), 1)) }
+      outline = OutlineMath.blurred(cells, sigma: 2).map { CGPoint(x: min(max($0.x * scale, 0), 1), y: min(max($0.y * scale, 0), 1)) }
     }
     ms["outline"] = (CFAbsoluteTimeGetCurrent() - start) * 1000
     return Cut(logits: logits, outline: outline, score: heads.score, iou: heads.ious[k], area: area, ms: ms)
