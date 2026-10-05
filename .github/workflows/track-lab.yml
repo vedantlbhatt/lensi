@@ -46,7 +46,9 @@ jobs:
         with:
           path: footage/DAVIS
           key: davis-2017-480p-tracking-v1
+      # A commit saying [track only] runs the footage alone (tools/track), in about ten minutes.
       - name: Pinning on handheld walk-arounds, the depth guessed wrong (tools/walk)
+        if: ${{ !contains(github.event.head_commit.message, '[track only]') }}
         env:
           # The walks pass 1 found best last time (scans whose thing was hidden where it was
           # pinned left out); empty to look through the scans again.
@@ -66,7 +68,7 @@ jobs:
           git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "Walk-arounds for $SHA"
           git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-track-lab
       - name: ARKit pinning on real ARKit recordings
-        if: always()
+        if: ${{ always() && !contains(github.event.head_commit.message, '[track only]') }}
         run: bash tools/pin/ci.sh
       - name: Live SAM on real footage
         if: always()

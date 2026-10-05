@@ -110,9 +110,13 @@ final class EdgeTAMTracker {
     /// above zero inside). -1024 everywhere when the thing isn't in view.
     let logits: [Float]
     /// The thing's outline (its largest region, holes filled), traced between the mask's cells
-    /// and smoothed along its edge, so it moves smoothly; fractions of the picture, top-left
-    /// origin. Empty when it isn't in view.
+    /// and smoothed along its edge, so it moves smoothly (`plain`), or that edge put on the
+    /// picture's own (EdgeSnap, when `snap` is set); fractions of the picture, top-left origin.
+    /// Empty when it isn't in view.
     let outline: [CGPoint]
+    /// The same region's edge as traced from the mask, unsmoothed, in cells (cell i's centre is
+    /// i + 0.5): what `outline` is made from.
+    let cells: [CGPoint]
     /// SAM 2's object score: above zero, the thing is in view.
     let score: Float
     /// The mask decoder's estimate of its own IoU.
@@ -132,13 +136,17 @@ final class EdgeTAMTracker {
     let high0: MLMultiArray
     let high1: MLMultiArray
     let ms: [String: Double]
+    /// The 1024 x 1024 picture it was encoded from (BGRA), for putting a mask's edge on the
+    /// picture's own (EdgeSnap). Each encoded picture keeps its own.
+    var canvas: CVPixelBuffer? = nil
   }
 
   /// Draws pictures onto the encoder's canvas and encodes them.
   final class Encoder {
     private let models: Models
     private let context: CIContext
-    private var canvas: CVPixelBuffer?
+    /// Canvases, one per encoded picture still about (a picture's mask is snapped to it later).
+    private var canvases: CVPixelBufferPool?
     private static let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
 
     init(models: Models? = Models.shared, context: CIContext = CIContext(options: [.cacheIntermediates: false])) throws {
@@ -159,21 +167,25 @@ final class EdgeTAMTracker {
       guard let features = out.featureValue(for: "features")?.multiArrayValue,
             let high0 = out.featureValue(for: "high0")?.multiArrayValue,
             let high1 = out.featureValue(for: "high1")?.multiArrayValue else { throw EdgeTAMError.badOutput("encoder") }
-      return Encoded(features: features, high0: high0, high1: high1, ms: ms)
+      return Encoded(features: features, high0: high0, high1: high1, ms: ms, canvas: buffer)
     }
 
     private func draw(_ picture: CIImage) throws -> CVPixelBuffer {
       let e = picture.extent
       guard e.width >= 1, e.height >= 1, e.width.isFinite, e.height.isFinite else { throw EdgeTAMError.badImage }
       let side = EdgeTAMTracker.side
-      if canvas == nil {
-        let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true]
-        var created: CVPixelBuffer?
-        guard CVPixelBufferCreate(kCFAllocatorDefault, side, side, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &created) == kCVReturnSuccess
+      if canvases == nil {
+        let attrs: [CFString: Any] = [
+          kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+          kCVPixelBufferWidthKey: side, kCVPixelBufferHeightKey: side,
+          kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true,
+        ]
+        guard CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &canvases) == kCVReturnSuccess
         else { throw EdgeTAMError.pixelBuffer }
-        canvas = created
       }
-      guard let buffer = canvas else { throw EdgeTAMError.pixelBuffer }
+      var made: CVPixelBuffer?
+      guard let pool = canvases, CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &made) == kCVReturnSuccess,
+            let buffer = made else { throw EdgeTAMError.pixelBuffer }
       let s = CGFloat(side)
       let sx = s / e.width, sy = s / e.height
       // Lanczos (it filters as it shrinks, like the resize SAM 2 was run with), edges clamped so
@@ -249,7 +261,7 @@ final class EdgeTAMTracker {
     recent = []
     pointers = []
     frames = 1
-    return try cut(heads, k, &ms)
+    return try cut(heads, k, &ms, canvas: picture.canvas)
   }
 
   /// The thing in the next picture.
@@ -292,7 +304,7 @@ final class EdgeTAMTracker {
     self.pointers.insert(heads.pointer(k), at: 0)
     if self.pointers.count > n.numPtrs - 1 { self.pointers.removeLast() }
     frames += 1
-    return try cut(heads, k, &ms)
+    return try cut(heads, k, &ms, canvas: picture.canvas)
   }
 
   // MARK: - Steps
@@ -317,7 +329,18 @@ final class EdgeTAMTracker {
     return halves
   }
 
-  private func cut(_ heads: Heads, _ k: Int, _ ms: inout [String: Double]) throws -> Cut {
+  /// Whether (and how) outlines are put on the picture's own edges (EdgeSnap); nil: the mask's.
+  static var snap: EdgeSnap.Settings? = nil
+
+  /// The mask's own outline from its traced edge (`Cut.cells`): cell i's centre is i + 0.5 cells,
+  /// and the 256 cells span the whole picture. Smoothed along the edge (its points are about a
+  /// cell apart) so the cells' stair-steps don't shimmer.
+  static func plain(_ cells: [CGPoint]) -> [CGPoint] {
+    let scale = 1 / CGFloat(maskSide)
+    return OutlineMath.blurred(cells, sigma: 2).map { CGPoint(x: min(max($0.x * scale, 0), 1), y: min(max($0.y * scale, 0), 1)) }
+  }
+
+  private func cut(_ heads: Heads, _ k: Int, _ ms: inout [String: Double], canvas: CVPixelBuffer?) throws -> Cut {
     let n = EdgeTAMTracker.maskSide
     let plane = n * n
     let start = CFAbsoluteTimeGetCurrent()
@@ -325,19 +348,25 @@ final class EdgeTAMTracker {
       EdgeTAMTracker.floats(UnsafeBufferPointer(rebasing: $0[(k * plane)..<((k + 1) * plane)]))
     }
     var outline: [CGPoint] = []
+    var traced: [CGPoint] = []
     var area: Float = 0
     if heads.score > 0 {
       let (cells, fraction) = logits.withUnsafeBufferPointer {
         MaskContour.largest($0, offset: 0, stride: n, width: n, height: n)
       }
       area = fraction
-      // Cell i's centre is i + 0.5 cells, and the 256 cells span the whole picture. Smoothed along
-      // the edge (its points are about a cell apart) so the cells' stair-steps don't shimmer.
-      let scale = 1 / CGFloat(n)
-      outline = OutlineMath.blurred(cells, sigma: 2).map { CGPoint(x: min(max($0.x * scale, 0), 1), y: min(max($0.y * scale, 0), 1)) }
+      traced = cells
+      outline = EdgeTAMTracker.plain(cells)
+      ms["outline"] = (CFAbsoluteTimeGetCurrent() - start) * 1000
+      if let snap = EdgeTAMTracker.snap, let canvas, !cells.isEmpty {
+        let snapStart = CFAbsoluteTimeGetCurrent()
+        if let snapped = EdgeSnap.outline(logits: logits, cells: cells, canvas: canvas, settings: snap) { outline = snapped }
+        ms["snap"] = (CFAbsoluteTimeGetCurrent() - snapStart) * 1000
+      }
+    } else {
+      ms["outline"] = (CFAbsoluteTimeGetCurrent() - start) * 1000
     }
-    ms["outline"] = (CFAbsoluteTimeGetCurrent() - start) * 1000
-    return Cut(logits: logits, outline: outline, score: heads.score, iou: heads.ious[k], area: area, ms: ms)
+    return Cut(logits: logits, outline: outline, cells: traced, score: heads.score, iou: heads.ious[k], area: area, ms: ms)
   }
 
   // MARK: - Helpers
@@ -465,5 +494,210 @@ final class EdgeTAMTracker {
   /// `n` values as rows of 256 where they divide evenly, else one row.
   private static func layout(_ n: Int) -> (rows: Int, width: Int) {
     n % 256 == 0 ? (n / 256, 256) : (1, n)
+  }
+}
+
+// MARK: - Edge snapping
+
+/// EdgeTAM's mask is 256 x 256 over the whole picture: a cell to every 4 x 4 pixels of the 1024
+/// canvas it was made from, and several of the camera's, so the edge traced from it can sit most
+/// of a cell off the thing's. Here that edge is moved onto the picture's own: the mask's
+/// probabilities are filtered with the picture as the guide (He, Sun & Tang's guided filter, which
+/// keeps an edge only where the guide has one), on the canvas round the thing, and traced there
+/// at four times the mask's resolution. Where the picture has no edge to offer (a blur, a thing the
+/// colour of what's behind it), the mask's own edge stays where it was.
+enum EdgeSnap {
+  struct Settings {
+    /// The filter's window, canvas pixels either side: about a cell.
+    var radius = 4
+    /// How much contrast (0...1 a channel, squared) the picture needs before the edge follows it.
+    var eps: Float = 1e-3
+    /// The picture's colours as the guide; false: its brightness only (a third of the work).
+    var colour = true
+    /// The working grid's longest side: a bigger crop is sampled every second (third...) canvas
+    /// pixel, so a thing filling the picture costs what a 512 square does.
+    var maxSide = 512
+    /// Smoothing along the traced edge, in its points (about a working pixel apart).
+    var sigma: CGFloat = 1.5
+
+    static let standard = Settings()
+  }
+
+  /// `cells`: the mask's own edge (MaskContour on `logits`, cell units); `logits`: 256 x 256,
+  /// row-major; `canvas`: the 1024 x 1024 BGRA picture they were made from. The snapped outline
+  /// as fractions of the picture, or nil when there's nothing to trace.
+  static func outline(logits: [Float], cells: [CGPoint], canvas: CVPixelBuffer, settings s: Settings = .standard) -> [CGPoint]? {
+    let side = EdgeTAMTracker.side, n = EdgeTAMTracker.maskSide, cell = side / n
+    guard cells.count >= 3, logits.count == n * n, CVPixelBufferGetWidth(canvas) == side, CVPixelBufferGetHeight(canvas) == side,
+          CVPixelBufferGetPixelFormatType(canvas) == kCVPixelFormatType_32BGRA else { return nil }
+    // The thing's box on the canvas, with six cells' room for its edge to move.
+    var lo = cells[0], hi = cells[0]
+    for p in cells {
+      lo.x = min(lo.x, p.x); lo.y = min(lo.y, p.y)
+      hi.x = max(hi.x, p.x); hi.y = max(hi.y, p.y)
+    }
+    let margin = 6 * cell, size = CGFloat(cell)
+    let x0 = max(0, Int((lo.x * size).rounded(.down)) - margin), x1 = min(side, Int((hi.x * size).rounded(.up)) + margin)
+    let y0 = max(0, Int((lo.y * size).rounded(.down)) - margin), y1 = min(side, Int((hi.y * size).rounded(.up)) + margin)
+    let step = max(1, (max(x1 - x0, y1 - y0) + s.maxSide - 1) / s.maxSide)
+    let w = (x1 - x0) / step, h = (y1 - y0) / step
+    let r = max(1, s.radius / step)
+    guard w > 2 * r + 2, h > 2 * r + 2 else { return nil }
+    let count = w * h
+
+    // The picture, 0...1 a channel: each working pixel the mean of its step x step canvas pixels.
+    var red = [Float](repeating: 0, count: count), green = red, blue = red
+    guard CVPixelBufferLockBaseAddress(canvas, .readOnly) == kCVReturnSuccess else { return nil }
+    defer { CVPixelBufferUnlockBaseAddress(canvas, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(canvas) else { return nil }
+    let bytes = base.assumingMemoryBound(to: UInt8.self), rowBytes = CVPixelBufferGetBytesPerRow(canvas)
+    let unit = 1 / (255 * Float(step * step))
+    red.withUnsafeMutableBufferPointer { rp in
+      green.withUnsafeMutableBufferPointer { gp in
+        blue.withUnsafeMutableBufferPointer { bp in
+          for y in 0..<h {
+            for x in 0..<w {
+              var sr = 0, sg = 0, sb = 0
+              for j in 0..<step {
+                let line = bytes + (y0 + y * step + j) * rowBytes + (x0 + x * step) * 4
+                for i in 0..<step {
+                  sb += Int(line[4 * i]); sg += Int(line[4 * i + 1]); sr += Int(line[4 * i + 2])
+                }
+              }
+              let at = y * w + x
+              rp[at] = Float(sr) * unit; gp[at] = Float(sg) * unit; bp[at] = Float(sb) * unit
+            }
+          }
+        }
+      }
+    }
+
+    // The mask at each working pixel's centre: its logits bilinear between cell centres (cell i's
+    // at i + 0.5 cells), squashed to 0...1.
+    var p = [Float](repeating: 0, count: count)
+    let toCell = Float(step) / Float(cell), last = Float(n - 1)
+    logits.withUnsafeBufferPointer { l in
+      p.withUnsafeMutableBufferPointer { pp in
+        for y in 0..<h {
+          let cy = min(max(Float(y0) / Float(cell) + (Float(y) + 0.5) * toCell - 0.5, 0), last)
+          let iy = min(Int(cy), n - 2), fy = cy - Float(iy)
+          for x in 0..<w {
+            let cx = min(max(Float(x0) / Float(cell) + (Float(x) + 0.5) * toCell - 0.5, 0), last)
+            let ix = min(Int(cx), n - 2), fx = cx - Float(ix)
+            let a = l[iy * n + ix], b = l[iy * n + ix + 1], c = l[(iy + 1) * n + ix], d = l[(iy + 1) * n + ix + 1]
+            let v = (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy
+            pp[y * w + x] = 1 / (1 + exp(-v))
+          }
+        }
+      }
+    }
+
+    var level = s.colour ? guidedColour(red, green, blue, p, w, h, r, s.eps) : guidedGrey(red, green, blue, p, w, h, r, s.eps)
+    for i in 0..<count { level[i] -= 0.5 }
+    let (pts, _) = level.withUnsafeBufferPointer { MaskContour.largest($0, offset: 0, stride: w, width: w, height: h) }
+    guard pts.count >= 3 else { return nil }
+    // Working pixel i's centre is (i + 0.5) x step canvas pixels from the crop's corner.
+    let k = CGFloat(step) / CGFloat(side), ox = CGFloat(x0) / CGFloat(side), oy = CGFloat(y0) / CGFloat(side)
+    return OutlineMath.blurred(pts, sigma: s.sigma).map {
+      CGPoint(x: min(max(ox + $0.x * k, 0), 1), y: min(max(oy + $0.y * k, 0), 1))
+    }
+  }
+
+  /// The guided filter with the picture's brightness as the guide.
+  static func guidedGrey(_ r: [Float], _ g: [Float], _ b: [Float], _ p: [Float], _ w: Int, _ h: Int, _ rad: Int, _ eps: Float) -> [Float] {
+    let n = w * h
+    var guide = [Float](repeating: 0, count: n), gp = guide, gg = guide
+    for i in 0..<n {
+      let v = 0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i]
+      guide[i] = v; gp[i] = v * p[i]; gg[i] = v * v
+    }
+    let mI = mean(guide, w, h, rad), mp = mean(p, w, h, rad), mIp = mean(gp, w, h, rad), mII = mean(gg, w, h, rad)
+    var a = [Float](repeating: 0, count: n), bias = a
+    for i in 0..<n {
+      let ai = (mIp[i] - mI[i] * mp[i]) / (mII[i] - mI[i] * mI[i] + eps)
+      a[i] = ai; bias[i] = mp[i] - ai * mI[i]
+    }
+    let ma = mean(a, w, h, rad), mb = mean(bias, w, h, rad)
+    var q = [Float](repeating: 0, count: n)
+    for i in 0..<n { q[i] = ma[i] * guide[i] + mb[i] }
+    return q
+  }
+
+  /// The guided filter with the picture's colours as the guide (a 3 x 3 covariance a pixel).
+  static func guidedColour(_ r: [Float], _ g: [Float], _ b: [Float], _ p: [Float], _ w: Int, _ h: Int, _ rad: Int, _ eps: Float) -> [Float] {
+    let n = w * h
+    func times(_ x: [Float], _ y: [Float]) -> [Float] {
+      var o = [Float](repeating: 0, count: n)
+      for i in 0..<n { o[i] = x[i] * y[i] }
+      return o
+    }
+    let mr = mean(r, w, h, rad), mg = mean(g, w, h, rad), mb = mean(b, w, h, rad), mp = mean(p, w, h, rad)
+    let mrp = mean(times(r, p), w, h, rad), mgp = mean(times(g, p), w, h, rad), mbp = mean(times(b, p), w, h, rad)
+    let mrr = mean(times(r, r), w, h, rad), mrg = mean(times(r, g), w, h, rad), mrb = mean(times(r, b), w, h, rad)
+    let mgg = mean(times(g, g), w, h, rad), mgb = mean(times(g, b), w, h, rad), mbb = mean(times(b, b), w, h, rad)
+    var ar = [Float](repeating: 0, count: n), ag = ar, ab = ar, bias = ar
+    for i in 0..<n {
+      let cr = mrp[i] - mr[i] * mp[i], cg = mgp[i] - mg[i] * mp[i], cb = mbp[i] - mb[i] * mp[i]
+      let vrr = mrr[i] - mr[i] * mr[i] + eps, vrg = mrg[i] - mr[i] * mg[i], vrb = mrb[i] - mr[i] * mb[i]
+      let vgg = mgg[i] - mg[i] * mg[i] + eps, vgb = mgb[i] - mg[i] * mb[i], vbb = mbb[i] - mb[i] * mb[i] + eps
+      // The symmetric covariance inverted by its cofactors.
+      let i00 = vgg * vbb - vgb * vgb, i01 = vgb * vrb - vrg * vbb, i02 = vrg * vgb - vgg * vrb
+      let i11 = vrr * vbb - vrb * vrb, i12 = vrb * vrg - vrr * vgb, i22 = vrr * vgg - vrg * vrg
+      let inv = 1 / (vrr * i00 + vrg * i01 + vrb * i02)
+      let a0 = (i00 * cr + i01 * cg + i02 * cb) * inv
+      let a1 = (i01 * cr + i11 * cg + i12 * cb) * inv
+      let a2 = (i02 * cr + i12 * cg + i22 * cb) * inv
+      ar[i] = a0; ag[i] = a1; ab[i] = a2
+      bias[i] = mp[i] - a0 * mr[i] - a1 * mg[i] - a2 * mb[i]
+    }
+    let mar = mean(ar, w, h, rad), mag = mean(ag, w, h, rad), mab = mean(ab, w, h, rad), mbias = mean(bias, w, h, rad)
+    var q = [Float](repeating: 0, count: n)
+    for i in 0..<n { q[i] = mar[i] * r[i] + mag[i] * g[i] + mab[i] * b[i] + mbias[i] }
+    return q
+  }
+
+  /// The mean over the (2 rad + 1)-pixel square round each pixel, the square cut at the edges
+  /// (running sums along the rows, then down the columns).
+  static func mean(_ a: [Float], _ w: Int, _ h: Int, _ rad: Int) -> [Float] {
+    var rows = [Float](repeating: 0, count: w * h)
+    var out = rows
+    a.withUnsafeBufferPointer { src in
+      rows.withUnsafeMutableBufferPointer { dst in
+        for y in 0..<h {
+          let o = y * w
+          var sum: Float = 0
+          for x in 0..<min(rad, w) { sum += src[o + x] }
+          for x in 0..<w {
+            if x + rad < w { sum += src[o + x + rad] }
+            if x - rad - 1 >= 0 { sum -= src[o + x - rad - 1] }
+            dst[o + x] = sum / Float(min(w - 1, x + rad) - max(0, x - rad) + 1)
+          }
+        }
+      }
+    }
+    var sums = [Float](repeating: 0, count: w)
+    rows.withUnsafeBufferPointer { src in
+      out.withUnsafeMutableBufferPointer { dst in
+        sums.withUnsafeMutableBufferPointer { sum in
+          for y in 0..<min(rad, h) {
+            for x in 0..<w { sum[x] += src[y * w + x] }
+          }
+          for y in 0..<h {
+            if y + rad < h {
+              let o = (y + rad) * w
+              for x in 0..<w { sum[x] += src[o + x] }
+            }
+            if y - rad - 1 >= 0 {
+              let o = (y - rad - 1) * w
+              for x in 0..<w { sum[x] -= src[o + x] }
+            }
+            let inv = 1 / Float(min(h - 1, y + rad) - max(0, y - rad) + 1)
+            let o = y * w
+            for x in 0..<w { dst[o + x] = sum[x] * inv }
+          }
+        }
+      }
+    }
+    return out
   }
 }

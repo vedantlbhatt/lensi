@@ -21,11 +21,16 @@
 //              from its memory of the thing, started from the seed box, every frame; what's
 //              shown glides from one outline to the next (OutlineMath.glide)
 //   edgetam@8  the same on every third frame, carried on its own pixels in between (the flow)
-//   (both only with the EdgeTAM models in LENSI_MODELS_DIR)
+//   snap       edgetam with its edge put on the picture's own (EdgeSnap: a guided filter on the
+//              1024 canvas, the picture's colours as the guide); snapgrey with its brightness,
+//              snapsoft only on stronger edges, snapwide in a window twice as wide; snap@8 as
+//              edgetam@8 (each from the same EdgeTAM run as the one it's compared with)
+//   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
-// wobble (how much the outline's shape changes from one frame to the next) and jerk (how much
-// its middle lurches rather than glides), each with the mask's own for reference. Writes
+// edge (how far the line drawn as the phone draws it is from the mask's edge, in pixels), wobble
+// (how much the outline's shape changes from one frame to the next) and jerk (how much its middle
+// lurches rather than glides), each with the mask's own for reference. Writes
 // <out>/<name>.json for tools/track/render.py.
 //
 //   swiftc -O -o track tools/track/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,Analyzer,Detector}.swift
@@ -264,6 +269,7 @@ class Runner {
   var refused = 0
   var shown: [[CGPoint]] = []
   var j: [Double] = []
+  var edge: [Double] = []
   var wobble: [Double] = []
   /// Where what's shown sits each frame (its filled middle, in pixels), for how smoothly it moves.
   var centres: [CGPoint?] = []
@@ -462,25 +468,52 @@ print("\(name): \(frames.count) frames \(W)x\(H), seed box \(seedBox), point \(s
 /// The frame EdgeTAM's encoder made, for every EdgeTAM runner that looks at this frame.
 var edgeFrame: EdgeTAMTracker.Encoded?
 
+/// One EdgeTAM run several runners draw from, each its own way: it steps once a frame it's asked.
+final class EdgeRun {
+  let tracker: EdgeTAMTracker
+  private var at = -1
+  private var last: EdgeTAMTracker.Cut?
+
+  init(_ tracker: EdgeTAMTracker) { self.tracker = tracker }
+
+  func cut(_ f: Int, _ picture: EdgeTAMTracker.Encoded, box: CGRect) throws -> EdgeTAMTracker.Cut {
+    if let last, f == at { return last }
+    let cut = try f == 0 ? tracker.start(picture, box: box) : tracker.step(picture)
+    last = cut
+    at = f
+    return cut
+  }
+}
+
 /// The app's pinned things now (LensiARView.followEdge): EdgeTAM from its memory of the thing,
 /// every `every`-th frame; in between, the outline rides its own pixels (the flow); each new
-/// outline glides into the last (OutlineMath.glide, in pixels).
+/// outline glides into the last (OutlineMath.glide, in pixels). With `snap`, each outline's edge
+/// is put on the picture's own first (EdgeSnap); without, it's the mask's (EdgeTAMTracker.plain).
 final class EdgeRunner: Runner {
-  let tracker: EdgeTAMTracker
+  let run: EdgeRun
+  let snap: EdgeSnap.Settings?
+  var snapMs: [Double] = []
 
-  init(_ label: String, every: Int, flow: PixelFlow?, tracker: EdgeTAMTracker) {
-    self.tracker = tracker
+  init(_ label: String, every: Int, flow: PixelFlow?, run: EdgeRun, snap: EdgeSnap.Settings? = nil) {
+    self.run = run
+    self.snap = snap
     super.init(label, tracking: true, smoothing: nil, every: every, flow: flow, scaling: true)
   }
 
   override func step(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
     let looks = f == 0 || f % every == 0
     if looks, let picture = edgeFrame {
-      let cut = try f == 0 ? tracker.start(picture, box: seedBox) : tracker.step(picture)
+      let cut = try run.cut(f, picture, box: seedBox)
       cuts += 1
       if cut.visible {
+        var traced = EdgeTAMTracker.plain(cut.cells)
+        if let snap, let canvas = picture.canvas {
+          let t0 = Date()
+          if let snapped = EdgeSnap.outline(logits: cut.logits, cells: cut.cells, canvas: canvas, settings: snap) { traced = snapped }
+          snapMs.append(Date().timeIntervalSince(t0) * 1000)
+        }
         let px = { (p: CGPoint) in simd_float3(Float(p.x * scale.width), Float(p.y * scale.height), 0) }
-        let ring = OutlineMath.resample(cut.outline, scale: scale).map(px)
+        let ring = OutlineMath.resample(traced, scale: scale).map(px)
         outline = OutlineMath.glide(outline?.map(px), ring).map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
       } else {
         outline = nil
@@ -490,6 +523,43 @@ final class EdgeRunner: Runner {
     }
     return outline
   }
+}
+
+/// The hand-drawn mask's edge: the middle of every side between a pixel in it and one out of it
+/// (the picture's own border left out), in pixels.
+func truthEdge(_ bits: [UInt8], w: Int, h: Int) -> [SIMD2<Float>] {
+  var pts: [SIMD2<Float>] = []
+  for y in 0..<h {
+    for x in 0..<w where bits[y * w + x] != 0 {
+      if x > 0, bits[y * w + x - 1] == 0 { pts.append(SIMD2(Float(x), Float(y) + 0.5)) }
+      if x < w - 1, bits[y * w + x + 1] == 0 { pts.append(SIMD2(Float(x + 1), Float(y) + 0.5)) }
+      if y > 0, bits[(y - 1) * w + x] == 0 { pts.append(SIMD2(Float(x) + 0.5, Float(y))) }
+      if y < h - 1, bits[(y + 1) * w + x] == 0 { pts.append(SIMD2(Float(x) + 0.5, Float(y + 1))) }
+    }
+  }
+  return pts
+}
+
+/// How far the drawn line is from the thing's real edge: the outline drawn as the phone draws it
+/// (OutlineMath.curve through its points), each point's distance to the nearest of the mask's
+/// edge, averaged, in pixels. Points on the picture's border (both run along it there) left out.
+func edgeError(_ outline: [CGPoint], _ truth: [SIMD2<Float>], w: Int, h: Int) -> Double? {
+  guard outline.count >= 3, !truth.isEmpty else { return nil }
+  let ring = outline.map { simd_float3(Float($0.x) * Float(w), Float($0.y) * Float(h), 0) }
+  let drawn = ring.count >= OutlineMath.curveFrom ? OutlineMath.curve(ring) : ring
+  var total: Double = 0
+  var n = 0
+  truth.withUnsafeBufferPointer { t in
+    for p in drawn {
+      if p.x < 1.5 || p.y < 1.5 || p.x > Float(w) - 1.5 || p.y > Float(h) - 1.5 { continue }
+      let q = SIMD2(p.x, p.y)
+      var best = Float.greatestFiniteMagnitude
+      for e in t { best = min(best, simd_length_squared(e - q)) }
+      total += Double(best.squareRoot())
+      n += 1
+    }
+  }
+  return n > 0 ? total / Double(n) : nil
 }
 
 let flow = PixelFlow()
@@ -511,7 +581,24 @@ let runners = [
          bySpeed: true),
 ] + (edgeModels.flatMap { models -> [Runner]? in
   guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models) else { return nil }
-  return [EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b)]
+  // The tracker's own outlines are left as the mask's: each runner here draws its own.
+  EdgeTAMTracker.snap = nil
+  let all = EdgeRun(a), third = EdgeRun(b)
+  var grey = EdgeSnap.Settings.standard
+  grey.colour = false
+  var soft = EdgeSnap.Settings.standard
+  soft.eps = 1e-2
+  var wide = EdgeSnap.Settings.standard
+  wide.radius = 8
+  return [
+    EdgeRunner("edgetam", every: 1, flow: flow, run: all),
+    EdgeRunner("snap", every: 1, flow: flow, run: all, snap: .standard),
+    EdgeRunner("snapgrey", every: 1, flow: flow, run: all, snap: grey),
+    EdgeRunner("snapsoft", every: 1, flow: flow, run: all, snap: soft),
+    EdgeRunner("snapwide", every: 1, flow: flow, run: all, snap: wide),
+    EdgeRunner("edgetam@8", every: 3, flow: flow, run: third),
+    EdgeRunner("snap@8", every: 3, flow: flow, run: third, snap: .standard),
+  ]
 } ?? [])
 var truthWobble: [Double] = []
 var truthCentres: [CGPoint?] = []
@@ -529,6 +616,7 @@ for (f, url) in frames.enumerated() {
   // EdgeTAM's encoder once a frame, for its runners (the one on every frame looks at all).
   edgeFrame = edgeEncoder.flatMap { try? $0.encode(CIImage(cgImage: image)) }
   let truth = f < masks.count ? groundTruth(masks[f]) : nil
+  let edgeTruth = truth.flatMap { $0.w == W ? truthEdge($0.bits, w: W, h: H) : nil } ?? []
   for r in runners {
     let shown = try r.step(f, image: image, sam: sam, scale: scale, seedBox: seedBox, seedPoint: seedPoint) ?? []
     r.shown.append(shown)
@@ -537,6 +625,7 @@ for (f, url) in frames.enumerated() {
     r.centres.append(n > 0 ? CGPoint(x: cx, y: cy) : nil)
     if let truth, truth.w == W {
       r.j.append(maskIoU(filled, truth.bits))
+      if let e = edgeError(shown, edgeTruth, w: W, h: H) { r.edge.append(e) }
     }
     if r.shown.count > 1, let prev = r.shown.dropLast().last, prev.count > 2, shown.count > 2 {
       let cp = r.centre(prev), cs = r.centre(shown)
@@ -566,12 +655,15 @@ var summary: [String: Any] = [
 var lines: [String] = []
 var runs: [[String: Any]] = []
 for r in runners {
+  let snapMs = (r as? EdgeRunner)?.snapMs ?? []
   runs.append([
-    "label": r.label, "every": r.every, "J": mean(r.j), "wobble": mean(r.wobble), "jerk": jerk(r.centres), "cuts": r.cuts, "refused": r.refused,
-    "jPerFrame": r.j, "outlines": r.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } },
+    "label": r.label, "every": r.every, "J": mean(r.j), "edge": mean(r.edge), "wobble": mean(r.wobble), "jerk": jerk(r.centres),
+    "cuts": r.cuts, "refused": r.refused, "snapMs": mean(snapMs),
+    "jPerFrame": r.j, "edgePerFrame": r.edge, "outlines": r.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } },
   ])
   let label = r.label.padding(toLength: 10, withPad: " ", startingAt: 0)
-  lines.append("  \(label) J \(pct(mean(r.j)))  wobble \(pct(mean(r.wobble)))  jerk \(px(jerk(r.centres)))  (\(r.cuts) cuts, \(r.refused) refused)")
+  let snapped = snapMs.isEmpty ? "" : String(format: ", snap %.1f ms", mean(snapMs))
+  lines.append("  \(label) J \(pct(mean(r.j)))  edge \(px(mean(r.edge)))  wobble \(pct(mean(r.wobble)))  jerk \(px(jerk(r.centres)))  (\(r.cuts) cuts, \(r.refused) refused\(snapped))")
 }
 summary["runs"] = runs
 summary["frameNames"] = frameNames
