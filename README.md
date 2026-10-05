@@ -128,6 +128,18 @@ CI also builds for the iOS 27 Simulator, drives scripted captures through deep l
 | bolt on a belt | lost | 8.3 px | 0.6 px | |
 | bolt moving its width a cut | lost | lost at the second cut | held, 9.3 px | |
 
+EdgeTAM, as pinned things are followed now, on the same footage against the same hand-drawn outlines (`edgetam`: every frame; `edgetam@8`: every third, the flow carrying it between):
+
+| clip | SAM (`lensi@8`) | EdgeTAM every frame | EdgeTAM every third |
+|---|---|---|---|
+| car round a roundabout | J 91.7%, jerk 3.8 px | J 97.5%, 1.3 px | J 95.9%, 5.1 px |
+| car through a junction | J 92.8%, 1.7 px | J 96.8%, 1.0 px | J 95.7%, 2.5 px |
+| drifting car | J 71.1%, 19.1 px | J 93.2%, 10.2 px | J 86.7%, 31.1 px |
+| dog | J 81.2%, 10.6 px | J 93.9%, 7.6 px | J 86.8%, 11.9 px |
+| parkour | J 73.4%, 7.5 px | J 93.0%, 4.0 px | J 78.5%, 10.5 px |
+
+From its memory of the thing it holds on where SAM's re-cuts drift (J 94.9% on average against 82.0%), and the more often it runs the better: the app asks it up to 20 times a second.
+
 At 4 cuts a second (a hot phone, or a guide part waiting its turn) coasting loses fast things (dog J 32%, drifting car 10%) and LiveFlow keeps them (73%, 53%). LiveFlow costs 2-3 ms a frame plus about 1 ms per outline on a Mac core. Not measured here: ARKit (the phone's own motion), SAM's speed on a phone's Neural Engine, heat. `bash tools/track/ci.sh` reproduces it on a Mac; results and videos land on the `ci-track` branch.
 
 ### Following a pinned thing with EdgeTAM, on handheld footage
