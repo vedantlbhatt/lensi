@@ -5,7 +5,8 @@ resampled to `points` points as uint16 x,y pairs, base64.
   pack.py <edgetrack.json> <out.json> <clip> <label> <clip fps> <clip frames> <width> <height> [key, shown] [points, 64]
 
 The run is on the full-rate frames; clip frame k is the run's frame round(k * run fps / clip fps)
-(the run at 30 fps, the clip at 15: every other one).
+(the run at 30 fps, the clip at 15: every other one), or, with PACK_MATCH=<match.py's json>, the
+frame the clip's own frame k was found to show (a phone's video can stamp its frames unevenly).
 """
 import base64
 import json
@@ -22,10 +23,11 @@ key = sys.argv[9] if len(sys.argv) > 9 else "shown"
 n = int(sys.argv[10]) if len(sys.argv) > 10 else 64
 run = json.load(open(src))["frames"]
 step = 30.0 / fps
+matched = json.load(open(os.environ["PACK_MATCH"])) if os.environ.get("PACK_MATCH") else None
 data = bytearray()
 last = None
 for k in range(frames):
-    f = run[min(len(run) - 1, round(k * step))]
+    f = run[min(len(run) - 1, matched[k] if matched and k < len(matched) else round(k * step))]
     o = f.get(key) or []
     if len(o) >= 6:
         # Evenly spaced in pixels, not in fractions of a tall picture.
