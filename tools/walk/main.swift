@@ -737,16 +737,27 @@ for (k, f) in window.enumerated() {
         let seen = OutlineMath.resample(cut.outline, scale: size)
         var ring = seen
         let edgeOf = { (p: [CGPoint]) in p.contains { $0.x < 0.006 || $0.x > 0.994 || $0.y < 0.006 || $0.y > 0.994 } }
-        if edgeOf(seen), let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
-           let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose) {
-          ring = whole
+        // Up close a still thing's part on the picture is taken only where it fits, and moves a
+        // still thing whose depth is known only a little (as LensiARView.segmentLive asks).
+        var taken = true
+        if edgeOf(seen), let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
+          let gate = LiveTracker.asking(still: shape.still).gate
+          let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
+          if let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: limit) {
+            ring = whole
+          } else {
+            taken = false
+            run.refused += 1
+          }
         }
-        let plane = camera.withPlane(through: OutlineMath.centre(now))
-        let laid = ring.compactMap { plane.onPlane($0) }
-        if laid.count == ring.count { world = laid }
-        if run.lidar, let lidarMap { depth = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) }
-        if !edgeOf(seen) {
-          middle = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
+        if taken {
+          let plane = camera.withPlane(through: OutlineMath.centre(now))
+          let laid = ring.compactMap { plane.onPlane($0) }
+          if laid.count == ring.count { world = laid }
+          if run.lidar, let lidarMap { depth = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) }
+          if LiveShape.sightable(seen) {
+            middle = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
+          }
         }
       }
       let asking = LiveTracker.asking(still: shape.still)
@@ -779,7 +790,7 @@ for (k, f) in window.enumerated() {
           }
         }
         var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: asking.smoothing)
-        if world != nil, m.polygon.count > 2, !m.polygon.contains(where: { $0.x < 0.006 || $0.x > 0.994 || $0.y < 0.006 || $0.y > 0.994 }) {
+        if world != nil, m.polygon.count > 2, LiveShape.sightable(m.polygon) {
           // A cut of the whole thing: its middle's line of sight (LiveShape.sight).
           let ring = OutlineMath.resample(m.polygon, scale: size)
           pending.middle = CGPoint(x: ring.map(\.x).reduce(0, +) / CGFloat(ring.count), y: ring.map(\.y).reduce(0, +) / CGFloat(ring.count))

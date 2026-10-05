@@ -351,6 +351,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// Pinned at 0.5x and not yet in the world: its first cut at 1x is laid where it's measured
     /// to be (`anchor` means nothing yet).
     var unplaced = false
+    /// Up close, how much bigger or smaller the part on the picture can make the whole outline
+    /// in one cut (LiveTracker.follow).
+    var scaleLimit: CGFloat = 1.4
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -439,8 +442,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let predicted = uprightPoints(now, camera: frame.camera, upright: upright)
         let visible = predicted.map { LiveTracker.clipped($0) } ?? []
         let box = visible.count >= 3 ? LiveTracker.bounds(visible) : nil
+        // Up close, a still thing's part on the picture is taken only where it fits (the strict
+        // gate), and moves a still thing whose depth is known only a little (ARKit already
+        // scales it as the phone comes closer): as SAM's cuts are (tools/walk).
+        let asking = LiveTracker.asking(still: shape.still)
         prompts.append(LivePrompt(key: key, point: nil, box: box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
-                                  follows: true, smoothing: LiveTracker.asking(still: shape.still).smoothing, edge: true))
+                                  follows: true, gate: asking.gate, smoothing: asking.smoothing, edge: true,
+                                  scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4))
       }
       // Pinned at 0.5x: EdgeTAM is already following them; their first cut here lays them in the world.
       for key in pinOrder where flatPins.contains(key) {
@@ -516,7 +524,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           } else if let d = camera.medianDepth(of: points, inside: cut) {
             depth = (d, LiveShape.pointsWeight)
           }
-          found[p.key] = LiveCut(world: world, depth: depth, middle: Self.touchesEdge(cut) ? nil : Self.middle(cut))
+          found[p.key] = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(cut) ? Self.middle(cut) : nil)
         }
       } catch {
         failure = error.localizedDescription
@@ -581,9 +589,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let seen = OutlineMath.resample(cut.outline, scale: upright)
       var ring = seen
       // Up close it runs off the picture, and EdgeTAM can only outline the part on it: the whole
-      // outline goes where that part went, rather than stopping at the picture's edge.
-      if Self.touchesEdge(seen), let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
-         let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose) {
+      // outline goes where that part went, rather than stopping at the picture's edge. A part
+      // that doesn't fit where the thing should be isn't taken (ARKit holds it meanwhile): laid
+      // as the whole thing, or carried far by it, it threw the whole outline about a close-up
+      // sink and washer (tools/walk).
+      if Self.touchesEdge(seen), let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
+        guard let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit) else { continue }
         ring = whole
       }
       var anchor = p.anchor
@@ -608,7 +619,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       } else if let d = camera.medianDepth(of: points, inside: seen) {
         depth = (d, LiveShape.pointsWeight)
       }
-      found[p.key] = LiveCut(world: world, depth: depth, middle: Self.touchesEdge(seen) ? nil : Self.middle(seen))
+      found[p.key] = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(seen) ? Self.middle(seen) : nil)
     }
     return found
   }

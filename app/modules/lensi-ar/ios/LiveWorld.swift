@@ -334,6 +334,24 @@ struct LiveShape {
   static let sightMiss: Float = 0.03
   /// How far one crossing moves it (`setRange`).
   static let sightWeight: Float = 0.35
+  /// Only a thing that's this little of the picture across (and wholly on it) is sighted: a big
+  /// one's outline is mostly its near face, so the middle of it isn't one place in the world as
+  /// the phone goes round, and its lines of sight cross too near (tools/walk: a washer filling
+  /// three quarters of the picture was put at 0.55 of its distance, a sofa at 0.53).
+  static let sightSize: CGFloat = 0.4
+
+  /// Whether a cut (upright 0…1) is one to sight the thing by (`sight`): all of it on the
+  /// picture, and small enough on it (`sightSize`).
+  static func sightable(_ ring: [CGPoint], margin: CGFloat = 0.006) -> Bool {
+    guard ring.count >= 3 else { return false }
+    var x0 = CGFloat.greatestFiniteMagnitude, y0 = CGFloat.greatestFiniteMagnitude
+    var x1 = -CGFloat.greatestFiniteMagnitude, y1 = -CGFloat.greatestFiniteMagnitude
+    for p in ring {
+      x0 = min(x0, p.x); y0 = min(y0, p.y); x1 = max(x1, p.x); y1 = max(y1, p.y)
+    }
+    guard x0 > margin, y0 > margin, x1 < 1 - margin, y1 < 1 - margin else { return false }
+    return max(x1 - x0, y1 - y0) <= sightSize
+  }
 
   /// A cut of the whole thing (none of it off the picture), its middle `middle` (upright) as
   /// `camera` saw it at `t`: its line of sight is kept, and where the lines kept cross puts how
