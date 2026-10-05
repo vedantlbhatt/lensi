@@ -10,8 +10,14 @@
 // LensiARView does at 0.5x (OutlineMath.glide, in pixels). EDGETRACK_EVERY=n runs EdgeTAM on every n-th frame
 // only, as a phone that keeps up with 30/n frames a second would; the frames between show the
 // last outline.
+//
+// EDGETRACK_LIVE_MS=<ms> plays the clip as the phone's camera instead (`live` below): its frames
+// at their own times (EDGETRACK_FPS, 30), EdgeTAM started on a frame only when the app would
+// start it, each answer ready that many milliseconds after its frame and drawn from the first
+// frame after that, and the outline moved between answers. Writes each frame's "live" outline.
 import CoreImage
 import Foundation
+import ImageIO
 import simd
 
 let args = CommandLine.arguments
@@ -38,6 +44,111 @@ let encoder = try EdgeTAMTracker.Encoder(models: models)
 let tracker = try EdgeTAMTracker(models: models)
 
 func r(_ v: Double, _ places: Double = 100000) -> Double { (v * places).rounded() / places }
+
+/// The clip as the phone's camera (LensiARView.wideFrame and layoutWide, the app on a flat
+/// picture). A look starts on a frame only once the last answer is in and 50 ms have passed since
+/// the last one started (the app's limit: up to 20 a second); its answer is ready `latency`
+/// seconds after that frame, and is used from the first frame shown after that. The app keeps
+/// each answer in its own frame's place and moves it on to the frame being shown by how the phone
+/// has turned since (the gyro); a clip has no gyro, so here it's moved by the thing's own pixels
+/// (LiveFlow, the app's carry for things ARKit doesn't hold), frame by frame. Each answer is
+/// glided into the last one, moved on to the answer's frame (OutlineMath.glide, in pixels).
+func live(latency: Double, fps: Double) throws -> [String: Any] {
+  struct Pending {
+    let frame: Int
+    let ready: Double
+    let cut: EdgeTAMTracker.Cut
+  }
+  var flows: [Int: LiveFlow.Frame] = [:]
+  /// `o` (fractions) carried frame by frame from frame a to frame b; held where it is across a
+  /// frame the flow can't say (as the app's carry leaves it).
+  func carried(_ o: [CGPoint], from a: Int, to b: Int) -> [CGPoint] {
+    guard a < b else { return o }
+    var now = o
+    for k in a..<b {
+      if let f0 = flows[k], let f1 = flows[k + 1], let next = LiveFlow.carry(now, from: f0, to: f1) { now = next }
+    }
+    return now
+  }
+  var out: [[String: Any]] = []
+  var pending: Pending?
+  var lastStart = -Double.infinity
+  var stored: [CGPoint]? // the last answer, glided, where it was on its own frame
+  var storedFrame = 0
+  var drawn: [CGPoint]? // that, moved on to the frame being shown
+  var looks = 0, answers = 0
+  var stepMs: [Double] = []
+  for (g, name) in names.enumerated() {
+    let url = framesDir.appendingPathComponent(name)
+    guard let picture = CIImage(contentsOf: url), let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+      print("can't read \(name)")
+      continue
+    }
+    let t = Double(g) / fps
+    let w = picture.extent.width, h = picture.extent.height
+    let size = CGSize(width: w, height: h)
+    flows[g] = LiveFlow.frame(image)
+    flows[g - 16] = nil
+    if let d = drawn { drawn = carried(d, from: g - 1, to: g) }
+    var answered = -1
+    if let p = pending, p.ready <= t + 1e-9 {
+      pending = nil
+      answers += 1
+      answered = p.frame
+      if p.cut.visible {
+        let px = { (q: CGPoint) in simd_float3(Float(q.x * w), Float(q.y * h), 0) }
+        let ring = OutlineMath.resample(p.cut.outline, scale: size).map(px)
+        let last = stored.map { carried($0, from: storedFrame, to: p.frame).map(px) }
+        let glided = OutlineMath.glide(last, ring).map { CGPoint(x: CGFloat($0.x) / w, y: CGFloat($0.y) / h) }
+        stored = glided
+        storedFrame = p.frame
+        drawn = carried(glided, from: p.frame, to: g)
+      } else {
+        stored = nil
+        drawn = nil
+      }
+    }
+    var looked = false
+    if g == 0 {
+      // Pinned on this frame: the outline the strip showed is there at once.
+      let b = CGRect(x: box[0] / w, y: box[1] / h, width: (box[2] - box[0]) / w, height: (box[3] - box[1]) / h)
+      let cut = try tracker.start(encoder.encode(picture), box: b)
+      if cut.visible {
+        stored = OutlineMath.resample(cut.outline, scale: size)
+        drawn = stored
+      }
+      lastStart = t
+      looked = true
+    } else if pending == nil, t - lastStart > 0.05 {
+      let wall = CFAbsoluteTimeGetCurrent()
+      let cut = try tracker.step(encoder.encode(picture))
+      stepMs.append((CFAbsoluteTimeGetCurrent() - wall) * 1000)
+      pending = Pending(frame: g, ready: t + latency, cut: cut)
+      lastStart = t
+      looks += 1
+      looked = true
+    }
+    out.append([
+      "name": name,
+      "live": (drawn ?? []).flatMap { [r(Double($0.x)), r(Double($0.y))] },
+      "answer": answered,
+      "look": looked,
+    ])
+  }
+  let seconds = Double(names.count) / fps
+  print(String(format: "live at %.0f ms: %ld looks over %.1f s (%.1f a second), each answer %.0f ms after its frame", latency * 1000, looks,
+               seconds, Double(looks) / max(seconds, 1e-9), latency * 1000))
+  return ["frames": out, "box": box, "latencyMs": latency * 1000, "fps": fps, "looks": looks, "answers": answers,
+          "macStepMs": r(stepMs.sorted().dropFirst(stepMs.count / 2).first ?? 0, 10)]
+}
+
+if let ms = Double(ProcessInfo.processInfo.environment["EDGETRACK_LIVE_MS"] ?? "") {
+  let fps = Double(ProcessInfo.processInfo.environment["EDGETRACK_FPS"] ?? "") ?? 30
+  let result = try live(latency: ms / 1000, fps: fps)
+  try JSONSerialization.data(withJSONObject: result).write(to: URL(fileURLWithPath: outPath))
+  exit(0)
+}
 
 let every = max(1, Int(ProcessInfo.processInfo.environment["EDGETRACK_EVERY"] ?? "") ?? 1)
 var frames: [[String: Any]] = []

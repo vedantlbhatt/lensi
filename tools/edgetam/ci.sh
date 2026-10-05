@@ -9,6 +9,9 @@
 # 3. Those models in parts.Tracker (Python) against the reference: the conversion's cost.
 # 4. The app's own EdgeTAMTracker.swift (tools/edgetrack) on every frame: IoU with the reference,
 #    shake, milliseconds, and the outline drawn on the video as the phone draws it.
+# 5. The same clip played as the phone's camera (EDGETRACK_LIVE_MS): EdgeTAM only as often as the
+#    app starts it, each answer late by the time it takes (60 ms, and 100 for a slower phone), the
+#    outline moved on between answers; scored and drawn the same way.
 set -o pipefail
 OUT=out/edgetam
 # The bottle in the first frame, in the clip's 540 x 960 pixels.
@@ -60,13 +63,18 @@ swiftc -O -o edgetrack tools/edgetrack/main.swift $I/EdgeTAMTracker.swift \
 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/swift.json" "$BOX" 2>&1 | tee "$OUT/swift.txt"
 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/swift.json" "$OUT" shaker outline shown 2>&1 | tee -a "$OUT/summary.txt"
 
+echo "== As the phone's camera: EdgeTAM at the app's rate, each answer late"
+for ms in 60 100; do
+  EDGETRACK_LIVE_MS=$ms LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live$ms.json" "$BOX" 2>&1 | tee "$OUT/live$ms.txt" | tee -a "$OUT/summary.txt"
+  python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live$ms.json" "$OUT" "shaker-live$ms" live 2>&1 | tee -a "$OUT/summary.txt"
+done
+
 echo "== The Core ML models in parts.Tracker (Python)"
 python tools/edgetam/check_coreml.py "$EDGETAM" "$PWD/build/edgetam" "$PWD/footage/shaker" "$REF" "$BOX" \
   "$PWD/$OUT/coreml-ALL.json" ALL 2>&1 | tee "$OUT/coreml-ALL.txt" | grep -v "^frame" | tee -a "$OUT/summary.txt"
 # The same models with their weights in 8 bits a value (EDGETAM_WEIGHTS=int8): half the size. The
-# app's tracker with them, scored the same way.
-echo "== Core ML, 8-bit weights"
-if EDGETAM_WEIGHTS=int8 python tools/edgetam/convert.py "$EDGETAM" "$PWD/build/edgetam-int8" 2>&1 | grep -v "%|" | tee "$OUT/convert-int8.txt"; then
+# app's tracker with them, scored the same way (EDGETAM_INT8=1; tried and turned down, README).
+if [ "${EDGETAM_INT8:-0}" = 1 ] && echo "== Core ML, 8-bit weights" && EDGETAM_WEIGHTS=int8 python tools/edgetam/convert.py "$EDGETAM" "$PWD/build/edgetam-int8" 2>&1 | grep -v "%|" | tee "$OUT/convert-int8.txt"; then
   mkdir -p "$OUT/models-int8"
   for m in EdgeTAMEncoder EdgeTAMPrompt EdgeTAMTrack EdgeTAMMemory; do
     xcrun coremlcompiler compile "build/edgetam-int8/$m.mlpackage" "$OUT/models-int8/" >/dev/null
