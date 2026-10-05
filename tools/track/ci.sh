@@ -43,8 +43,6 @@ clip() {
   done
   # The app now next to the app before LiveFlow.
   python tools/track/render.py "$1" "out/track/$3.json" out/track lensi@8 coast@8 || echo "FAIL $3 vs coast@8"
-  # EdgeTAM's outline with its edge put on the picture's, next to the mask's own.
-  python tools/track/render.py "$1" "out/track/$3.json" out/track snap edgetam || echo "FAIL $3 snap vs edgetam"
 }
 LABELS=("$@")
 for s in $SEQS; do

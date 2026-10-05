@@ -21,12 +21,7 @@
 //              from its memory of the thing, started from the seed box, every frame; what's
 //              shown glides from one outline to the next (OutlineMath.glide)
 //   edgetam@8  the same on every third frame, carried on its own pixels in between (the flow)
-//   snap       edgetam with its edge put on the picture's own (EdgeSnap.standard: a guided filter
-//              on the 1024 canvas round the thing, its brightness as the guide, worked on a grid
-//              of at most 256 a side); snap512 on a grid twice as fine, snapsmooth smoothed twice
-//              as far along the edge, snapcolour with the picture's colours as the guide; snap@8
-//              as edgetam@8 (each from the same EdgeTAM run as the one it's compared with)
-//   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
+//   (both only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
 // edge (how far the line drawn as the phone draws it is from the mask's edge, in pixels), wobble
@@ -469,52 +464,25 @@ print("\(name): \(frames.count) frames \(W)x\(H), seed box \(seedBox), point \(s
 /// The frame EdgeTAM's encoder made, for every EdgeTAM runner that looks at this frame.
 var edgeFrame: EdgeTAMTracker.Encoded?
 
-/// One EdgeTAM run several runners draw from, each its own way: it steps once a frame it's asked.
-final class EdgeRun {
-  let tracker: EdgeTAMTracker
-  private var at = -1
-  private var last: EdgeTAMTracker.Cut?
-
-  init(_ tracker: EdgeTAMTracker) { self.tracker = tracker }
-
-  func cut(_ f: Int, _ picture: EdgeTAMTracker.Encoded, box: CGRect) throws -> EdgeTAMTracker.Cut {
-    if let last, f == at { return last }
-    let cut = try f == 0 ? tracker.start(picture, box: box) : tracker.step(picture)
-    last = cut
-    at = f
-    return cut
-  }
-}
-
 /// The app's pinned things now (LensiARView.followEdge): EdgeTAM from its memory of the thing,
 /// every `every`-th frame; in between, the outline rides its own pixels (the flow); each new
-/// outline glides into the last (OutlineMath.glide, in pixels). With `snap`, each outline's edge
-/// is put on the picture's own first (EdgeSnap); without, it's the mask's (EdgeTAMTracker.plain).
+/// outline glides into the last (OutlineMath.glide, in pixels).
 final class EdgeRunner: Runner {
-  let run: EdgeRun
-  let snap: EdgeSnap.Settings?
-  var snapMs: [Double] = []
+  let tracker: EdgeTAMTracker
 
-  init(_ label: String, every: Int, flow: PixelFlow?, run: EdgeRun, snap: EdgeSnap.Settings? = nil) {
-    self.run = run
-    self.snap = snap
+  init(_ label: String, every: Int, flow: PixelFlow?, tracker: EdgeTAMTracker) {
+    self.tracker = tracker
     super.init(label, tracking: true, smoothing: nil, every: every, flow: flow, scaling: true)
   }
 
   override func step(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
     let looks = f == 0 || f % every == 0
     if looks, let picture = edgeFrame {
-      let cut = try run.cut(f, picture, box: seedBox)
+      let cut = try f == 0 ? tracker.start(picture, box: seedBox) : tracker.step(picture)
       cuts += 1
       if cut.visible {
-        var traced = EdgeTAMTracker.plain(cut.cells)
-        if let snap, let canvas = picture.canvas {
-          let t0 = Date()
-          if let snapped = EdgeSnap.outline(logits: cut.logits, cells: cut.cells, canvas: canvas, settings: snap) { traced = snapped }
-          snapMs.append(Date().timeIntervalSince(t0) * 1000)
-        }
         let px = { (p: CGPoint) in simd_float3(Float(p.x * scale.width), Float(p.y * scale.height), 0) }
-        let ring = OutlineMath.resample(traced, scale: scale).map(px)
+        let ring = OutlineMath.resample(cut.outline, scale: scale).map(px)
         outline = OutlineMath.glide(outline?.map(px), ring).map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
       } else {
         outline = nil
@@ -582,24 +550,7 @@ let runners = [
          bySpeed: true),
 ] + (edgeModels.flatMap { models -> [Runner]? in
   guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models) else { return nil }
-  // The tracker's own outlines are left as the mask's: each runner here draws its own.
-  EdgeTAMTracker.snap = nil
-  let all = EdgeRun(a), third = EdgeRun(b)
-  var fine = EdgeSnap.Settings.standard
-  fine.maxSide = 512
-  var smooth = EdgeSnap.Settings.standard
-  smooth.sigma = 3
-  var colour = EdgeSnap.Settings.standard
-  colour.colour = true
-  return [
-    EdgeRunner("edgetam", every: 1, flow: flow, run: all),
-    EdgeRunner("snap", every: 1, flow: flow, run: all, snap: .standard),
-    EdgeRunner("snap512", every: 1, flow: flow, run: all, snap: fine),
-    EdgeRunner("snapsmooth", every: 1, flow: flow, run: all, snap: smooth),
-    EdgeRunner("snapcolour", every: 1, flow: flow, run: all, snap: colour),
-    EdgeRunner("edgetam@8", every: 3, flow: flow, run: third),
-    EdgeRunner("snap@8", every: 3, flow: flow, run: third, snap: .standard),
-  ]
+  return [EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b)]
 } ?? [])
 var truthWobble: [Double] = []
 var truthCentres: [CGPoint?] = []
@@ -656,15 +607,13 @@ var summary: [String: Any] = [
 var lines: [String] = []
 var runs: [[String: Any]] = []
 for r in runners {
-  let snapMs = (r as? EdgeRunner)?.snapMs ?? []
   runs.append([
     "label": r.label, "every": r.every, "J": mean(r.j), "edge": mean(r.edge), "wobble": mean(r.wobble), "jerk": jerk(r.centres),
-    "cuts": r.cuts, "refused": r.refused, "snapMs": mean(snapMs),
+    "cuts": r.cuts, "refused": r.refused,
     "jPerFrame": r.j, "edgePerFrame": r.edge, "outlines": r.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } },
   ])
   let label = r.label.padding(toLength: 10, withPad: " ", startingAt: 0)
-  let snapped = snapMs.isEmpty ? "" : String(format: ", snap %.1f ms", mean(snapMs))
-  lines.append("  \(label) J \(pct(mean(r.j)))  edge \(px(mean(r.edge)))  wobble \(pct(mean(r.wobble)))  jerk \(px(jerk(r.centres)))  (\(r.cuts) cuts, \(r.refused) refused\(snapped))")
+  lines.append("  \(label) J \(pct(mean(r.j)))  edge \(px(mean(r.edge)))  wobble \(pct(mean(r.wobble)))  jerk \(px(jerk(r.centres)))  (\(r.cuts) cuts, \(r.refused) refused)")
 }
 summary["runs"] = runs
 summary["frameNames"] = frameNames
