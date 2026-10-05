@@ -157,6 +157,8 @@ In the Simulator, `lensi:///?scene=shaker&edgetam=shaker` has the app itself run
 
 A phone's video can stamp its frames unevenly: round the switch to 0.5x the 15 fps demo clip shows the odd frames of the 30 fps footage for a second, so a track packed by time alone lagged the picture there by half a frame (IoU 0.71 at worst). [`tools/edgetam/match.py`](tools/edgetam/match.py) finds the frame each clip frame really shows; the bottle's bundled track is packed by it (worst 0.93), and the app's own run above is scored by it.
 
+Smaller models were tried and turned down: with their weights stored in 8 bits a value (`EDGETAM_WEIGHTS=int8`, 27 MB for the four against 52) the app's tracker lost the bottle's outline in the closest frames (IoU 0.66 at worst, 13 frames under 0.7, against float16's 0.94), though the same rounding in PyTorch cost nothing, and it was no faster on CI's Mac. The app ships float16.
+
 On a flat picture (0.5x, and the virtual camera's track) each new outline is glided into the last: carried onto it by the affine map that fits best, so motion and zoom pass straight through, and only what's left (the mask's edge noise) eased in (`OutlineMath.glide`). [`tools/edgetam/smooth.py`](tools/edgetam/smooth.py) is the app's outline code in Python for trying such things on the full-precision masks. `bash tools/edgetam/ci.sh` on a Mac reproduces all of it (the `edgetam-lab` workflow), and the compiled models and the outlines drawn on the clip land on the `ci-edgetam` branch.
 
 #### Across the switch to 0.5x
