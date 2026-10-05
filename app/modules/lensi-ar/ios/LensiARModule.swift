@@ -68,7 +68,7 @@ public class LensiARModule: Module {
         promise.reject("E_TRACK", "Bad box.")
         return
       }
-      let url = uri.hasPrefix("file:") ? URL(string: uri) : URL(fileURLWithPath: uri)
+      let url: URL? = uri.hasPrefix("file:") ? URL(string: uri) : URL(fileURLWithPath: uri)
       guard let url else {
         promise.reject("E_TRACK", "Bad file.")
         return

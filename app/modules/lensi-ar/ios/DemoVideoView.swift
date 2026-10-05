@@ -78,7 +78,8 @@ final class DemoVideoView: ExpoView {
   func setSource(_ uri: String) {
     guard uri != source, !uri.isEmpty else { return }
     source = uri
-    guard let url = uri.hasPrefix("/") ? URL(fileURLWithPath: uri) : URL(string: uri) else { return }
+    let found: URL? = uri.hasPrefix("/") ? URL(fileURLWithPath: uri) : URL(string: uri)
+    guard let url = found else { return }
     player.removeAllItems()
     looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
     if window != nil { player.play() }
