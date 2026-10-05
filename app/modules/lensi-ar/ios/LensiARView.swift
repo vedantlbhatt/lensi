@@ -445,12 +445,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let predicted = uprightPoints(now, camera: frame.camera, upright: upright)
         let visible = predicted.map { LiveTracker.clipped($0) } ?? []
         let box = visible.count >= 3 ? LiveTracker.bounds(visible) : nil
-        // Up close, a still thing's part on the picture is taken only where it fits (the strict
-        // gate), and moves a still thing whose depth is known only a little (ARKit already
-        // scales it as the phone comes closer): as SAM's cuts are (tools/walk).
+        // Up close, the part of it on the picture moves a still thing whose depth is known only a
+        // little (ARKit already scales it as the phone comes closer), and is taken only if it's
+        // plausibly the same thing (the loose gate: on walk-arounds the strict one SAM's cuts use
+        // refused EdgeTAM's good cuts and lost a TV in 65% of frames, against 33%; tools/walk).
         let asking = LiveTracker.asking(still: shape.still)
         prompts.append(LivePrompt(key: key, point: nil, box: box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
-                                  follows: true, gate: asking.gate, smoothing: asking.smoothing, edge: true,
+                                  follows: true, gate: .loose, smoothing: asking.smoothing, edge: true,
                                   scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4))
       }
       // Pinned at 0.5x: EdgeTAM is already following them; their first cut here lays them in the world.
