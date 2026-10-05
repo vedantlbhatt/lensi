@@ -3,11 +3,14 @@
 Writes EdgeTAMEncoder, EdgeTAMPrompt, EdgeTAMTrack and EdgeTAMMemory .mlpackage (ML Program,
 iOS 17, float16), for `xcrun coremlcompiler compile` into the app's Models/. Runs anywhere
 coremltools does (the conversion doesn't load the models; checking them needs a Mac: check_coreml.py).
+EDGETAM_WEIGHTS=int8 stores the weights in 8 bits a value with a scale per output channel (half
+the size; Core ML turns them back into float16 as it loads them).
 """
 import os
 import sys
 
 import coremltools as ct
+import coremltools.optimize.coreml as cto
 import numpy as np
 import torch
 
@@ -20,6 +23,7 @@ import parts  # noqa: E402
 os.makedirs(out_dir, exist_ok=True)
 m = parts.load(root, os.path.join(root, "checkpoints/edgetam.pt"))
 on_mac = sys.platform == "darwin"
+weights = os.environ.get("EDGETAM_WEIGHTS", "float16")
 
 F = parts.FEAT
 features = torch.randn(1, 256, F, F)
@@ -47,6 +51,10 @@ def convert(name, module, example, inputs, outputs):
         compute_precision=ct.precision.FLOAT16,
         skip_model_load=not on_mac,
     )
+    if weights == "int8":
+        config = cto.OptimizationConfig(global_config=cto.OpLinearQuantizerConfig(
+            mode="linear_symmetric", dtype="int8", granularity="per_channel", weight_threshold=2048))
+        mlmodel = cto.linear_quantize_weights(mlmodel, config=config)
     mlmodel.author = "EdgeTAM (Meta, Apache 2.0), split for Lensi: tools/edgetam"
     mlmodel.short_description = name
     path = os.path.join(out_dir, f"{name}.mlpackage")
