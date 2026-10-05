@@ -6,9 +6,9 @@ The outlines are in the app's upright picture (the sensor image turned `.right`)
 are drawn as the iPad recorded them, turned so the room's up is up. Writes, top over bottom:
 
   <name>-before-after.mp4  the app before / now, pinned at the right depth
-  <name>-far.mp4           before / now, both pinned 40% too far
-  <name>-lidar.mp4         before / now with LiDAR, as on a Pro iPhone (pinned 40% too far)
-  <name>-arkit.mp4         ARKit alone / the app now
+  <name>-far.mp4           before / now with LiDAR, both pinned 40% too far
+  <name>-calmp.mp4         before / held still up close
+  <name>-slow.mp4          before / blended slowly and held still up close
   <name>-depth.mp4         ARKit alone at a depth 40% off / at the right depth: what a wrong
                            depth does by itself as the camera moves
 and <name>.mp4, the app now, bigger.
@@ -28,19 +28,21 @@ CAPTIONS = {
     "arkit@far": "ARKit alone, pinned 40% too far",
     "app@true": "Before",
     "app@far": "Before, pinned 40% too far",
-    "lidar@far": "Depth put right by LiDAR (pinned 40% too far)",
-    "band@true": "Cuts that agree only confirm it",
-    "noflow@true": "Still things not carried by the flow",
-    "calm@true": "Now",
-    "calm@far": "Now, pinned 40% too far",
-    "calml@far": "Now with LiDAR, pinned 40% too far",
+    "steady@true": "Now",
+    "steady@far": "Now, pinned 40% too far",
+    "steadyl@far": "Now with LiDAR, pinned 40% too far",
+    "calmp@true": "Now (held still up close)",
+    "calmp@far": "Now (held still up close), pinned 40% too far",
+    "slow@true": "Now (blended slowly)",
+    "slowp@true": "Now (blended slowly, held still up close)",
+    "calm@true": "Now (held still)",
 }
 
 PAIRS = [
-    ("before-after", "app@true", "calm@true"),
-    ("far", "app@far", "calm@far"),
-    ("lidar", "app@far", "calml@far"),
-    ("arkit", "arkit@true", "calm@true"),
+    ("before-after", "app@true", "steady@true"),
+    ("far", "app@far", "steadyl@far"),
+    ("calmp", "app@true", "calmp@true"),
+    ("slow", "app@true", "slowp@true"),
     ("depth", "arkit@far", "arkit@true"),
 ]
 
@@ -79,7 +81,7 @@ def main():
     h, w = first.shape[:2]
     fps = 30
     s = 2
-    app = os.environ.get("WALK_APP", "calm@true")
+    app = os.environ.get("WALK_APP", "steady@true")
     single = writer(os.path.join(out_dir, f"{name}.mp4"), w * s, h * s, fps)
     pairs = [(top, bottom, writer(os.path.join(out_dir, f"{name}-{tag}.mp4"), w, h * 2, fps))
              for tag, top, bottom in PAIRS if top in runs and bottom in runs]

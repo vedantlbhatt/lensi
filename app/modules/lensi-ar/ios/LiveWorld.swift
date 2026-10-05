@@ -158,6 +158,8 @@ struct LiveShape {
   /// Which way it was seen from (from its middle, unit) when the last cut was taken: a still
   /// thing seen from about there again is asked about with the tight gate (`turned`).
   private(set) var lastView: simd_float3?
+  /// How long what's drawn of it takes to ease onto where it is while it's still (`easeStill`).
+  var stillEase = LiveShape.easeStill
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
@@ -370,7 +372,7 @@ struct LiveShape {
       let v = !still && simd_length(velocity) >= 0.02 ? velocity : .zero
       let carried = last.map { $0 + v * dt }
       if simd_distance(OutlineMath.centre(carried), OutlineMath.centre(target)) < OutlineMath.spread(target) {
-        let k = 1 - exp(-dt / (still ? LiveShape.easeStill : LiveShape.ease))
+        let k = 1 - exp(-dt / (still ? stillEase : LiveShape.ease))
         let lined = OutlineMath.align(target, to: carried).points
         shown = zip(carried, lined).map { $0 + ($1 - $0) * k }
       }

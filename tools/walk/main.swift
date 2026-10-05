@@ -14,13 +14,14 @@
 //   arkit@far    cut once 40% too far (a raycast that hit the wall behind), then ARKit alone
 //   app@true     the app before, pinned at the true depth
 //   app@far      the same, pinned 40% too far
-//   lidar@far    ...its depth put right by LiDAR inside each cut, as on a Pro iPhone
-//   band@true    a still thing's cut that agrees with where it's drawn only confirms it
-//   noflow@true  a still thing isn't carried by the flow (ARKit holds it)
-//   calm@true    the app now: both, and a still thing seen from about where it was last cut
-//                takes only a cut that matches it closely (LiveTracker.asking(still:turned:))
-//   calm@far     the same, pinned 40% too far
-//   calml@far    ...and LiDAR
+//   steady@*     a still thing isn't carried by the flow (ARKit holds it), and seen from about
+//                where it was last cut takes only a cut that matches it closely
+//   steadyl@far  ...and its depth put right by LiDAR inside each cut, as on a Pro iPhone
+//   calmp@*      steady, and partly off the picture a cut that agrees with where it's drawn
+//                only confirms it (LiveShape.confirmed)
+//   calm@true    the same whether partly off the picture or not
+//   slow@true    steady, a still thing's cuts blended in more slowly and eased onto over 0.3 s
+//   slowp@true   slow and calmp
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
@@ -545,8 +546,11 @@ final class Run {
   /// Its depth put right by LiDAR inside each cut (LiveShape.setDepth).
   let lidar: Bool
   /// A still thing's cut that agrees with where it should be is only confirmed, not blended in
-  /// (LiveTracker.agrees, LiveShape.confirmed).
+  /// (LiveTracker.agrees, LiveShape.confirmed); `bandPartly`: only while it's partly off the picture.
   let band: Bool
+  let bandPartly: Bool
+  /// A still thing's cuts are blended in more slowly, and what's drawn eases onto them more slowly.
+  let slow: Bool
   /// A still thing isn't carried by the flow between cuts (ARKit holds it).
   let noflow: Bool
   /// A still thing seen from about where it was last cut is asked about with the tight gate
@@ -561,13 +565,15 @@ final class Run {
   var depthRatio: [Double] = []
   var cuts = 0, refused = 0, carried = 0, measured = 0, agreed = 0
 
-  init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, band: Bool = false, noflow: Bool = false,
-       tight: Bool = false) {
+  init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, band: Bool = false, bandPartly: Bool = false,
+       slow: Bool = false, noflow: Bool = false, tight: Bool = false) {
     self.label = label
     self.start = start
     self.once = once
     self.lidar = lidar
     self.band = band
+    self.bandPartly = bandPartly
+    self.slow = slow
     self.noflow = noflow
     self.tight = tight
   }
@@ -578,13 +584,18 @@ let runs = [
   Run("arkit@far", start: 1.4, once: true),
   Run("app@true", start: 1),
   Run("app@far", start: 1.4),
-  Run("lidar@far", start: 1.4, lidar: true),
-  Run("band@true", start: 1, band: true),
-  Run("noflow@true", start: 1, noflow: true),
+  Run("steady@true", start: 1, noflow: true, tight: true),
+  Run("steady@far", start: 1.4, noflow: true, tight: true),
+  Run("steadyl@far", start: 1.4, lidar: true, noflow: true, tight: true),
+  Run("calmp@true", start: 1, bandPartly: true, noflow: true, tight: true),
+  Run("calmp@far", start: 1.4, bandPartly: true, noflow: true, tight: true),
+  Run("slow@true", start: 1, slow: true, noflow: true, tight: true),
+  Run("slowp@true", start: 1, bandPartly: true, slow: true, noflow: true, tight: true),
   Run("calm@true", start: 1, band: true, noflow: true, tight: true),
-  Run("calm@far", start: 1.4, band: true, noflow: true, tight: true),
-  Run("calml@far", start: 1.4, lidar: true, band: true, noflow: true, tight: true),
 ]
+/// A still thing's blending for `Run.slow`: a cut moves it a fifth of the way rather than a third,
+/// and its shape keeps more of what it was.
+let slowStill = OutlineMath.Smoothing(quiet: 0.15, keepQuiet: 0.85, small: 0.3, keepSmall: 0.7, still: 0.1, followStill: 0.2, followMoving: 0.8)
 /// SAM asked every 4th frame (7.5 times a second; LensiARView asks as often as the phone keeps
 /// up, at least 80 ms apart), its answer landing two frames (66 ms) after the frame it was asked about.
 let every = 4
@@ -688,13 +699,15 @@ for (k, f) in window.enumerated() {
       }
       var shape = LiveShape(world: laid, at: t, follows: true)
       shape.pinned = true
+      if run.slow { shape.stillEase = 0.3 }
       run.shape = shape
     } else if !run.once, run.pending == nil, k % every == 0, let shape = run.shape {
       // SAM asked where it should be now (LensiARView.segmentLive's follow): up close, about the
       // part on the picture, and the whole outline goes where that part went.
       let now = shape.placed(at: t)
       let still = shape.misses >= 2 || shape.still
-      let asking = run.tight ? LiveTracker.asking(still: still, turned: shape.turned(from: camera.position)) : LiveTracker.asking(still: still)
+      var asking = run.tight ? LiveTracker.asking(still: still, turned: shape.turned(from: camera.position)) : LiveTracker.asking(still: still)
+      if run.slow, still { asking.smoothing = slowStill }
       if let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) >= LiveTracker.minVisible,
          let prompt = LiveTracker.prompt(for: predicted, scale: size, grow: asking.grow) {
         let m = try sam.segment(id: "frame", points: [prompt.point], labels: [1], box: prompt.box, prior: predicted)
@@ -705,7 +718,8 @@ for (k, f) in window.enumerated() {
         if m.score >= 0.5, m.polygon.count > 2 {
           let cut = OutlineMath.resample(m.polygon, scale: size)
           if let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate) {
-            agreed = run.band && still && LiveTracker.agrees(cut, predicted: predicted)
+            let partly = LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible
+            agreed = (run.band || (run.bandPartly && partly)) && still && LiveTracker.agrees(cut, predicted: predicted)
             let plane = camera.withPlane(through: OutlineMath.centre(now))
             let laid = ring.compactMap { plane.onPlane($0) }
             if laid.count == ring.count { world = laid }
