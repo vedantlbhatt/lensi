@@ -68,6 +68,8 @@ for ms in 60 100; do
   EDGETRACK_LIVE_MS=$ms LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live$ms.json" "$BOX" 2>&1 | tee "$OUT/live$ms.txt" | tee -a "$OUT/summary.txt"
   python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live$ms.json" "$OUT" "shaker-live$ms" live 2>&1 | tee -a "$OUT/summary.txt"
 done
+# What the timing alone costs, with the outline moved perfectly between answers, or not at all.
+python tools/edgetam/timing.py "$REF" "$OUT/swift.json" 2 2 3 3 2>&1 | tee -a "$OUT/summary.txt"
 
 echo "== The Core ML models in parts.Tracker (Python)"
 python tools/edgetam/check_coreml.py "$EDGETAM" "$PWD/build/edgetam" "$PWD/footage/shaker" "$REF" "$BOX" \
