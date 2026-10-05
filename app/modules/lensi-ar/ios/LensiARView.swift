@@ -509,6 +509,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     let measured = DepthSample(frame)
     let points = frame.rawFeaturePoints?.points ?? []
     let edge = edgeTAM
+    // The phone moving fast as this frame was taken: it's a blur (takeLive).
+    let blurred = phoneFast
     samQueue.async { [weak self] in
       let started = CACurrentMediaTime()
       var encodeMs: Double = 0
@@ -583,7 +585,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           }
         }
         guard self.liveSegments else { return }
-        self.takeLive(results, asked: prompts, at: captured, seenBy: camera)
+        self.takeLive(results, asked: prompts, at: captured, seenBy: camera, blurred: blurred)
       }
       // The answers are on their way: each tracker's frame goes into its memory now, while the
       // next frame is awaited (EdgeTAMTracker.commit).
@@ -760,7 +762,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// what's shown, their motion measured and their depth put right (LiveShape: a cut is laid at
   /// the depth the outline already had, a guess to start with); asked-for ones it didn't find, or
   /// whose cut didn't fit, count a miss (two in a row and they go).
-  private func takeLive(_ found: [String: LiveCut], asked: [LivePrompt], at t: CFTimeInterval, seenBy camera: FrozenCamera) {
+  private func takeLive(_ found: [String: LiveCut], asked: [LivePrompt], at t: CFTimeInterval, seenBy camera: FrozenCamera,
+                        blurred: Bool = false) {
     for prompt in asked {
       let key = prompt.key
       if let cut = found[key] {
@@ -777,6 +780,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           liveShapes[key] = shape
           if let pin = pins[key] { pin.world = OutlineMath.centre(world) + (old.tagOffset ?? .zero) }
         } else if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
+          // EdgeTAM's cut of a frame taken while the phone moved fast (a blur) isn't taken for a
+          // still thing whose depth is known: ARKit already holds it where it is, and on handheld
+          // walk-arounds such cuts only threw it about (tools/walk edgeb@far: lost in 2.8% of
+          // frames against 3.6%, and the sink walked round up close 0% against 8%).
+          if blurred, prompt.edge, shape.still, shape.depthKnown { continue }
           // A pinned thing is blended back however long it was lost: its cut was asked for where
           // it should be, and had to fit it there.
           // While the phone itself moves fast, where the cut landed says little about the
