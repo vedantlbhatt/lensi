@@ -158,6 +158,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// points, glided from one cut to the next: OutlineMath.glide), and the layer drawing it.
   private var wideOutlines: [String: [CGPoint]] = [:]
   private var wideLayers: [String: FlatOutline] = [:]
+  /// When the frame each one was found in was captured, and the ultra-wide picture's upright
+  /// size: drawn, it's moved on by how the phone has turned since (UltraWideCamera.warp).
+  private var wideTimes: [String: CFTimeInterval] = [:]
+  private var wideSize = CGSize(width: 1080, height: 1920)
   /// 0.5x is there: ARKit's own ultra-wide, or the ultra-wide camera on its own.
   private var hasUltraWide: Bool { ultraWideFormat != nil || UltraWideCamera.available }
   private var recorder: Recorder?
@@ -883,6 +887,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       for (_, l) in wideLayers { l.removeFromSuperlayer() }
       wideLayers = [:]
       wideOutlines = [:]
+      wideTimes = [:]
       // Pinned things' tags go back to SceneKit, with their outlines.
       for (_, pin) in pins where pin.tagNode != nil { pin.label.drawnElsewhere = true }
       // ARKit once the ultra-wide has let go of the camera.
@@ -922,13 +927,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         self.samBusy = false
         guard self.wideMode else { return }
         let px = { (p: CGPoint) in simd_float3(Float(p.x * size.width), Float(p.y * size.height), 0) }
+        self.wideSize = size
         for (key, outline) in found {
           let ring = OutlineMath.resample(outline, scale: size).map(px)
-          let glided = OutlineMath.glide(self.wideOutlines[key]?.map(px), ring)
+          // The last one, moved on to this frame by how the phone turned, is what this one is
+          // glided into.
+          let last = self.wideOutlines[key].map { self.wide?.warp($0, from: self.wideTimes[key] ?? t, to: t, size: size) ?? $0 }
+          let glided = OutlineMath.glide(last?.map(px), ring)
           self.wideOutlines[key] = glided.map { CGPoint(x: CGFloat($0.x) / size.width, y: CGFloat($0.y) / size.height) }
+          self.wideTimes[key] = t
         }
         // Not in view: no outline (it's drawn again once EdgeTAM finds it).
-        for key in held where found[key] == nil { self.wideOutlines[key] = nil }
+        for key in held where found[key] == nil {
+          self.wideOutlines[key] = nil
+          self.wideTimes[key] = nil
+        }
       }
     }
   }
@@ -980,7 +993,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         wideLayers[id] = flat
       }
       flat.frame = bounds
-      let points = outline.map { zoomed(wide.layerPoint($0)) }
+      // Where it is on the picture now: moved on from its frame by how the phone has turned since.
+      let now = wide.latest?.t ?? CACurrentMediaTime()
+      let moved = wide.warp(outline, from: wideTimes[id] ?? now, to: now, size: wideSize)
+      let points = moved.map { zoomed(wide.layerPoint($0)) }
       let path = CGMutablePath()
       path.addLines(between: points)
       path.closeSubpath()

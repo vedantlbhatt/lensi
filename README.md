@@ -17,8 +17,8 @@ heyclicky for your camera. Lensi opens straight into a live guide: prop the phon
 | **Read codes** | QR links open and Wi-Fi codes copy their password: hold the label Lensi put on the code. |
 | **Change it** | Every capture stays editable: switch its lens and it re-annotates; hold a label to rename it, remove it (with Undo), or copy text and open links the phone read there. |
 | **Lenses** | Identify, Guide, Fix, Shop, Safe, Learn. Each lens has its own highlighter colour and its own follow-up questions. |
-| **Slide to pin** | A strip along the bottom of the camera. Put a finger on it and Lensi finds the things in view (SAM's parts and YOLO's objects), fixed where they are in the world from that moment, so moving the phone doesn't change them. Slide along it and the highlight moves from one thing to the next, left to right, with a tick for each; only the highlighted thing is outlined. Hold still for 1.5 s and that thing is pinned: outlined in the lens colour and named just above (the eyes and the brain name it). A pin stays on its thing. Up close, with only part of it on the picture, it follows that part. Lost behind a hand or out of view, it stays where it was in the world, and only a SAM cut that fits it there takes it back. Outlines and pinned tags are drawn by SceneKit in the camera's own frame, so they don't slide against the picture however fast the phone moves. Taps on the camera do nothing. |
-| **Zoom dial** | One button with the zoom on it (.5×, 1×, 2.7×). Drag across it and a half-circle dial rises with ticks for every step, turning under the finger. Let go and it keeps exactly that zoom. A tap goes to the next stop (.5, 1, 2, 5), and a pinch turns the same dial. .5× is the ultra-wide camera where ARKit can track with it; above 1× it's a crop. |
+| **Slide to pin** | A strip along the bottom of the camera. Put a finger on it and Lensi finds the things in view (SAM's parts and YOLO's objects), fixed where they are in the world from that moment, so moving the phone doesn't change them. Slide along it and the highlight moves from one thing to the next, left to right, with a tick for each; only the highlighted thing is outlined. Hold still for 1.5 s and that thing is pinned: outlined in the lens colour and named just above (the eyes and the brain name it). A pin stays on its thing: EdgeTAM, Meta's on-device SAM 2, follows it every frame from its memory of it (the frame it was pinned on and the last few), through close-ups, zooming out, blur and turning. Up close, with only part of it on the picture, the whole outline goes where that part went. Out of view, it stays where it was in the world until EdgeTAM finds it again. Outlines and pinned tags are drawn by SceneKit in the camera's own frame, so they don't slide against the picture however fast the phone moves. Taps on the camera do nothing. |
+| **Zoom dial** | One button with the zoom on it (.5×, 1×, 2.7×). Drag across it and a half-circle dial rises with ticks for every step, turning under the finger. Let go and it keeps exactly that zoom. A tap goes to the next stop (.5, 1, 2, 5), and a pinch turns the same dial. .5× is the ultra-wide camera on every iPhone that has one: through ARKit where ARKit tracks with it, and otherwise (an iPhone 17) on its own, with ARKit paused until you're back at 1× and pinned things followed on the ultra-wide's picture by EdgeTAM. Above 1× it's a crop. |
 | **Memories** | Every capture is saved on the phone. Swipe up to browse them, reopen one, ask more, or share an annotated print. Video captures let you pick which moment gets annotated. |
 
 ## How it works
@@ -26,6 +26,7 @@ heyclicky for your camera. Lensi opens straight into a live guide: prop the phon
 | Step | Where | Notes |
 |---|---|---|
 | Live outlines | MobileSAM on the camera feed itself, as often as the phone keeps up (encoder on the Neural Engine, one decoder pass per prompt; frames go in straight from ARKit's buffer on the GPU). Prompts: each guide tag's part and each pinned thing; nothing is outlined by itself. A thing already outlined is followed: SAM is asked where it should be now, of its candidates the one overlapping that wins, and a cut that doesn't fit is refused. Between SAM's cuts the outline rides its own pixels (points inside it followed frame to frame, their median motion), and the phone's motion is ARKit's, so it stays on a part that moves while you move. Measured on real footage against hand-drawn masks (`tools/track`, below) | Replaces the old corner brackets; `[lensi] live SAM …` logs its cost |
+| Pinned things | EdgeTAM (Meta's on-device SAM 2, CVPR 2025, Apache 2.0) split into four fixed-shape Core ML models: the encoder runs once a frame for every pinned thing, and each thing's tracker attends to its own memory (the pinned frame, the last six, and an object pointer from each of the last fifteen) before its mask is decoded. Each outline is laid in the world like a SAM cut; without LiDAR, where the lines of sight through it from everywhere the phone has been cross says how far it is | `tools/edgetam`, below; `[lensi] EdgeTAM …` logs its cost |
 | Live detection | YOLO11n on the Neural Engine, about 15 fps: names the strip's things when they're objects it knows, and gives SAM a box for them | |
 | The eyes | Vision: foreground instance outlines, OCR, barcodes, classification, saliency, plus YOLO on the still | About 0.5–1.5 s |
 | Part outlines | MobileSAM (Meta's Segment Anything, mobile variant) on Core ML. A grid of point prompts over the subject proposes parts (knobs, ports, handles) that become numbered marks for the model (never drawn for you); taps and labels are point-prompted | Falls back to Vision instances |
@@ -55,7 +56,7 @@ npm install
 npx expo run:ios --device
 ```
 
-- **Simulator:** `npx expo run:ios`. The simulator has no ARKit, so the app shows a *virtual camera* over public demo scenes (swipe sideways to switch). Vision and SAM still run on the real stills. Three scenes are moving footage (`workers`, `aisle`, `bottles`: Intel's CC BY sample videos), so the strip can be tried on things that move. What the strip offers in them was found and followed frame by frame by the app's own Swift ([`tools/strip`](tools/strip/main.swift), on CI), and a pin rides its thing's track.
+- **Simulator:** `npx expo run:ios`. The simulator has no ARKit, so the app shows a *virtual camera* over public demo scenes (swipe sideways to switch). Vision and SAM still run on the real stills. Four scenes are moving footage (`workers`, `aisle`, `bottles`: Intel's CC BY sample videos; `shaker`: a black shaker bottle filmed handheld for Lensi, walking round it, up close and back out, down to 0.5×), so the strip can be tried on things that move. What the strip offers in them was found and followed frame by frame by the app's own Swift ([`tools/strip`](tools/strip/main.swift), and for the bottle EdgeTAM in [`tools/edgetrack`](tools/edgetrack/main.swift), on CI), and a pin rides its thing's track.
 - **Web preview (UI and motion only):** `npm run web`. It uses the virtual camera, scripted model answers and simulated speech.
 - **Scripted runs:** `lensi:///?demo=truck&lens=guide&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F` captures a demo scene and runs it. Add `export=1` to also render the share image, `tap=0.3,0.33` to tap the print there once it's labelled, `brain=vision` to force the eyes-only brain, or `file=clip.mp4` (from the app's Documents) with `moment=0` to read a video and then a second keyframe. On the live camera, `scene=truck` picks the Simulator's scene, `guide=<task>` starts a guided job as if it were said, `scrub=0.05,0.35,0.6` lands a finger on the strip, slides through those points (0–1 across it) and holds on the last, which pins that thing, and `zoom=2.7` turns the zoom dial there and leaves it up. CI hands the same URL over at launch (`SIMCTL_CHILD_LENSI_URL=… xcrun simctl launch …`), which avoids the "Open in Lensi?" prompt that `simctl openurl` can raise.
 
@@ -98,6 +99,8 @@ app/
   modules/lensi-ar/          Swift: ARKit camera, Analyzer, SAMSegmenter, Intelligence, Speech, Recorder
 server/                      Claude streaming server (+ mock)
 tools/sam/                   MobileSAM → Core ML conversion, checks, report on public images
+tools/edgetam/               EdgeTAM → four fixed-shape Core ML models, checked against Meta's own predictor
+tools/edgetrack/             the app's EdgeTAMTracker.swift on a folder of frames
 .github/workflows/ios.yml    macOS CI: SAM verify, Simulator build, scripted screenshots
 ```
 
@@ -125,6 +128,18 @@ CI also builds for the iOS 27 Simulator, drives scripted captures through deep l
 | bolt moving its width a cut | lost | lost at the second cut | held, 9.3 px | |
 
 At 4 cuts a second (a hot phone, or a guide part waiting its turn) coasting loses fast things (dog J 32%, drifting car 10%) and LiveFlow keeps them (73%, 53%). LiveFlow costs 2-3 ms a frame plus about 1 ms per outline on a Mac core. Not measured here: ARKit (the phone's own motion), SAM's speed on a phone's Neural Engine, heat. `bash tools/track/ci.sh` reproduces it on a Mac; results and videos land on the `ci-track` branch.
+
+### Following a pinned thing with EdgeTAM, on handheld footage
+
+A pinned thing is followed by [EdgeTAM](https://github.com/facebookresearch/EdgeTAM), the on-device version of Meta's SAM 2 video tracker. SAM 2 keeps a memory of the thing that grows with the video; [`tools/edgetam/parts.py`](tools/edgetam/parts.py) lays it out in fixed slots with a validity flag each (7 frames x 512 tokens, 16 object pointers), so it becomes four models with one shape each: encoder, prompt, track and memory, 51 MB in float16. The test footage is a black shaker bottle on a striped rug, filmed handheld: walking round it, so close that it runs off the picture, back out, blurring, turning, and down to 0.5x where it is a few dozen pixels tall (533 frames, 30 fps, `tools/edgetam/footage`).
+
+| check | frames | IoU with the reference |
+|---|---|---|
+| the split in PyTorch vs EdgeTAM's own video predictor | 533 | mean 1.0000, worst 0.9991 |
+| the app's `EdgeTAMTracker.swift` with the Core ML models (CI's Mac) vs that predictor | 533 | mean 0.981, worst 0.936; never lost |
+| EdgeTAM on every other frame (15 a second, about a phone's rate) vs every frame | 267 | mean 0.993, worst 0.960 |
+
+On a flat picture (0.5x, and the virtual camera's track) each new outline is glided into the last: carried onto it by the affine map that fits best, so motion and zoom pass straight through, and only what's left (the mask's edge noise) eased in (`OutlineMath.glide`). [`tools/edgetam/smooth.py`](tools/edgetam/smooth.py) is the app's outline code in Python for trying such things on the full-precision masks. `bash tools/edgetam/ci.sh` on a Mac reproduces all of it (the `edgetam-lab` workflow), and the compiled models and the outlines drawn on the clip land on the `ci-edgetam` branch.
 
 ### Pinned while the phone moves, on real ARKit recordings
 

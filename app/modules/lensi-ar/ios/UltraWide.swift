@@ -1,6 +1,8 @@
 import AVFoundation
 import CoreMedia
+import CoreMotion
 import QuartzCore
+import simd
 
 /// The ultra-wide camera on its own: 0.5x on a phone whose ARKit has no ultra-wide format to track
 /// the world with (an iPhone 17 offers none). ARKit pauses while it runs (one app can't run both
@@ -28,6 +30,16 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
   /// Every frame and when it was captured (CACurrentMediaTime's clock), on the camera's queue.
   var onFrame: ((CVPixelBuffer, CFTimeInterval) -> Void)?
 
+  /// The gyro while it runs: how far the phone has turned since a frame, so an outline EdgeTAM
+  /// found in it can be moved to where its thing is on the picture now (`warp`). There's no ARKit
+  /// at 0.5x to hold it in the world, and without this it trails its thing by however long
+  /// EdgeTAM took whenever the phone turns.
+  private let motion = CMMotionManager()
+  private let motionQueue = OperationQueue()
+  private var turns: [(t: CFTimeInterval, rate: simd_float3)] = []
+  /// The lens across the picture's long side (radians), once the camera is set up.
+  private var fieldOfView: Float = 0
+
   /// The newest frame, for a photo.
   var latest: (buffer: CVPixelBuffer, t: CFTimeInterval)? {
     lock.lock()
@@ -44,6 +56,18 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
   /// Starts it. ARKit lets go of the camera a moment after it pauses, so a start that doesn't
   /// take is tried again a few times.
   func start(attempt: Int = 0) {
+    if attempt == 0, motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive {
+      motion.deviceMotionUpdateInterval = 1.0 / 100
+      motionQueue.maxConcurrentOperationCount = 1
+      motion.startDeviceMotionUpdates(to: motionQueue) { [weak self] m, _ in
+        guard let self, let m else { return }
+        let r = m.rotationRate
+        self.lock.lock()
+        self.turns.append((t: m.timestamp, rate: simd_float3(Float(r.x), Float(r.y), Float(r.z))))
+        if self.turns.count > 200 { self.turns.removeFirst(self.turns.count - 200) }
+        self.lock.unlock()
+      }
+    }
     queue.async { [self] in
       wanted = true
       if !configured { configure() }
@@ -58,6 +82,10 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
 
   /// Stops it, then calls `done` on the main queue (ARKit can have the camera back then).
   func stop(_ done: (() -> Void)? = nil) {
+    motion.stopDeviceMotionUpdates()
+    lock.lock()
+    turns = []
+    lock.unlock()
     queue.async { [self] in
       wanted = false
       if session.isRunning { session.stopRunning() }
@@ -87,6 +115,7 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
     output.setSampleBufferDelegate(self, queue: queue)
     if session.canAddOutput(output) { session.addOutput(output) }
     session.commitConfiguration()
+    fieldOfView = device.activeFormat.videoFieldOfView * .pi / 180
     if let connection = preview.connection {
       if #available(iOS 17.0, *) {
         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
@@ -106,6 +135,52 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
     latestFrame = (buffer, t)
     lock.unlock()
     onFrame?(buffer, t)
+  }
+
+  /// How far the phone turned from `t0` to `t1` (the gyro's rate summed over the time between;
+  /// radians about the phone's own axes: x to the right of the screen, y up it, z out of it).
+  func turned(from t0: CFTimeInterval, to t1: CFTimeInterval) -> simd_float3 {
+    guard t1 > t0 else { return .zero }
+    lock.lock()
+    defer { lock.unlock() }
+    var total = simd_float3.zero
+    var last = t0
+    for s in turns where s.t > t0 {
+      let end = min(s.t, t1)
+      if end > last { total += s.rate * Float(end - last) }
+      last = max(last, end)
+      if s.t >= t1 { break }
+    }
+    return total
+  }
+
+  /// Upright picture points (0…1) seen at `t0`, where they'd be seen at `t1` given how the phone
+  /// turned meanwhile: each one's line of sight from the lens turned back by that much. The phone
+  /// moving (not turning) isn't in it; over a tenth of a second that's small at 0.5x.
+  /// `size`: the upright picture in pixels.
+  func warp(_ points: [CGPoint], from t0: CFTimeInterval, to t1: CFTimeInterval, size: CGSize) -> [CGPoint] {
+    let fov = fieldOfView
+    guard fov > 0.1, t1 > t0, t1 - t0 < 0.5, size.width > 0, size.height > 0 else { return points }
+    let theta = turned(from: t0, to: t1)
+    let angle = simd_length(theta)
+    guard angle > 1e-4, angle < 0.6 else { return points }
+    // The phone turned by `theta`, so what it sees turned the other way.
+    let back = simd_quatf(angle: -angle, axis: theta / angle)
+    // Square pixels; the lens's field of view is across the picture's long side.
+    let long = Float(max(size.width, size.height))
+    let f = long / 2 / tan(fov / 2)
+    let cx = Float(size.width) / 2, cy = Float(size.height) / 2
+    return points.map { p in
+      // The back camera held upright: picture right is the phone's x, picture down its -y, and it
+      // looks along -z.
+      let x = (Float(p.x) * Float(size.width) - cx) / f
+      let y = (Float(p.y) * Float(size.height) - cy) / f
+      let seen = back.act(simd_float3(x, -y, -1))
+      guard seen.z < -0.05 else { return p }
+      let u = cx + f * seen.x / -seen.z
+      let v = cy + f * -seen.y / -seen.z
+      return CGPoint(x: CGFloat(u) / size.width, y: CGFloat(v) / size.height)
+    }
   }
 
   /// Where an upright picture point (0…1, top-left origin) is in the preview layer's own space.
