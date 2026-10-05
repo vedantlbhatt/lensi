@@ -128,6 +128,18 @@ CI also builds for the iOS 27 Simulator, drives scripted captures through deep l
 | bolt on a belt | lost | 8.3 px | 0.6 px | |
 | bolt moving its width a cut | lost | lost at the second cut | held, 9.3 px | |
 
+EdgeTAM, as pinned things are followed now, on the same footage against the same hand-drawn outlines (`edgetam`: every frame; `edgetam@8`: every third, the flow carrying it between):
+
+| clip | SAM (`lensi@8`) | EdgeTAM every frame | EdgeTAM every third |
+|---|---|---|---|
+| car round a roundabout | J 91.7%, jerk 3.8 px | J 97.5%, 1.3 px | J 95.9%, 5.1 px |
+| car through a junction | J 92.8%, 1.7 px | J 96.8%, 1.0 px | J 95.7%, 2.5 px |
+| drifting car | J 71.1%, 19.1 px | J 93.2%, 10.2 px | J 86.7%, 31.1 px |
+| dog | J 81.2%, 10.6 px | J 93.9%, 7.6 px | J 86.8%, 11.9 px |
+| parkour | J 73.4%, 7.5 px | J 93.0%, 4.0 px | J 78.5%, 10.5 px |
+
+From its memory of the thing it holds on where SAM's re-cuts drift (J 94.9% on average against 82.0%), and the more often it runs the better: the app asks it up to 20 times a second.
+
 At 4 cuts a second (a hot phone, or a guide part waiting its turn) coasting loses fast things (dog J 32%, drifting car 10%) and LiveFlow keeps them (73%, 53%). LiveFlow costs 2-3 ms a frame plus about 1 ms per outline on a Mac core. Not measured here: ARKit (the phone's own motion), SAM's speed on a phone's Neural Engine, heat. `bash tools/track/ci.sh` reproduces it on a Mac; results and videos land on the `ci-track` branch.
 
 ### Following a pinned thing with EdgeTAM, on handheld footage
@@ -159,6 +171,18 @@ The app's 0.5x on an iPhone 17 swaps cameras in an instant: the same thing is su
 | 0.5x to 1x | 315-353 (nearer) | 0.966, then 0.970 | 0.960, then 0.967 | 0.960, then 0.970 |
 
 (Into "1x" the scores are capped by the blown-up picture's blur, for every way alike.) Between EdgeTAM's outlines at 0.5x the gyro moves them by how far the phone has turned since their frame; [`tools/wide/warp_test.py`](tools/wide/warp_test.py) checks that warp against a pinhole camera turned for real (0.0000 px off over 200 random turns, in CoreMotion's right-handed convention).
+
+### Pinned while you walk round it, on ARKit walk-arounds
+
+[`tools/walk`](tools/walk/main.swift) runs the app's 1x path over the stretches of ARKitScenes scans where the camera walks round a still thing, from far to close enough that it runs off the picture and back (1.1 to 4.2 m of travel, 86 to 200 degrees of turn, nine scans): each cut laid in the world and held by ARKit between cuts, as on the phone, and scored against SAM asked with the thing's hand-drawn 3D box from each frame's pose. Lost is how often the overlap falls below 0.5; slip is how far the outline moves against the box from one frame to the next (what a person sees as jitter), lurch how far its middle jumps. Means over the nine:
+
+| | J | lost | slip | lurch |
+|---|---|---|---|---|
+| SAM's cuts, gated (the path before EdgeTAM) | 75.3% | 12.8% | 1.4 px | 1.7 px |
+| EdgeTAM as first wired in | 76.8% | 8.9% | 4.8 px | 6.0 px |
+| EdgeTAM now | 75.9% | 7.4% | 2.9 px | 3.3 px |
+
+(The first EdgeTAM row is from an earlier run; the harness's Core ML isn't bit-for-bit the same from run to run.) EdgeTAM keeps hold of things SAM loses (a TV lost in 33% of frames, against SAM's 78%). As first wired in, up close it threw the whole outline about: the part of a sink or washer on the picture moved and rescaled the whole outline unchecked, and where that failed the part was laid as the whole thing (lurch 26 and 13 px). Now that part moves a still thing whose depth is known by 10% at most, has to be plausibly the same thing, and is never laid as the whole. Lines of sight put a washer filling three quarters of the picture at 0.55 of its distance (a big thing's outline is mostly its near face, so its middle isn't one place in the world as you go round it); only a cut wholly on the picture and at most 40% of it across is sighted now (a sofa that ended at 0.53 of its distance ends at 1.01). What jitter is left is mostly where a big thing fills the picture; a bottle doesn't. `bash tools/walk/ci.sh` on a Mac reproduces it (`track-lab`); results and videos land on the `ci-track-lab` branch.
 
 ### Pinned while the phone moves, on real ARKit recordings
 
