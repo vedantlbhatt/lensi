@@ -26,6 +26,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: build/edgetam-reference
+          key: edgetam-reference-${{ hashFiles('tools/edgetam/footage/shaker.mp4', 'tools/edgetam/reference.py', 'tools/track/frames.py') }}
       - name: Reference, Core ML, and the app's tracker
         run: bash tools/edgetam/ci.sh
       - name: Push results to ci-edgetam

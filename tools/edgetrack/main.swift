@@ -5,9 +5,14 @@
 //   edgetrack <frames dir> <out.json> <x0,y0,x1,y1 in the first frame's pixels> [frames]
 //
 // With LENSI_MODELS_DIR holding the four compiled models. Writes every frame's outline
-// (fractions of the frame), object score, IoU estimate and milliseconds per step.
+// (fractions of the frame), object score, IoU estimate and milliseconds per step, and "shown":
+// the outline as the phone draws it, each cut steadied into the last as LensiARView steadies
+// them at 0.5x (OutlineMath.steady, in pixels). EDGETRACK_EVERY=n runs EdgeTAM on every n-th frame
+// only, as a phone that keeps up with 30/n frames a second would; the frames between show the
+// last outline.
 import CoreImage
 import Foundation
+import simd
 
 let args = CommandLine.arguments
 guard args.count >= 4 else {
@@ -34,11 +39,21 @@ let tracker = try EdgeTAMTracker(models: models)
 
 func r(_ v: Double, _ places: Double = 100000) -> Double { (v * places).rounded() / places }
 
+let every = max(1, Int(ProcessInfo.processInfo.environment["EDGETRACK_EVERY"] ?? "") ?? 1)
 var frames: [[String: Any]] = []
 var totals: [String: [Double]] = [:]
+var shown: [simd_float3]?
+var change: [simd_float3]?
+var last: [String: Any]?
 for (i, name) in names.enumerated() {
   guard let picture = CIImage(contentsOf: framesDir.appendingPathComponent(name)) else {
     print("can't read \(name)")
+    continue
+  }
+  if i % every != 0, var held = last {
+    held["name"] = name
+    held["held"] = true
+    frames.append(held)
     continue
   }
   let w = picture.extent.width, h = picture.extent.height
@@ -53,14 +68,28 @@ for (i, name) in names.enumerated() {
   let total = (CFAbsoluteTimeGetCurrent() - wall) * 1000
   for (k, v) in cut.ms { totals[k, default: []].append(v) }
   totals["total", default: []].append(total)
+  // As the phone draws it: steadied into the last one, in pixels (LensiARView.wideFrame).
+  if cut.visible {
+    let size = CGSize(width: w, height: h)
+    let ring = OutlineMath.resample(cut.outline, scale: size).map { simd_float3(Float($0.x * w), Float($0.y * h), 0) }
+    let steadied = OutlineMath.steady(shown, ring, previous: change, .standard)
+    shown = steadied.outline
+    change = steadied.change
+  } else {
+    shown = nil
+    change = nil
+  }
+  let drawn = (shown ?? []).flatMap { [r(Double($0.x) / Double(w)), r(Double($0.y) / Double(h))] }
   frames.append([
     "name": name,
+    "shown": drawn,
     "outline": cut.outline.flatMap { [r(Double($0.x)), r(Double($0.y))] },
     "score": r(Double(cut.score), 1000),
     "iou": r(Double(cut.iou), 1000),
     "area": r(Double(cut.area)),
     "ms": cut.ms.mapValues { r($0, 10) }.merging(["total": r(total, 10)]) { a, _ in a },
   ])
+  last = frames.last
   if i % 25 == 0 || !cut.visible {
     print(String(format: "frame %ld: score %.2f, IoU estimate %.3f, area %.4f, %ld outline points, %.0f ms", i, cut.score, cut.iou, cut.area,
                  cut.outline.count, total))

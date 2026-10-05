@@ -131,6 +131,10 @@ scenario 10c-slide-to-pin 16 "lensi:///?scene=cars&scrub=0.05,0.35,0.6"
 # tools/strip followed through it with the app's own Swift; the person held on stays pinned
 # while they walk.
 scenario 10f-slide-to-pin-video 18 "lensi:///?scene=aisle&scrub=0.05,0.6,0.88"
+# Handheld and upright: a shaker bottle filmed walking round it, up close, back out, turning and
+# down to 0.5x. The bottle is pinned from the strip and followed by EdgeTAM, the app's own Swift
+# and Core ML (tools/edgetam), through the whole clip and round again.
+scenario 10g-slide-to-pin-shaker 34 "lensi:///?scene=shaker&scrub=0.3,0.5"
 # The zoom dial: turned to 2.7x and left up, so the shot shows the dial itself.
 scenario 10d-zoom-dial 12 "lensi:///?scene=truck&zoom=2.7"
 # Over the air, the whole path: this build fetches the JavaScript ota.yml published for its

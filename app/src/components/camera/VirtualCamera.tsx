@@ -188,10 +188,11 @@ export const VirtualCamera = forwardRef<
   }, [scene, onScene]);
 
   // Zoom scales the scene about the screen's centre; tags and outlines are
-  // placed on the zoomed scene but keep their size. A video (landscape footage) is shown across
-  // the screen and a little more, above the chrome, the way a phone held upright shows a wide
-  // shot; a still fills the screen.
-  const cover = video
+  // placed on the zoomed scene but keep their size. Landscape footage is shown across the screen
+  // and a little more, above the chrome, the way a phone held upright shows a wide shot; a still,
+  // or footage filmed upright, fills the screen.
+  // Footage filmed upright fills the screen, as the camera does.
+  const cover = video && scene.width > scene.height
     ? (() => {
         const s = (width / scene.width) * 1.3;
         return { x: (width - scene.width * s) / 2, y: height * 0.37 - (scene.height * s) / 2, w: scene.width * s, h: scene.height * s };

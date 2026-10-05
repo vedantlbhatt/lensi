@@ -7,7 +7,9 @@ run.json is tools/edgetrack's: frames[i][key] is a flat x,y list (fractions of t
 defaults to "outline" (the tracker's own) and can name more (say "shown", what the phone draws
 after smoothing), each scored and drawn. Shake: how far the outline's points sit from halfway
 between where they were the frame before and the frame after, in pixels of the 540-wide frame --
-zero for an outline that glides, however fast; a few pixels when it trembles.
+zero for an outline that glides, however fast; a few pixels when it trembles. Wobble: how much
+its shape changes from one frame to the next once moved, turned and scaled to fit (pixels, RMS):
+a bottle's own outline barely changes in a 30th of a second, so this is mostly noise.
 
 Writes <name>-summary.txt, <name>.csv, <name>-<key>.mp4 and <name>-sheet.jpg.
 """
@@ -58,10 +60,26 @@ def align(a, b):
     return np.roll(b, -shift, axis=0)
 
 
+def similarity_fit(a, b):
+    """a moved, turned and scaled to fit b best (Umeyama; both N x 2, points paired)."""
+    ca, cb = a.mean(axis=0), b.mean(axis=0)
+    a0, b0 = a - ca, b - cb
+    cov = b0.T @ a0 / len(a)
+    u, sv, vt = np.linalg.svd(cov)
+    d = np.sign(np.linalg.det(u @ vt))
+    D = np.diag([1, d])
+    r = u @ D @ vt
+    var = np.mean(np.sum(a0 ** 2, axis=1))
+    scale = np.trace(np.diag(sv) @ D) / var if var > 0 else 1.0
+    return (scale * (r @ a0.T)).T + cb
+
+
 def raster(poly, w, h):
+    """The pixels whose centres are inside the outline (OpenCV puts pixel i's centre at i, a
+    fraction of the frame at i + 0.5)."""
     m = np.zeros((h, w), np.uint8)
     if poly is not None:
-        pts = np.round(poly * [w, h] * 4).astype(np.int32)
+        pts = np.round((poly * [w, h] - 0.5) * 4).astype(np.int32)
         cv2.fillPoly(m, [pts], 1, lineType=cv2.LINE_8, shift=2)
     return m.astype(bool)
 
@@ -80,7 +98,7 @@ def main():
     stats = {}
     for key in keys:
         polys = [ring(f.get(key, [])) for f in frames]
-        ious, shake = [], []
+        ious, shake, wobble = [], [], []
         for i, f in enumerate(frames):
             ref_path = os.path.join(ref_dir, f["name"].replace(".jpg", ".png"))
             ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
@@ -96,7 +114,8 @@ def main():
             ra = align(rb, resample(a) * px)
             rc = align(rb, resample(c) * px)
             shake.append(float(np.mean(np.linalg.norm(rb - (ra + rc) / 2, axis=1))))
-        stats[key] = {"ious": ious, "shake": shake}
+            wobble.append(float(np.sqrt(np.mean(np.sum((similarity_fit(ra, rb) - rb) ** 2, axis=1)))))
+        stats[key] = {"ious": ious, "shake": shake, "wobble": wobble}
         for i, v in enumerate(ious):
             if len(rows) <= i:
                 rows.append({"frame": i})
@@ -105,11 +124,13 @@ def main():
     for key in keys:
         ious = np.array(stats[key]["ious"])
         shake = np.array(stats[key]["shake"]) if stats[key]["shake"] else np.zeros(1)
+        wobble = np.array(stats[key]["wobble"]) if stats[key]["wobble"] else np.zeros(1)
         lines.append(
             f"  {key}: IoU with the reference mean {ious.mean():.4f}, median {np.median(ious):.4f}, worst {ious.min():.4f} "
             f"(frame {int(ious.argmin())}), under 0.9: {int((ious < 0.9).sum())}, under 0.7: {int((ious < 0.7).sum())}, "
             f"under 0.5: {int((ious < 0.5).sum())}; shake mean {shake.mean():.2f} px, 95th percentile "
-            f"{np.percentile(shake, 95):.2f} px, worst {shake.max():.2f} px")
+            f"{np.percentile(shake, 95):.2f} px, worst {shake.max():.2f} px; wobble mean {wobble.mean():.2f} px, 95th "
+            f"percentile {np.percentile(wobble, 95):.2f} px")
     ms = run.get("medianMs")
     if ms:
         lines.append("  median ms a frame: " + ", ".join(f"{k} {v}" for k, v in sorted(ms.items())))
@@ -122,7 +143,9 @@ def main():
         for r in rows:
             f.write(",".join(f"{r.get(c, '')}" if c == "frame" else f"{r.get(c, 0):.4f}" for c in cols) + "\n")
 
-    # Videos: the outline as the phone draws it, at twice the frame's size.
+    # Videos: the outline as the phone draws it, at twice the frame's size (REPORT_VIDEO=0: none).
+    if os.environ.get("REPORT_VIDEO", "1") == "0":
+        return
     s = 2
     thumbs = []
     for key in keys:
