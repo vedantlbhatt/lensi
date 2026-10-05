@@ -36,13 +36,18 @@
 //                10% bigger or smaller once its depth is known, never laid as the whole thing);
 //                edge@far's depth from lines of sight, edgel@far's from LiDAR (with the EdgeTAM
 //                models in LENSI_MODELS_DIR; left out without them)
+//   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
+//                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
+//                timing, moved on between them by nothing (flat-none), by how the camera turned alone
+//                (flat-gyro: the gyro, as the app did before), by the picture's own pixels (flat-flow),
+//                or by them and by the gyro while the camera turns fast (flat-fast)
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
 // box at all, for slip (how far the outline moves against the box from one frame to the next,
 // which is what a person sees as jitter), and for how far off its depth is.
 //
-//   swiftc -O -o walk tools/walk/main.swift app/modules/lensi-ar/ios/{SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,LiveWorld,LiveSeg,Analyzer,Detector}.swift
+//   swiftc -O -o walk tools/walk/main.swift app/modules/lensi-ar/ios/{EdgeTAMTracker,SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,LiveWorld,LiveSeg,Analyzer,Detector,FlatFollow}.swift
 //   LENSI_MODELS_DIR=<models> ./walk <scene dir> <out dir> <name> [frames, default 240]
 //
 // <scene dir> holds an ARKitScenes raw scan: vga_wide/*.png (640x480, 30 fps),
@@ -658,6 +663,79 @@ let edgeEncoder = EdgeTAMTracker.Models.shared.flatMap { try? EdgeTAMTracker.Enc
 let every = 4
 let latency = 2
 
+// MARK: - 0.5x on the same walk-around
+
+/// Every frame's camera, by capture time (the flat runs' gyro).
+var flatCameras: [Double: FrozenCamera] = [:]
+
+/// How far the camera turned from `a` to `b` (radians), whichever way.
+func turnAngle(_ a: FrozenCamera, _ b: FrozenCamera) -> Float {
+  let ra = simd_float3x3(simd_make_float3(a.transform.columns.0), simd_make_float3(a.transform.columns.1),
+                         simd_make_float3(a.transform.columns.2))
+  let rb = simd_float3x3(simd_make_float3(b.transform.columns.0), simd_make_float3(b.transform.columns.1),
+                         simd_make_float3(b.transform.columns.2))
+  let r = ra.transpose * rb
+  return acos(min(max((r[0][0] + r[1][1] + r[2][2] - 1) / 2, -1), 1))
+}
+
+/// Upright points seen by `a`, where `b` sees them had the camera only turned: each one's line of
+/// sight, far off. What the gyro says at 0.5x (UltraWideCamera.warp); the camera's moving isn't in it.
+func turnedOnly(_ points: [CGPoint], from a: FrozenCamera, to b: FrozenCamera) -> [CGPoint] {
+  let far = points.map { p -> simd_float3 in
+    let (_, dir) = a.ray(p)
+    return b.position + dir * 100
+  }
+  return b.upright(far) ?? points
+}
+
+/// 0.5x on the same walk (LensiARView.wideFrame, FlatFollower): no world, EdgeTAM's answers on the
+/// picture at the phone's timing (one tracker for all of these: what it finds doesn't depend on how
+/// it's drawn), each glided into what was shown on its frame and moved on between answers by
+///
+///   flat-none   nothing: held where the last answer put it
+///   flat-gyro   how the camera turned (its poses' rotation alone: what the gyro says), the app before
+///   flat-flow   the picture's own pixels (LiveFlow.bend), turned where the flow can't say
+///   flat-fast   the same, turned while the camera turns fast (LiveShape.fastTurn: a blur)
+final class FlatRun {
+  let label: String
+  let follower = FlatFollower()
+  /// Its frames go to the follower (the flow can bend it).
+  let flow: Bool
+  var shown: [[CGPoint]] = []
+  var j: [Double] = []
+  var onBox: [Double] = []
+  var middles: [CGPoint?] = []
+
+  init(_ label: String, flow: Bool, gyro: Bool, fast: Bool = false) {
+    self.label = label
+    self.flow = flow
+    if gyro {
+      follower.turn = { points, a, b in
+        guard let ca = flatCameras[a], let cb = flatCameras[b] else { return points }
+        return turnedOnly(points, from: ca, to: cb)
+      }
+    }
+    if !flow {
+      follower.gyroFirst = { _, _ in true }
+    } else if fast {
+      follower.gyroFirst = { a, b in
+        guard b > a, let ca = flatCameras[a], let cb = flatCameras[b] else { return false }
+        return turnAngle(ca, cb) / Float(b - a) > LiveShape.fastTurn
+      }
+    }
+  }
+}
+
+let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
+  FlatRun("flat-none", flow: false, gyro: false),
+  FlatRun("flat-gyro", flow: false, gyro: true),
+  FlatRun("flat-flow", flow: true, gyro: true),
+  FlatRun("flat-fast", flow: true, gyro: true, fast: true),
+]
+var flatTracker: EdgeTAMTracker?
+var flatPending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
+var flatCuts = 0
+
 var reference: [[CGPoint]] = []
 var boxMiddles: [CGPoint?] = []
 var frameNames: [String] = []
@@ -901,6 +979,41 @@ for (k, f) in window.enumerated() {
     }
   }
   if let flowFrame { previous = (frame: flowFrame, camera: camera, t: t) }
+
+  // 0.5x (FlatFollower): the frame, then an answer that's due, then a look, as LensiARView has them.
+  if !flatRuns.isEmpty {
+    flatCameras[t] = camera
+    flatCameras = flatCameras.filter { t - $0.key < 3 }
+    for run in flatRuns { run.follower.add(run.flow ? flowFrame : nil, at: t) }
+    if let p = flatPending, p.due <= k {
+      flatPending = nil
+      let ring: [CGPoint]? = p.cut.visible ? OutlineMath.resample(p.cut.outline, scale: size) : nil
+      for run in flatRuns { run.follower.answer(["": ring], at: p.t, size: size) }
+    }
+    if k == 0 {
+      // Pinned from the strip: its cut is there at once, and EdgeTAM starts from its box.
+      if let edgeFrame, let models = EdgeTAMTracker.Models.shared, truth.count > 2 {
+        let tracker = try EdgeTAMTracker(models: models)
+        _ = try tracker.start(edgeFrame, box: LiveTracker.bounds(truth))
+        flatTracker = tracker
+        for run in flatRuns { run.follower.place("", truth, at: t) }
+      }
+    } else if flatPending == nil, k % edgeEvery == 0, let tracker = flatTracker, let edgeFrame {
+      let cut = try tracker.step(edgeFrame)
+      flatCuts += 1
+      flatPending = (due: k + latency, t: t, cut: cut)
+      for run in flatRuns { run.follower.looking(at: t) }
+    }
+    for run in flatRuns {
+      let outline = run.follower.things[""]?.shown ?? []
+      run.shown.append(outline)
+      let bits = raster(outline, w: w, h: h)
+      if !truth.isEmpty { run.j.append(maskIoU(bits, truthBits)) }
+      if let boxBits, !outline.isEmpty { run.onBox.append(share(bits, inside: boxBits)) }
+      run.middles.append(outline.isEmpty ? nil : CGPoint(x: outline.map(\.x).reduce(0, +) / CGFloat(outline.count) * size.width,
+                                                         y: outline.map(\.y).reduce(0, +) / CGFloat(outline.count) * size.height))
+    }
+  }
 }
 
 let lidarRatio = lidarCheck.isEmpty ? -1 : lidarCheck.sorted()[lidarCheck.count / 2]
@@ -918,6 +1031,16 @@ for run in runs {
   runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
                   "depthOff": depthOff, "lastDepth": lastDepth, "cuts": run.cuts, "refused": run.refused, "carried": run.carried,
                   "measured": run.measured, "jPerFrame": run.j, "depthPerFrame": run.depthRatio,
+                  "outlines": run.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } }])
+}
+for run in flatRuns {
+  let lost = run.j.isEmpty ? -1 : Double(run.j.filter { $0 < 0.5 }.count) / Double(run.j.count)
+  let slipped = slip(run.middles, against: boxMiddles)
+  print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  (%ld cuts, flat)",
+               run.label.padding(toLength: 11, withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
+               slipped, jerk(run.middles), flatCuts))
+  runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
+                  "cuts": flatCuts, "flat": true, "jPerFrame": run.j,
                   "outlines": run.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } }])
 }
 let summary: [String: Any] = [

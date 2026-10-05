@@ -15,8 +15,8 @@
 // at their own times (EDGETRACK_FPS, 30), EdgeTAM started on a frame only when the app would
 // start it, each answer ready that many milliseconds after its frame and drawn from the first
 // frame after that, and the outline moved between answers. Writes each frame's "live" outline.
-// Between answers the outline is bent with the thing (LiveFlow.bend, as the app's flow carries it);
-// EDGETRACK_BEND=0 moves it whole instead (LiveFlow.carry, the app before); EDGETRACK_GLIDE=0
+// Between answers the outline is bent with the thing (LiveFlow.bend, FlatFollower: as the app follows
+// a pinned thing at 0.5x); EDGETRACK_BEND=0 moves it whole instead (LiveFlow.carry); EDGETRACK_GLIDE=0
 // takes each answer as it is rather than gliding into it.
 import CoreImage
 import Foundation
@@ -48,38 +48,28 @@ let tracker = try EdgeTAMTracker(models: models)
 
 func r(_ v: Double, _ places: Double = 100000) -> Double { (v * places).rounded() / places }
 
-/// The clip as the phone's camera (LensiARView.wideFrame and layoutWide, the app on a flat
-/// picture). A look starts on a frame only once the last answer is in and 50 ms have passed since
-/// the last one started (the app's limit: up to 20 a second); its answer is ready `latency`
-/// seconds after that frame, and is used from the first frame shown after that. The app keeps
-/// each answer in its own frame's place and moves it on to the frame being shown by how the phone
-/// has turned since (the gyro); a clip has no gyro, so here it's moved by the thing's own pixels
-/// (LiveFlow, the app's carry for things ARKit doesn't hold), frame by frame. Each answer is
-/// glided into the last one, moved on to the answer's frame (OutlineMath.glide, in pixels).
+/// The clip as the phone's camera, followed as the app follows a pinned thing at 0.5x (LensiARView's
+/// wideFrame through FlatFollower). A look starts on a frame only once the last answer is in and
+/// 50 ms have passed since the last one started (the app's limit: up to 20 a second); its answer is
+/// ready `latency` seconds after that frame, and is used from the first frame shown after that:
+/// glided into what was shown on its own frame (OutlineMath.glide, in pixels), then brought on to
+/// the frame being shown, and between answers the outline is bent with its thing frame to frame by
+/// the picture's own pixels (LiveFlow.bend). A clip has no gyro: where the flow can't say, the
+/// outline stays where it is (the phone turns it by the gyro).
 func live(latency: Double, fps: Double, bends: Bool, glides: Bool, bending: LiveFlow.Bending = .standard) throws -> [String: Any] {
   struct Pending {
     let frame: Int
+    let t: Double
     let ready: Double
     let cut: EdgeTAMTracker.Cut
   }
-  var flows: [Int: LiveFlow.Frame] = [:]
-  /// `o` (fractions) carried frame by frame from frame a to frame b; held where it is across a
-  /// frame the flow can't say (as the app's carry leaves it).
-  func carried(_ o: [CGPoint], from a: Int, to b: Int) -> [CGPoint] {
-    guard a < b else { return o }
-    var now = o
-    for k in a..<b {
-      guard let f0 = flows[k], let f1 = flows[k + 1] else { continue }
-      if let next = bends ? LiveFlow.bend(now, from: f0, to: f1, bending) : LiveFlow.carry(now, from: f0, to: f1) { now = next }
-    }
-    return now
-  }
+  let follower = FlatFollower()
+  follower.bends = bends
+  follower.glides = glides
+  follower.bending = bending
   var out: [[String: Any]] = []
   var pending: Pending?
   var lastStart = -Double.infinity
-  var stored: [CGPoint]? // the last answer, glided, where it was on its own frame
-  var storedFrame = 0
-  var drawn: [CGPoint]? // that, moved on to the frame being shown
   var looks = 0, answers = 0
   var stepMs: [Double] = []
   for (g, name) in names.enumerated() {
@@ -92,50 +82,35 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool, bending: Live
     let t = Double(g) / fps
     let w = picture.extent.width, h = picture.extent.height
     let size = CGSize(width: w, height: h)
-    flows[g] = LiveFlow.frame(image)
-    flows[g - 16] = nil
-    if let d = drawn { drawn = carried(d, from: g - 1, to: g) }
+    follower.add(LiveFlow.frame(image), at: t)
     var answered = -1
     if let p = pending, p.ready <= t + 1e-9 {
       pending = nil
       answers += 1
       answered = p.frame
-      if p.cut.visible {
-        let px = { (q: CGPoint) in simd_float3(Float(q.x * w), Float(q.y * h), 0) }
-        let ring = OutlineMath.resample(p.cut.outline, scale: size).map(px)
-        let last = glides ? stored.map { carried($0, from: storedFrame, to: p.frame).map(px) } : nil
-        let glided = OutlineMath.glide(last, ring).map { CGPoint(x: CGFloat($0.x) / w, y: CGFloat($0.y) / h) }
-        stored = glided
-        storedFrame = p.frame
-        drawn = carried(glided, from: p.frame, to: g)
-      } else {
-        stored = nil
-        drawn = nil
-      }
+      follower.answer(["": p.cut.visible ? OutlineMath.resample(p.cut.outline, scale: size) : nil], at: p.t, size: size)
     }
     var looked = false
     if g == 0 {
       // Pinned on this frame: the outline the strip showed is there at once.
       let b = CGRect(x: box[0] / w, y: box[1] / h, width: (box[2] - box[0]) / w, height: (box[3] - box[1]) / h)
       let cut = try tracker.start(encoder.encode(picture), box: b)
-      if cut.visible {
-        stored = OutlineMath.resample(cut.outline, scale: size)
-        drawn = stored
-      }
+      if cut.visible { follower.place("", OutlineMath.resample(cut.outline, scale: size), at: t) }
       lastStart = t
       looked = true
     } else if pending == nil, t - lastStart > 0.05 {
       let wall = CFAbsoluteTimeGetCurrent()
       let cut = try tracker.step(encoder.encode(picture))
       stepMs.append((CFAbsoluteTimeGetCurrent() - wall) * 1000)
-      pending = Pending(frame: g, ready: t + latency, cut: cut)
+      pending = Pending(frame: g, t: t, ready: t + latency, cut: cut)
+      follower.looking(at: t)
       lastStart = t
       looks += 1
       looked = true
     }
     out.append([
       "name": name,
-      "live": (drawn ?? []).flatMap { [r(Double($0.x)), r(Double($0.y))] },
+      "live": (follower.things[""]?.shown ?? []).flatMap { [r(Double($0.x)), r(Double($0.y))] },
       "answer": answered,
       "look": looked,
     ])

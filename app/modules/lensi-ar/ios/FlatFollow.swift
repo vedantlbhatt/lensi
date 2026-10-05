@@ -1,0 +1,178 @@
+import CoreGraphics
+import Foundation
+import simd
+
+/// Pinned things followed on a flat picture: 0.5x, where the ultra-wide runs on its own (no ARKit,
+/// so no world to hold them in). EdgeTAM's answers come back late, each about its own frame. Each
+/// one is glided into what was shown on that frame (OutlineMath.glide) and brought on to the newest
+/// frame, and from one frame to the next every outline is bent with its thing by the picture's own
+/// pixels (LiveFlow.bend), whether the phone moved, turned or zoomed or the thing itself moved.
+/// Where the flow can't say (a blur, nothing to grip) `turn` moves it by how the phone turned
+/// meanwhile (the gyro), which is all 0.5x had between answers before.
+///
+/// Upright 0…1 points throughout, frames by capture time. Only the frames still needed are kept:
+/// the newest, and every one since the look an answer is still due for (`looking`), up to `maxFrames`.
+///
+/// tools/edgetrack plays the bottle video through it as the phone's camera (EdgeTAMVideo does the
+/// same in the Simulator), and tools/walk runs it on handheld walk-arounds against the gyro alone.
+final class FlatFollower {
+  /// What's shown of one thing, as of the frame captured at `at`, and what was shown on recent
+  /// frames: the next answer is glided into what was shown on its own frame.
+  struct Thing {
+    var shown: [CGPoint]
+    var at: CFTimeInterval
+    var history: [(t: CFTimeInterval, outline: [CGPoint])]
+  }
+
+  /// Bent with its thing (LiveFlow.bend); false: moved whole (LiveFlow.carry).
+  var bends = true
+  var bending: LiveFlow.Bending = .standard
+  /// Each answer glided into what was shown on its frame (OutlineMath.glide); false: taken as it is.
+  var glides = true
+  /// Upright points seen at one capture time, moved to where they'd be seen at a later one by how
+  /// the phone turned meanwhile (UltraWideCamera.warp). Nil: there's no gyro, and where the flow
+  /// can't say, an outline stays where it is.
+  var turn: ((_ points: [CGPoint], _ from: CFTimeInterval, _ to: CFTimeInterval) -> [CGPoint])?
+  /// Whether the gyro moves outlines from one capture time to the next rather than the flow (the
+  /// phone turned fast: the picture's a blur). Nil: the flow always tries first.
+  var gyroFirst: ((_ from: CFTimeInterval, _ to: CFTimeInterval) -> Bool)?
+
+  private(set) var things: [String: Thing] = [:]
+  private var frames: [(t: CFTimeInterval, frame: LiveFlow.Frame?)] = []
+  /// The capture time of the frame an answer is still due for.
+  private var due: CFTimeInterval?
+  /// How many of a thing's recent outlines are kept (an answer is due within a few frames).
+  static let historyLength = 24
+  /// At most this many frames are kept (a few MB each): an answer later than that is turned on
+  /// to the oldest by the gyro, and bent on from there.
+  static let maxFrames = 8
+
+  /// The newest frame's capture time.
+  var newest: CFTimeInterval? { frames.last?.t }
+
+  /// The next frame (nil: it couldn't be read, and the gyro moves outlines across it): every
+  /// outline is bent on to it.
+  func add(_ frame: LiveFlow.Frame?, at t: CFTimeInterval) {
+    if let last = frames.last, t <= last.t { return }
+    let previous = frames.last
+    for (key, var thing) in things where t > thing.at {
+      if let previous, abs(previous.t - thing.at) < 1e-4 {
+        thing.shown = step(thing.shown, from: previous, to: (t, frame))
+      } else {
+        thing.shown = turn?(thing.shown, thing.at, t) ?? thing.shown
+      }
+      thing.at = t
+      remember(&thing)
+      things[key] = thing
+    }
+    frames.append((t, frame))
+    trim()
+  }
+
+  /// A look started on the frame captured at `t`: frames from it on are kept until it's answered.
+  func looking(at t: CFTimeInterval) {
+    due = t
+    trim()
+  }
+
+  /// EdgeTAM's answers about the frame captured at `t`, each upright 0…1 (OutlineMath.count
+  /// points) or nil where it isn't in view (it's let go until it's found again). `size`: the picture
+  /// in pixels, which `glide` works in. Things not named are left as they are.
+  func answer(_ found: [String: [CGPoint]?], at t: CFTimeInterval, size: CGSize) {
+    defer {
+      if let d = due, d <= t + 1e-4 { due = nil }
+      trim()
+    }
+    for (key, said) in found {
+      guard let outline = said, outline.count >= 3 else {
+        things[key] = nil
+        continue
+      }
+      var glided = outline
+      if glides, let last = shown(key, at: t), last.count == outline.count {
+        let w = Float(size.width), h = Float(size.height)
+        let px = { (p: CGPoint) in simd_float3(Float(p.x) * w, Float(p.y) * h, 0) }
+        glided = OutlineMath.glide(last.map(px), outline.map(px)).map { CGPoint(x: CGFloat($0.x / w), y: CGFloat($0.y / h)) }
+      }
+      settle(key, glided, at: t)
+    }
+  }
+
+  /// A thing found on the frame captured at `t` (the strip's, a second or so before it's pinned):
+  /// brought on to the newest frame and followed from there.
+  func place(_ key: String, _ outline: [CGPoint], at t: CFTimeInterval) {
+    guard outline.count >= 3 else { return }
+    settle(key, outline, at: t)
+    trim()
+  }
+
+  /// Only these are followed from now on.
+  func keep(_ keys: Set<String>) {
+    for key in things.keys where !keys.contains(key) { things[key] = nil }
+  }
+
+  func reset() {
+    things = [:]
+    frames = []
+    due = nil
+  }
+
+  /// `outline`, as of the frame captured at `t`, brought on to the newest frame and shown.
+  private func settle(_ key: String, _ outline: [CGPoint], at t: CFTimeInterval) {
+    let (now, at) = bring(outline, from: t)
+    var thing = things[key] ?? Thing(shown: now, at: at, history: [])
+    thing.shown = now
+    thing.at = at
+    // What's shown on the newest frame is this now.
+    thing.history.removeAll { $0.t >= at - 1e-4 }
+    remember(&thing)
+    things[key] = thing
+  }
+
+  private func remember(_ thing: inout Thing) {
+    thing.history.append((thing.at, thing.shown))
+    if thing.history.count > FlatFollower.historyLength { thing.history.removeFirst(thing.history.count - FlatFollower.historyLength) }
+  }
+
+  /// What was shown of `key` on the frame captured at `t` (the last shown before it, turned on to it).
+  private func shown(_ key: String, at t: CFTimeInterval) -> [CGPoint]? {
+    guard let thing = things[key], let before = thing.history.last(where: { $0.t <= t + 1e-4 }) else { return nil }
+    return before.t < t - 1e-4 ? turn?(before.outline, before.t, t) ?? before.outline : before.outline
+  }
+
+  /// `outline`, as of capture time `t`, frame by frame on to the newest (turned across a gap the
+  /// frames don't cover), and the time it's then as of.
+  private func bring(_ outline: [CGPoint], from t: CFTimeInterval) -> ([CGPoint], CFTimeInterval) {
+    var now = outline
+    var at = t
+    var previous = frames.last(where: { abs($0.t - t) < 1e-4 })
+    for f in frames where f.t > t + 1e-4 {
+      if let p = previous {
+        now = step(now, from: p, to: f)
+      } else {
+        now = turn?(now, at, f.t) ?? now
+      }
+      previous = f
+      at = f.t
+    }
+    return (now, at)
+  }
+
+  /// One frame to the next: bent with its thing, or turned where the flow can't say.
+  private func step(_ outline: [CGPoint], from a: (t: CFTimeInterval, frame: LiveFlow.Frame?),
+                    to b: (t: CFTimeInterval, frame: LiveFlow.Frame?)) -> [CGPoint] {
+    if gyroFirst?(a.t, b.t) != true, let fa = a.frame, let fb = b.frame,
+       let moved = bends ? LiveFlow.bend(outline, from: fa, to: fb, bending) : LiveFlow.carry(outline, from: fa, to: fb) {
+      return moved
+    }
+    return turn?(outline, a.t, b.t) ?? outline
+  }
+
+  /// Frames no answer can still need: all but the newest, and those since the look still due.
+  private func trim() {
+    guard frames.count > 1 else { return }
+    let from = min(due ?? .infinity, frames[frames.count - 1].t)
+    let keepFrom = max(frames.lastIndex(where: { $0.t <= from + 1e-4 }) ?? 0, frames.count - FlatFollower.maxFrames)
+    if keepFrom > 0 { frames.removeFirst(keepFrom) }
+  }
+}

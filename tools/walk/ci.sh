@@ -25,7 +25,7 @@ PICK="${WALK_PICK:-10}"
 swiftc -O -o walk tools/walk/main.swift app/modules/lensi-ar/ios/EdgeTAMTracker.swift \
   app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
   app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/LiveWorld.swift app/modules/lensi-ar/ios/LiveSeg.swift \
-  app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift || exit 1
+  app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift app/modules/lensi-ar/ios/FlatFollow.swift || exit 1
 
 # One of a scan's zips, unpacked into <scan>/<asset>/ (the zips may or may not hold their own folder).
 fetch() {

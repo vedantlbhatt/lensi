@@ -59,7 +59,7 @@ echo "== The app's EdgeTAMTracker.swift (tools/edgetrack)"
 I=app/modules/lensi-ar/ios
 swiftc -O -o edgetrack tools/edgetrack/main.swift $I/EdgeTAMTracker.swift \
   $I/SAMSegmenter.swift $I/OutlineMath.swift $I/LiveTracker.swift $I/LiveFlow.swift $I/LiveWorld.swift $I/LiveSeg.swift \
-  $I/Detector.swift || exit 1
+  $I/Detector.swift $I/FlatFollow.swift || exit 1
 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/swift.json" "$BOX" 2>&1 | tee "$OUT/swift.txt"
 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/swift.json" "$OUT" shaker outline shown 2>&1 | tee -a "$OUT/summary.txt"
 

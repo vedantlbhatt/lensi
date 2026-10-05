@@ -19,8 +19,9 @@ import simd
 /// `every` 0 plays the clip as the phone's camera instead (tools/edgetrack's EDGETRACK_LIVE_MS):
 /// a look starts on a frame only once the last answer is in and 50 ms after the last start (the
 /// app's limit), each answer is ready `latency` seconds after its frame and drawn from the first
-/// frame after that, and between answers the outline is bent with the thing by its own pixels
-/// (LiveFlow.bend; on the phone ARKit or the gyro also has the phone's own motion).
+/// frame after that, and between answers the outline is bent with the thing by the picture's own
+/// pixels: FlatFollower, as the app follows a pinned thing at 0.5x (where the phone also has the
+/// gyro for when the flow can't say).
 enum EdgeTAMVideo {
   /// How long an answer is assumed to take on a phone (`every` 0).
   static let latency: Double = 0.06
@@ -45,21 +46,13 @@ enum EdgeTAMVideo {
     let live = every == 0
     let step = max(1, every)
     var film: Film?
-    // Live: the answer on its way, when the last look started, the last answer (glided) where it
-    // was on its own frame, and each recent frame as LiveFlow sees it.
-    var pending: (frame: Int, ready: Double, cut: EdgeTAMTracker.Cut)?
+    // Live: the answer on its way and when the last look started; the outline followed as the app
+    // follows a pinned thing at 0.5x (FlatFollower: each answer glided into what was shown on its
+    // frame, bent with the thing by the picture's own pixels between answers).
+    var pending: (t: Double, ready: Double, cut: EdgeTAMTracker.Cut)?
     var lastStart = -Double.infinity
-    var stored: [CGPoint]?
-    var storedFrame = 0
-    var flows: [Int: LiveFlow.Frame] = [:]
+    let follower = FlatFollower()
     let flowContext = CIContext(options: [.cacheIntermediates: false])
-    func bent(_ o: [CGPoint], from a: Int, to b: Int) -> [CGPoint] {
-      var now = o
-      for k in max(a, 0)..<max(b, a) {
-        if let f0 = flows[k], let f1 = flows[k + 1], let next = LiveFlow.bend(now, from: f0, to: f1) { now = next }
-      }
-      return now
-    }
     var frames: [[String: Any]] = []
     var times: [Double] = []
     var seen = 0
@@ -80,25 +73,11 @@ enum EdgeTAMVideo {
         let t = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
         let scale = CGFloat(LiveFlow.width) / max(size.width, 1)
         let small = picture.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        flows[index] = flowContext.createCGImage(small, from: small.extent).flatMap { LiveFlow.frame($0) }
-        flows[index - 16] = nil
+        follower.add(flowContext.createCGImage(small, from: small.extent).flatMap { LiveFlow.frame($0) }, at: t)
         let px = { (p: CGPoint) in simd_float3(Float(p.x * size.width), Float(p.y * size.height), 0) }
-        let back = { (p: simd_float3) in CGPoint(x: CGFloat(p.x) / size.width, y: CGFloat(p.y) / size.height) }
-        // What's drawn, bent on to this frame.
-        var drawnNow = shown.map { $0.map(back) }.map { bent($0, from: index - 1, to: index) }
         if let p = pending, p.ready <= t + 1e-6 {
           pending = nil
-          if p.cut.visible {
-            let ring = OutlineMath.resample(p.cut.outline, scale: size).map(px)
-            let last = stored.map { bent($0, from: storedFrame, to: p.frame).map(px) }
-            let glided = OutlineMath.glide(last, ring).map(back)
-            stored = glided
-            storedFrame = p.frame
-            drawnNow = bent(glided, from: p.frame, to: index)
-          } else {
-            stored = nil
-            drawnNow = nil
-          }
+          follower.answer(["": p.cut.visible ? OutlineMath.resample(p.cut.outline, scale: size) : nil], at: p.t, size: size)
         }
         if index == 0 || (pending == nil && t - lastStart > 0.05) {
           let t0 = CFAbsoluteTimeGetCurrent()
@@ -114,14 +93,13 @@ enum EdgeTAMVideo {
           lastStart = t
           if index == 0 {
             // Pinned on this frame: the strip's outline is there at once.
-            stored = cut.visible ? OutlineMath.resample(cut.outline, scale: size) : nil
-            storedFrame = 0
-            drawnNow = stored
+            if cut.visible { follower.place("", OutlineMath.resample(cut.outline, scale: size), at: t) }
           } else {
-            pending = (index, t + latency, cut)
+            pending = (t, t + latency, cut)
+            follower.looking(at: t)
           }
         }
-        shown = drawnNow.map { $0.map(px) }
+        shown = follower.things[""].map { $0.shown.map(px) }
       } else if index % step == 0 {
         let t0 = CFAbsoluteTimeGetCurrent()
         let encoded = try encoder.encode(picture)

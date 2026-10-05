@@ -172,6 +172,18 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// size: drawn, it's moved on by how the phone has turned since (UltraWideCamera.warp).
   private var wideTimes: [String: CFTimeInterval] = [:]
   private var wideSize = CGSize(width: 1080, height: 1920)
+  /// Where each one is, as FlatFollower keeps it: EdgeTAM's answers, each glided into what was shown
+  /// on its frame and brought on to the newest, and between answers every outline bent with its
+  /// thing frame to frame by the ultra-wide's own pixels (LiveFlow.bend), the gyro moving it where
+  /// they can't say. Before, only the gyro moved it between answers: how the phone turned, not how
+  /// it moved or how the thing did. Only touched on `wideFlowQueue`; `wideOutlines` and `wideTimes`
+  /// are what it last said (`showWide`).
+  private let wideFollower = FlatFollower()
+  private let wideFlowQueue = DispatchQueue(label: "lensi.wide-flow", qos: .userInitiated)
+  private let wideFlowContext = CIContext(options: [.cacheIntermediates: false])
+  private var wideFlowBusy = false
+  /// Counts the times 0.5x has started: what the follower said about an earlier time is dropped.
+  private var wideSession = 0
   /// Things pinned at 0.5x, where there's no world to lay them in: followed on the ultra-wide by
   /// EdgeTAM from the frame they were found in, and laid in the world from their first cut once
   /// ARKit is back at 1x (where they're at, measured inside the cut, or a guess its lines of
@@ -1019,9 +1031,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         camera.preview.position = CGPoint(x: bounds.midX, y: bounds.midY)
         layer.insertSublayer(camera.preview, above: sceneView.layer)
         camera.onFrame = { [weak self] buffer, t in
-          DispatchQueue.main.async { self?.wideFrame(buffer, at: t) }
+          DispatchQueue.main.async {
+            self?.wideFrame(buffer, at: t)
+            self?.wideFlow(buffer, at: t)
+          }
         }
       }
+      wideSession += 1
+      let follower = wideFollower
+      wideFlowQueue.async { follower.reset() }
       sceneView.session.pause()
       sceneView.isHidden = true
       camera.preview.isHidden = false
@@ -1036,6 +1054,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       wideScrubFrame = nil
       wideOutlines = [:]
       wideTimes = [:]
+      let follower = wideFollower
+      wideFlowQueue.async { follower.reset() }
       // Pinned things' tags go back to SceneKit, with their outlines.
       for (_, pin) in pins where pin.tagNode != nil { pin.label.drawnElsewhere = true }
       // ARKit once the ultra-wide has let go of the camera.
@@ -1055,62 +1075,112 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// A frame from the ultra-wide (0.5x without ARKit): EdgeTAM takes every pinned thing it's
   /// following one step further on it, as often as it keeps up, and each outline it finds is
-  /// steadied into what's drawn (`layoutWide`).
+  /// glided into what was shown on this frame and brought on to the newest (FlatFollower), for
+  /// drawing (`layoutWide`).
   private func wideFrame(_ buffer: CVPixelBuffer, at t: CFTimeInterval) {
     guard wideMode, liveSegments, !samBusy, !scrubBusy, let edge = edgeTAM, t - lastWideTime > 0.05 else { return }
     let held = pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) }
     guard !held.isEmpty else { return }
     samBusy = true
     lastWideTime = t
+    let session = wideSession
+    let follower = wideFollower
+    // The frames from this one on are kept until its answer is in.
+    wideFlowQueue.async { follower.looking(at: t) }
     let size = CGSize(width: CVPixelBufferGetHeight(buffer), height: CVPixelBufferGetWidth(buffer)) // upright
     samQueue.async { [weak self] in
       guard let self else { return }
       var found: [String: [CGPoint]] = [:]
+      var asked: [String] = []
       do {
-        found = try self.followWide(held, models: edge, buffer: buffer)
+        let stepped = try self.followWide(held, models: edge, buffer: buffer)
+        found = stepped.found
+        asked = stepped.asked
       } catch {
         NSLog("[lensi] EdgeTAM on the ultra-wide failed: %@", error.localizedDescription)
       }
       DispatchQueue.main.async {
         self.samBusy = false
-        guard self.wideMode else { return }
-        let px = { (p: CGPoint) in simd_float3(Float(p.x * size.width), Float(p.y * size.height), 0) }
+        guard self.wideMode, session == self.wideSession else { return }
         self.wideSize = size
-        for (key, outline) in found {
-          let ring = OutlineMath.resample(outline, scale: size).map(px)
-          // The last one, moved on to this frame by how the phone turned, is what this one is
-          // glided into.
-          let last = self.wideOutlines[key].map { self.wide?.warp($0, from: self.wideTimes[key] ?? t, to: t, size: size) ?? $0 }
-          let glided = OutlineMath.glide(last?.map(px), ring)
-          self.wideOutlines[key] = glided.map { CGPoint(x: CGFloat($0.x) / size.width, y: CGFloat($0.y) / size.height) }
-          self.wideTimes[key] = t
-        }
-        // Not in view: no outline (it's drawn again once EdgeTAM finds it).
-        for key in held where found[key] == nil {
-          self.wideOutlines[key] = nil
-          self.wideTimes[key] = nil
+        // Each thing EdgeTAM was asked about: where it is, or nil where it isn't in view (no
+        // outline: it's drawn again once EdgeTAM finds it).
+        var answers: [String: [CGPoint]?] = [:]
+        for key in asked { answers.updateValue(found[key].map { OutlineMath.resample($0, scale: size) }, forKey: key) }
+        let keep = Set(self.pinOrder.filter { self.liveShapes[$0]?.pinned == true || self.flatPins.contains($0) })
+        self.wideFlowQueue.async { [weak self] in
+          follower.keep(keep)
+          follower.answer(answers.filter { keep.contains($0.key) }, at: t, size: size)
+          self?.showWide(follower, session: session)
         }
       }
       self.rememberEdge()
     }
   }
 
+  /// Every ultra-wide frame while something's pinned (on `wideFlowQueue`, skipping frames while it's
+  /// behind): a small grey copy for the flow, and every outline bent on to it (FlatFollower).
+  private func wideFlow(_ buffer: CVPixelBuffer, at t: CFTimeInterval) {
+    guard wideMode, liveSegments, !wideFlowBusy, let camera = wide else { return }
+    let keep = Set(pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) })
+    guard !keep.isEmpty else { return }
+    wideFlowBusy = true
+    let session = wideSession
+    let follower = wideFollower
+    let size = CGSize(width: CVPixelBufferGetHeight(buffer), height: CVPixelBufferGetWidth(buffer)) // upright
+    wideFlowQueue.async { [weak self] in
+      guard let self else { return }
+      // Where the flow can't say, by how the phone turned (and while it turns fast, if
+      // `wideGyroWhenFast`: the picture's a blur).
+      follower.turn = { points, a, b in camera.warp(points, from: a, to: b, size: size) }
+      if Self.wideGyroWhenFast {
+        follower.gyroFirst = { a, b in b > a && simd_length(camera.turned(from: a, to: b)) / Float(b - a) > LiveShape.fastTurn }
+      } else {
+        follower.gyroFirst = nil
+      }
+      let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+      let scale = CGFloat(LiveFlow.width) / max(upright.extent.width, 1)
+      let small = upright.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      follower.keep(keep)
+      follower.add(self.wideFlowContext.createCGImage(small, from: small.extent).flatMap { LiveFlow.frame($0) }, at: t)
+      self.showWide(follower, session: session)
+      DispatchQueue.main.async { self.wideFlowBusy = false }
+    }
+  }
+
+  /// Whether the gyro rather than the flow moves 0.5x outlines while the phone turns fast.
+  static let wideGyroWhenFast = false
+
+  /// What `follower` says (on `wideFlowQueue`) is where each pinned thing is on the ultra-wide's
+  /// picture, as of which frame: drawn from then on (`layoutWide`), unless 0.5x has ended since.
+  private func showWide(_ follower: FlatFollower, session: Int) {
+    let said = follower.things
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.wideMode, session == self.wideSession else { return }
+      self.wideOutlines = said.mapValues { $0.shown }
+      self.wideTimes = said.mapValues { $0.at }
+    }
+  }
+
   /// EdgeTAM's step for each pinned thing on an ultra-wide frame (on `samQueue`): its outline
-  /// (upright 0…1) where it's in view. Only things it was already following: without ARKit there's
-  /// no knowing where anything else is in this picture.
-  private func followWide(_ keys: [String], models: EdgeTAMTracker.Models, buffer: CVPixelBuffer) throws -> [String: [CGPoint]] {
+  /// (upright 0…1) where it's in view, and which things it stepped. Only things it was already
+  /// following: without ARKit there's no knowing where anything else is in this picture.
+  private func followWide(_ keys: [String], models: EdgeTAMTracker.Models,
+                          buffer: CVPixelBuffer) throws -> (found: [String: [CGPoint]], asked: [String]) {
     let following = keys.filter { edgeTrackers[$0]?.started == true }
-    guard !following.isEmpty else { return [:] }
+    guard !following.isEmpty else { return ([:], []) }
     let encoder = try edgeEncoder ?? EdgeTAMTracker.Encoder(models: models)
     edgeEncoder = encoder
     let picture = try encoder.encode(CIImage(cvPixelBuffer: buffer).oriented(.right))
     var found: [String: [CGPoint]] = [:]
+    var asked: [String] = []
     for key in following {
       guard let tracker = edgeTrackers[key] else { continue }
       let cut = try tracker.step(picture)
+      asked.append(key)
       if cut.visible { found[key] = cut.outline }
     }
-    return found
+    return (found, asked)
   }
 
   /// Every display frame at 0.5x without ARKit: each pinned thing's outline flat over the
@@ -1978,8 +2048,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     addPin(pin)
     flatPins.insert(id)
     scrubThings[index].pinId = id
-    wideOutlines[id] = flat
-    wideTimes[id] = found.t
+    // Followed from the frame it was found in (a second or so ago), brought on to the newest.
+    let follower = wideFollower
+    let session = wideSession
+    wideFlowQueue.async { [weak self] in
+      follower.place(id, flat, at: found.t)
+      self?.showWide(follower, session: session)
+    }
     // EdgeTAM starts on it on samQueue, where its trackers live; if it can't, it's unpinned
     // rather than left with nothing to follow it.
     let box = LiveTracker.bounds(flat)
