@@ -1138,6 +1138,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       // Where the flow can't say, by how the phone turned (and while it turns fast, if
       // `wideGyroWhenFast`: the picture's a blur).
       follower.turn = { points, a, b in camera.warp(points, from: a, to: b, size: size) }
+      follower.guided = Self.wideGyroGuides
       if Self.wideGyroWhenFast {
         follower.gyroFirst = { a, b in b > a && simd_length(camera.turned(from: a, to: b)) / Float(b - a) > LiveShape.fastTurn }
       } else {
@@ -1155,6 +1156,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// Whether the gyro rather than the flow moves 0.5x outlines while the phone turns fast.
   static let wideGyroWhenFast = false
+  /// Whether the flow starts looking where the gyro says each point went (FlatFollower.guided).
+  static let wideGyroGuides = false
 
   /// What `follower` says (on `wideFlowQueue`) is where each pinned thing is on the ultra-wide's
   /// picture, as of which frame: drawn from then on (`layoutWide`), unless 0.5x has ended since.

@@ -131,6 +131,7 @@ if let ms = Double(ProcessInfo.processInfo.environment["EDGETRACK_LIVE_MS"] ?? "
   if let v = Float(env["EDGETRACK_BEND_MOST"] ?? "") { bending.most = v }
   if let v = Float(env["EDGETRACK_BEND_SIGMA"] ?? "") { bending.sigma = v }
   if let v = Float(env["EDGETRACK_BEND_HOME"] ?? "") { bending.home = v }
+  if env["EDGETRACK_BEND_SEEDED"] == "1" { bending.seeded = true }
   let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] != "0", glides: env["EDGETRACK_GLIDE"] != "0", bending: bending)
   try JSONSerialization.data(withJSONObject: result).write(to: URL(fileURLWithPath: outPath))
   exit(0)

@@ -75,7 +75,7 @@ REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60
 EDGETRACK_LIVE_MS=60 EDGETRACK_GLIDE=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60noglide.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60noglide.json" "$OUT" shaker-live60noglide live 2>&1 | tee -a "$OUT/summary.txt"
 # LiveFlow.bend's settings tried on the bottle (tools/track tries the same on DAVIS, bend-*).
-for v in INSET=2 INSET=5 MOST=0.4 SIGMA=1 SIGMA=4 HOME=2; do
+for v in INSET=2 INSET=5 MOST=0.4 SIGMA=1 SIGMA=4 HOME=2 SEEDED=1; do
   name="live60-$(echo "$v" | tr 'A-Z=.' 'a-z--')"
   env "EDGETRACK_BEND_$v" EDGETRACK_LIVE_MS=60 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/$name.json" "$BOX" >/dev/null 2>&1
   REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/$name.json" "$OUT" "shaker-$name" live 2>&1 | tee -a "$OUT/summary.txt"

@@ -38,6 +38,9 @@ final class FlatFollower {
   /// Whether the gyro moves outlines from one capture time to the next rather than the flow (the
   /// phone turned fast: the picture's a blur). Nil: the flow always tries first.
   var gyroFirst: ((_ from: CFTimeInterval, _ to: CFTimeInterval) -> Bool)?
+  /// The flow starts looking where `turn` says each point went (LiveFlow's prior), rather than
+  /// where it was: a fast turn is a long way for it to find on its own.
+  var guided = false
 
   private(set) var things: [String: Thing] = [:]
   private var frames: [(t: CFTimeInterval, frame: LiveFlow.Frame?)] = []
@@ -173,9 +176,13 @@ final class FlatFollower {
   /// One frame to the next: bent with its thing, or turned where the flow can't say.
   private func step(_ outline: [CGPoint], from a: (t: CFTimeInterval, frame: LiveFlow.Frame?),
                     to b: (t: CFTimeInterval, frame: LiveFlow.Frame?)) -> [CGPoint] {
-    if gyroFirst?(a.t, b.t) != true, let fa = a.frame, let fb = b.frame,
-       let moved = bends ? LiveFlow.bend(outline, from: fa, to: fb, bending) : LiveFlow.carry(outline, from: fa, to: fb) {
-      return moved
+    if gyroFirst?(a.t, b.t) != true, let fa = a.frame, let fb = b.frame {
+      var predict: (([CGPoint]) -> [CGPoint])?
+      if guided, let turn { predict = { turn($0, a.t, b.t) } }
+      if let moved = bends ? LiveFlow.bend(outline, from: fa, to: fb, bending, predict: predict)
+        : LiveFlow.carry(outline, from: fa, to: fb, predict: predict) {
+        return moved
+      }
     }
     return turn?(outline, a.t, b.t) ?? outline
   }

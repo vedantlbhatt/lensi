@@ -109,13 +109,19 @@ enum LiveFlow {
   }
 
   /// Where each point (pixels of `a`'s first level) is in `b`; nil where it can't be told.
-  static func track(_ points: [SIMD2<Float>], from a: Frame, to b: Frame) -> [SIMD2<Float>?] {
+  /// `prior`: how far each is expected to have moved (pixels), where the search starts rather than
+  /// where it was (the gyro's turn, or the whole outline's carry), so a fast move is still found.
+  static func track(_ points: [SIMD2<Float>], from a: Frame, to b: Frame, prior: [SIMD2<Float>]? = nil) -> [SIMD2<Float>?] {
     let n = points.count
+    let top = min(a.levels.count, b.levels.count) - 1
     var guess = [SIMD2<Float>](repeating: .zero, count: n)
+    if let prior, prior.count == n {
+      let s = Float(1 << max(top, 0))
+      for k in 0..<n where prior[k].x.isFinite && prior[k].y.isFinite { guess[k] = prior[k] / s }
+    }
     var lost = [Bool](repeating: false, count: n)
     let side = 2 * window + 1, count = side * side
     var ia = [Float](repeating: 0, count: count), wx = [Float](repeating: 0, count: count), wy = [Float](repeating: 0, count: count)
-    let top = min(a.levels.count, b.levels.count) - 1
     for lev in stride(from: top, through: 0, by: -1) {
       let la = a.levels[lev], lb = b.levels[lev]
       let s = Float(1 << lev)
@@ -177,9 +183,24 @@ enum LiveFlow {
     }
   }
 
+  /// How far each point (pixels of a frame `size` across) moves as `predict` has it (upright 0…1
+  /// points in and out): a prior for `track`.
+  static func prior(_ points: [SIMD2<Float>], size: CGSize, predict: ([CGPoint]) -> [CGPoint]) -> [SIMD2<Float>]? {
+    let unit = points.map { CGPoint(x: CGFloat($0.x) / size.width, y: CGFloat($0.y) / size.height) }
+    let moved = predict(unit)
+    guard moved.count == points.count else { return nil }
+    return zip(points, moved).map { p, m in
+      let d = SIMD2<Float>(Float(m.x * size.width), Float(m.y * size.height)) - p
+      return d.x.isFinite && d.y.isFinite ? d : .zero
+    }
+  }
+
   /// `outline` in frame `a`, carried into frame `b`; nil when too few points inside it could
-  /// be followed to say (it's mostly off the picture, or flat, or covered).
-  static func carry(_ outline: [CGPoint], from a: Frame, to b: Frame, scaling: Bool = true, turning: Bool = true) -> [CGPoint]? {
+  /// be followed to say (it's mostly off the picture, or flat, or covered). `predict` (upright
+  /// 0…1 points in `a` to where they're expected in `b`, as the gyro says the phone turned) is where
+  /// the search starts, and back again from where it ends.
+  static func carry(_ outline: [CGPoint], from a: Frame, to b: Frame, scaling: Bool = true, turning: Bool = true,
+                    predict: (([CGPoint]) -> [CGPoint])? = nil) -> [CGPoint]? {
     guard outline.count >= 3 else { return nil }
     let size = CGSize(width: a.w, height: a.h)
     let r = LiveTracker.bounds(outline)
@@ -198,10 +219,11 @@ enum LiveFlow {
     let deepest = inside.map { $0.depth }.max() ?? 0
     let from = inside.filter { $0.depth >= deepest * 0.3 }.map { SIMD2<Float>(Float($0.p.x * size.width), Float($0.p.y * size.height)) }
     guard from.count >= 5 else { return nil }
-    let there = track(from, from: a, to: b)
+    let ahead = predict.flatMap { prior(from, size: size, predict: $0) }
+    let there = track(from, from: a, to: b, prior: ahead)
     let found = there.compactMap { $0 }
     guard found.count >= 5 else { return nil }
-    let back = track(found, from: b, to: a)
+    let back = track(found, from: b, to: a, prior: ahead.map { fwd in there.indices.compactMap { there[$0] == nil ? nil : -fwd[$0] } })
     // Forward and back: a point that doesn't come home was lost; keep the better half.
     var pairs: [(a: SIMD2<Float>, b: SIMD2<Float>, error: Float)] = []
     var j = 0
@@ -254,6 +276,8 @@ enum LiveFlow {
     var sigma: Float = 2
     /// How near where it started a point must come back (tracked back again) to be believed, pixels.
     var home: Float = 1
+    /// Each point's search starts where the whole outline's carry put it, rather than where it was.
+    var seeded = false
 
     static let standard = Bending()
   }
@@ -268,9 +292,10 @@ enum LiveFlow {
   /// mostly off the picture is carried whole: bent from the little that's on it, a sink up close
   /// on tools/walk's walk-arounds drifted until EdgeTAM's cuts no longer fitted it (lost in 42% of
   /// frames against 1% carried whole). Nil when the outline can't be carried at all.
-  static func bend(_ outline: [CGPoint], from a: Frame, to b: Frame, _ how: Bending = .standard) -> [CGPoint]? {
+  static func bend(_ outline: [CGPoint], from a: Frame, to b: Frame, _ how: Bending = .standard,
+                   predict: (([CGPoint]) -> [CGPoint])? = nil) -> [CGPoint]? {
     let inset = how.inset, most = how.most
-    guard let whole = carry(outline, from: a, to: b) else { return nil }
+    guard let whole = carry(outline, from: a, to: b, predict: predict) else { return nil }
     let n = outline.count
     guard n >= 8, whole.count == n else { return whole }
     let sw = Float(a.w), sh = Float(a.h)
@@ -295,7 +320,9 @@ enum LiveFlow {
       let len = simd_length(t)
       return len > 1e-3 ? p[i] + SIMD2<Float>(-t.y, t.x) / len * inward * inset : p[i]
     }
-    let there = track(inner, from: a, to: b)
+    // Each point's search starts where the whole carry put it (`Bending.seeded`, or with a prediction).
+    let seed: [SIMD2<Float>]? = how.seeded || predict != nil ? (0..<n).map { c[$0] - p[$0] } : nil
+    let there = track(inner, from: a, to: b, prior: seed)
     var found: [Int] = []
     var ahead: [SIMD2<Float>] = []
     for (i, q) in there.enumerated() {
@@ -305,7 +332,7 @@ enum LiveFlow {
       }
     }
     guard found.count >= n / 4 else { return whole }
-    let back = track(ahead, from: b, to: a)
+    let back = track(ahead, from: b, to: a, prior: seed.map { s in found.map { -s[$0] } })
     // Each point's move beyond the whole outline's, where it came home again.
     var extra = [SIMD2<Float>](repeating: .zero, count: n)
     var sure = [Float](repeating: 0, count: n)

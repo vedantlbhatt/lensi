@@ -789,6 +789,7 @@ let runners = [
     ("bend-in2", bending { $0.inset = 2 }), ("bend-in5", bending { $0.inset = 5 }),
     ("bend-most4", bending { $0.most = 0.4 }), ("bend-sig1", bending { $0.sigma = 1 }),
     ("bend-sig4", bending { $0.sigma = 4 }), ("bend-home2", bending { $0.home = 2 }),
+    ("bend-seed", bending { $0.seeded = true }),
   ]
   let runners: [Runner] = [
     EdgeRunner("edgetam", every: 1, flow: flow, tracker: a), EdgeRunner("edgetam@8", every: 3, flow: flow, tracker: b),

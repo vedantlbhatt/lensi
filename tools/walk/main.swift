@@ -42,7 +42,8 @@
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
 //                (flat-gyro: the gyro, as the app did before), by the picture's own pixels (flat-flow),
-//                or by them and by the gyro while the camera turns fast (flat-fast)
+//                or by them and by the gyro while the camera turns fast (flat-fast), or by them
+//                starting from where the gyro says each point went (flat-guide)
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
@@ -706,6 +707,7 @@ func turnedOnly(_ points: [CGPoint], from a: FrozenCamera, to b: FrozenCamera) -
 ///   flat-gyro   how the camera turned (its poses' rotation alone: what the gyro says), the app before
 ///   flat-flow   the picture's own pixels (LiveFlow.bend), turned where the flow can't say
 ///   flat-fast   the same, turned while the camera turns fast (LiveShape.fastTurn: a blur)
+///   flat-guide  flat-flow with the flow starting where the gyro says each point went
 final class FlatRun {
   let label: String
   let follower = FlatFollower()
@@ -716,9 +718,10 @@ final class FlatRun {
   var onBox: [Double] = []
   var middles: [CGPoint?] = []
 
-  init(_ label: String, flow: Bool, gyro: Bool, fast: Bool = false) {
+  init(_ label: String, flow: Bool, gyro: Bool, fast: Bool = false, guided: Bool = false) {
     self.label = label
     self.flow = flow
+    follower.guided = guided
     if gyro {
       follower.turn = { points, a, b in
         guard let ca = flatCameras[a], let cb = flatCameras[b] else { return points }
@@ -741,6 +744,7 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
   FlatRun("flat-gyro", flow: false, gyro: true),
   FlatRun("flat-flow", flow: true, gyro: true),
   FlatRun("flat-fast", flow: true, gyro: true, fast: true),
+  FlatRun("flat-guide", flow: true, gyro: true, guided: true),
 ]
 var flatTracker: EdgeTAMTracker?
 var flatPending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
