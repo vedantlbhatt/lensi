@@ -143,7 +143,7 @@ public class LensiARModule: Module {
     // MARK: The camera
 
     View(LensiARView.self) {
-      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap", "onGuideChange", "onZoomRange")
+      Events("onSelect", "onFocusChange", "onTrackingChange", "onPinTap", "onGuideChange", "onZoomRange", "onLiveStats")
 
       Prop("showDetections") { (view: LensiARView, value: Bool) in
         view.showDetections = value

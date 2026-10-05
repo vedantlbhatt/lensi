@@ -19,6 +19,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   let onPinTap = EventDispatcher()
   let onGuideChange = EventDispatcher()
   let onZoomRange = EventDispatcher()
+  /// Every 3 s while EdgeTAM follows something: how often it really looks on this phone and how
+  /// late its answers are (from the frame it looked at to the answer landing), so what the
+  /// footage tools assume (tools/edgetrack's EDGETRACK_LIVE_MS) can be checked on the phone.
+  let onLiveStats = EventDispatcher()
 
   var showDetections = true
   /// SAM on the live camera feed (outlines instead of corner brackets).
@@ -47,6 +51,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var edgeEncoder: EdgeTAMTracker.Encoder?
   private var edgeTrackers: [String: EdgeTAMTracker] = [:]
   private var edgeLogTime: CFTimeInterval = 0
+  /// The last EdgeTAM step's milliseconds (written on `samQueue`, read once its answer lands).
+  private var edgeStepMs: [String: Double] = [:]
+  /// EdgeTAM's answers over the last 3 s: when the frame it looked at was taken, when the answer
+  /// landed (onLiveStats).
+  private var edgeAnswers: [(taken: CFTimeInterval, landed: CFTimeInterval)] = []
+  private var edgeStatsTime: CFTimeInterval = 0
   /// Live outlines by what they're of: a guide tag's pin id, or a pinned thing's. Their state
   /// is LiveShape (LiveWorld.swift, which tools/pin runs on ARKit's recorded poses); their
   /// layers are here, and where each was last drawn on screen (a pinned thing's tag sits above it).
@@ -541,9 +551,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
       let ms = (CACurrentMediaTime() - started) * 1000
       let results = found, encoded = encodeMs, failed = failure, refusals = refused
+      let edgeMs = edge != nil && prompts.contains(where: \.edge) ? self?.edgeStepMs : nil
       DispatchQueue.main.async {
         guard let self else { return }
         self.samBusy = false
+        if let edgeMs, failed == nil { self.edgeAnswered(taken: captured, stepMs: edgeMs, things: prompts.filter(\.edge).count) }
         self.samMs = self.samMs == 0 ? ms : self.samMs * 0.8 + ms * 0.2
         self.samEncodeMs = self.samEncodeMs == 0 ? encoded : self.samEncodeMs * 0.8 + encoded * 0.2
         let now = CACurrentMediaTime()
@@ -562,6 +574,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         self.takeLive(results, asked: prompts, at: captured, seenBy: camera)
       }
     }
+  }
+
+  /// An EdgeTAM answer landed (main thread); every 3 s, how often they land and how late (onLiveStats).
+  private func edgeAnswered(taken: CFTimeInterval, stepMs: [String: Double], things: Int) {
+    let now = CACurrentMediaTime()
+    edgeAnswers.append((taken, now))
+    edgeAnswers.removeAll { now - $0.landed > 3 }
+    guard now - edgeStatsTime > 3, edgeAnswers.count >= 3, let first = edgeAnswers.first else { return }
+    edgeStatsTime = now
+    let late = edgeAnswers.map { ($0.landed - $0.taken) * 1000 }.sorted()
+    let rate = Double(edgeAnswers.count - 1) / max(now - first.landed, 1e-3)
+    onLiveStats([
+      "looksPerSecond": rate, "latencyMs": late[late.count / 2], "stepMs": stepMs, "things": things,
+      "thermal": ProcessInfo.processInfo.thermalState.rawValue,
+    ])
   }
 
   /// EdgeTAM's step for each pinned thing in `buffer` (on `samQueue`, the only place its state is
@@ -590,6 +617,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         edgeTrackers[p.key] = tracker
       }
       let now = CACurrentMediaTime()
+      edgeStepMs = cut.ms
       if now - edgeLogTime > 3 {
         edgeLogTime = now
         let ms = cut.ms.sorted { $0.key < $1.key }.map { String(format: "%@ %.0f", $0.key, $0.value) }.joined(separator: ", ")

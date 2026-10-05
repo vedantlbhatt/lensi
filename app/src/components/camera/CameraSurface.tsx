@@ -8,6 +8,7 @@ import {
   type GuideChangeEvent,
   type GuideFrame,
   type LensiARViewRef,
+  type LiveStats,
   type SelectEvent,
   type TrackingEvent,
   type ZoomRange,
@@ -17,6 +18,17 @@ import type { Picked } from '../../lib/media';
 import type { Pt } from '../../lib/types';
 import type { ScrubThing } from './ScrubStrip';
 import { VirtualCamera, type VirtualHandle } from './VirtualCamera';
+
+/** One line for the terminal that runs the app: how EdgeTAM really runs on this phone. */
+function liveStatsLine(s: LiveStats): string {
+  const steps = Object.entries(s.stepMs)
+    .map(([k, v]) => `${k} ${Math.round(v)}`)
+    .join(', ');
+  return (
+    `[lensi] EdgeTAM on this phone: ${s.looksPerSecond.toFixed(1)} looks a second, each answer ` +
+    `${Math.round(s.latencyMs)} ms after its frame (${steps} ms; ${s.things} pinned, thermal ${s.thermal})`
+  );
+}
 
 /** One camera API whether we have ARKit or the virtual stand-in. */
 export type CameraHandle = {
@@ -250,6 +262,10 @@ export const CameraSurface = forwardRef<
       onPinTap={(e) => props.onPinTap?.(e.nativeEvent.id)}
       onGuideChange={(e) => props.onGuideChange?.(e.nativeEvent)}
       onZoomRange={(e) => props.onZoomRange?.(e.nativeEvent)}
+      onLiveStats={(e) => {
+        // In the terminal that runs the app: how EdgeTAM really runs on this phone.
+        if (__DEV__) console.log(liveStatsLine(e.nativeEvent));
+      }}
     />
   );
 });

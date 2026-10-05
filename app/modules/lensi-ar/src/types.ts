@@ -112,6 +112,20 @@ export type LensiARViewProps = ViewProps & {
   onGuideChange?: (e: { nativeEvent: GuideChangeEvent }) => void;
   /** How far this camera zooms (min is 0.5 where the ultra-wide is available, else 1). */
   onZoomRange?: (e: { nativeEvent: ZoomRange }) => void;
+  /** Every 3 s while EdgeTAM follows pinned things: how it really runs on this phone. */
+  onLiveStats?: (e: { nativeEvent: LiveStats }) => void;
+};
+
+export type LiveStats = {
+  /** Answers landing a second. */
+  looksPerSecond: number;
+  /** From the frame EdgeTAM looked at to its answer landing (median), ms. */
+  latencyMs: number;
+  /** The last step's milliseconds: draw, encoder, track (or prompt), memory, outline. */
+  stepMs: Record<string, number>;
+  things: number;
+  /** ProcessInfo.thermalState: 0 nominal, 1 fair, 2 serious, 3 critical. */
+  thermal: number;
 };
 
 export type ZoomRange = { min: number; max: number; zoom: number };
