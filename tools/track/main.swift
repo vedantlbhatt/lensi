@@ -21,10 +21,11 @@
 //              from its memory of the thing, started from the seed box, every frame; what's
 //              shown glides from one outline to the next (OutlineMath.glide)
 //   edgetam@8  the same on every third frame, carried on its own pixels in between (the flow)
-//   snap       edgetam with its edge put on the picture's own (EdgeSnap: a guided filter on the
-//              1024 canvas, the picture's colours as the guide); snapgrey with its brightness,
-//              snapsoft only on stronger edges, snapwide in a window twice as wide; snap@8 as
-//              edgetam@8 (each from the same EdgeTAM run as the one it's compared with)
+//   snap       edgetam with its edge put on the picture's own (EdgeSnap.standard: a guided filter
+//              on the 1024 canvas round the thing, its brightness as the guide, worked on a grid
+//              of at most 256 a side); snap512 on a grid twice as fine, snapsmooth smoothed twice
+//              as far along the edge, snapcolour with the picture's colours as the guide; snap@8
+//              as edgetam@8 (each from the same EdgeTAM run as the one it's compared with)
 //   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -584,18 +585,18 @@ let runners = [
   // The tracker's own outlines are left as the mask's: each runner here draws its own.
   EdgeTAMTracker.snap = nil
   let all = EdgeRun(a), third = EdgeRun(b)
-  var grey = EdgeSnap.Settings.standard
-  grey.colour = false
-  var soft = EdgeSnap.Settings.standard
-  soft.eps = 1e-2
-  var wide = EdgeSnap.Settings.standard
-  wide.radius = 8
+  var fine = EdgeSnap.Settings.standard
+  fine.maxSide = 512
+  var smooth = EdgeSnap.Settings.standard
+  smooth.sigma = 3
+  var colour = EdgeSnap.Settings.standard
+  colour.colour = true
   return [
     EdgeRunner("edgetam", every: 1, flow: flow, run: all),
     EdgeRunner("snap", every: 1, flow: flow, run: all, snap: .standard),
-    EdgeRunner("snapgrey", every: 1, flow: flow, run: all, snap: grey),
-    EdgeRunner("snapsoft", every: 1, flow: flow, run: all, snap: soft),
-    EdgeRunner("snapwide", every: 1, flow: flow, run: all, snap: wide),
+    EdgeRunner("snap512", every: 1, flow: flow, run: all, snap: fine),
+    EdgeRunner("snapsmooth", every: 1, flow: flow, run: all, snap: smooth),
+    EdgeRunner("snapcolour", every: 1, flow: flow, run: all, snap: colour),
     EdgeRunner("edgetam@8", every: 3, flow: flow, run: third),
     EdgeRunner("snap@8", every: 3, flow: flow, run: third, snap: .standard),
   ]

@@ -28,6 +28,8 @@ done
 [ -f footage/car-detection.mp4 ] && python tools/track/frames.py footage/car-detection.mp4 footage/carpark 75 110
 [ -f footage/bolt-detection.mp4 ] && python tools/track/frames.py footage/bolt-detection.mp4 footage/bolt 38 63
 [ -f footage/bolt-multi-size-detection.mp4 ] && python tools/track/frames.py footage/bolt-multi-size-detection.mp4 footage/bigbolt 1286 1362 2 960
+# The black shaker bottle, filmed handheld (tools/edgetam/footage): every other frame, 15 a second.
+python tools/track/frames.py tools/edgetam/footage/shaker.mp4 footage/shaker 0 533 2
 
 swiftc -O -o track tools/track/main.swift app/modules/lensi-ar/ios/EdgeTAMTracker.swift \
   app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
@@ -51,4 +53,5 @@ done
 [ -d footage/carpark ] && clip footage/carpark - carpark 0.349,0.289,0.25,0.694
 [ -d footage/bolt ] && clip footage/bolt - bolt 0.488,0.352,0.25,0.125
 [ -d footage/bigbolt ] && clip footage/bigbolt - bigbolt 0.050,0.060,0.070,0.835
+[ -d footage/shaker ] && clip footage/shaker - shaker 0.4074,0.5417,0.2870,0.2000
 exit 0

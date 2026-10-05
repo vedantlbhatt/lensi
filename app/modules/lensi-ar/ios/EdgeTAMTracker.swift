@@ -504,19 +504,19 @@ final class EdgeTAMTracker {
 /// of a cell off the thing's. Here that edge is moved onto the picture's own: the mask's
 /// probabilities are filtered with the picture as the guide (He, Sun & Tang's guided filter, which
 /// keeps an edge only where the guide has one), on the canvas round the thing, and traced there
-/// at four times the mask's resolution. Where the picture has no edge to offer (a blur, a thing the
-/// colour of what's behind it), the mask's own edge stays where it was.
+/// at up to four times the mask's resolution. Where the picture has no edge to offer (a blur, a
+/// thing the colour of what's behind it), the mask's own edge stays where it was.
 enum EdgeSnap {
   struct Settings {
     /// The filter's window, canvas pixels either side: about a cell.
     var radius = 4
-    /// How much contrast (0...1 a channel, squared) the picture needs before the edge follows it.
+    /// How much contrast (0...1, squared) the picture needs before the edge follows it.
     var eps: Float = 1e-3
-    /// The picture's colours as the guide; false: its brightness only (a third of the work).
-    var colour = true
+    /// The picture's colours as the guide (a 3 x 3 covariance a pixel); false: its brightness.
+    var colour = false
     /// The working grid's longest side: a bigger crop is sampled every second (third...) canvas
-    /// pixel, so a thing filling the picture costs what a 512 square does.
-    var maxSide = 512
+    /// pixel, so a thing filling the picture costs what a square this size does.
+    var maxSide = 256
     /// Smoothing along the traced edge, in its points (about a working pixel apart).
     var sigma: CGFloat = 1.5
 
@@ -545,39 +545,42 @@ enum EdgeSnap {
     guard w > 2 * r + 2, h > 2 * r + 2 else { return nil }
     let count = w * h
 
-    // The picture, 0...1 a channel: each working pixel the mean of its step x step canvas pixels.
-    var red = [Float](repeating: 0, count: count), green = red, blue = red
+    // The picture, 0...1: each working pixel the mean of its step x step canvas pixels, as its
+    // three colours or its brightness.
     guard CVPixelBufferLockBaseAddress(canvas, .readOnly) == kCVReturnSuccess else { return nil }
     defer { CVPixelBufferUnlockBaseAddress(canvas, .readOnly) }
     guard let base = CVPixelBufferGetBaseAddress(canvas) else { return nil }
     let bytes = base.assumingMemoryBound(to: UInt8.self), rowBytes = CVPixelBufferGetBytesPerRow(canvas)
     let unit = 1 / (255 * Float(step * step))
-    red.withUnsafeMutableBufferPointer { rp in
-      green.withUnsafeMutableBufferPointer { gp in
-        blue.withUnsafeMutableBufferPointer { bp in
+    var sr = [Float](repeating: 0, count: count), sg = sr, sb = sr
+    sr.withUnsafeMutableBufferPointer { rp in
+      sg.withUnsafeMutableBufferPointer { gp in
+        sb.withUnsafeMutableBufferPointer { bp in
           for y in 0..<h {
             for x in 0..<w {
-              var sr = 0, sg = 0, sb = 0
+              var tr = 0, tg = 0, tb = 0
               for j in 0..<step {
                 let line = bytes + (y0 + y * step + j) * rowBytes + (x0 + x * step) * 4
                 for i in 0..<step {
-                  sb += Int(line[4 * i]); sg += Int(line[4 * i + 1]); sr += Int(line[4 * i + 2])
+                  tb += Int(line[4 * i]); tg += Int(line[4 * i + 1]); tr += Int(line[4 * i + 2])
                 }
               }
               let at = y * w + x
-              rp[at] = Float(sr) * unit; gp[at] = Float(sg) * unit; bp[at] = Float(sb) * unit
+              rp[at] = Float(tr) * unit; gp[at] = Float(tg) * unit; bp[at] = Float(tb) * unit
             }
           }
         }
       }
     }
+    let picture = s.colour ? [sr, sg, sb]
+      : [vDSP.add(vDSP.add(vDSP.multiply(Float(0.299), sr), vDSP.multiply(Float(0.587), sg)), vDSP.multiply(Float(0.114), sb))]
 
     // The mask at each working pixel's centre: its logits bilinear between cell centres (cell i's
     // at i + 0.5 cells), squashed to 0...1.
-    var p = [Float](repeating: 0, count: count)
+    var v = [Float](repeating: 0, count: count)
     let toCell = Float(step) / Float(cell), last = Float(n - 1)
     logits.withUnsafeBufferPointer { l in
-      p.withUnsafeMutableBufferPointer { pp in
+      v.withUnsafeMutableBufferPointer { vp in
         for y in 0..<h {
           let cy = min(max(Float(y0) / Float(cell) + (Float(y) + 0.5) * toCell - 0.5, 0), last)
           let iy = min(Int(cy), n - 2), fy = cy - Float(iy)
@@ -585,15 +588,16 @@ enum EdgeSnap {
             let cx = min(max(Float(x0) / Float(cell) + (Float(x) + 0.5) * toCell - 0.5, 0), last)
             let ix = min(Int(cx), n - 2), fx = cx - Float(ix)
             let a = l[iy * n + ix], b = l[iy * n + ix + 1], c = l[(iy + 1) * n + ix], d = l[(iy + 1) * n + ix + 1]
-            let v = (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy
-            pp[y * w + x] = 1 / (1 + exp(-v))
+            // Kept in range so exp can't overflow (it's a probability past +-30 anyway).
+            vp[y * w + x] = min(max((a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy, -30), 30)
           }
         }
       }
     }
+    let p = vDSP.divide(Float(1), vDSP.add(Float(1), vForce.exp(vDSP.negative(v))))
 
-    var level = s.colour ? guidedColour(red, green, blue, p, w, h, r, s.eps) : guidedGrey(red, green, blue, p, w, h, r, s.eps)
-    for i in 0..<count { level[i] -= 0.5 }
+    let filtered = s.colour ? guidedColour(picture[0], picture[1], picture[2], p, w, h, r, s.eps) : guidedGrey(picture[0], p, w, h, r, s.eps)
+    let level = vDSP.add(Float(-0.5), filtered)
     let (pts, _) = level.withUnsafeBufferPointer { MaskContour.largest($0, offset: 0, stride: w, width: w, height: h) }
     guard pts.count >= 3 else { return nil }
     // Working pixel i's centre is (i + 0.5) x step canvas pixels from the crop's corner.
@@ -603,57 +607,42 @@ enum EdgeSnap {
     }
   }
 
-  /// The guided filter with the picture's brightness as the guide.
-  static func guidedGrey(_ r: [Float], _ g: [Float], _ b: [Float], _ p: [Float], _ w: Int, _ h: Int, _ rad: Int, _ eps: Float) -> [Float] {
-    let n = w * h
-    var guide = [Float](repeating: 0, count: n), gp = guide, gg = guide
-    for i in 0..<n {
-      let v = 0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i]
-      guide[i] = v; gp[i] = v * p[i]; gg[i] = v * v
-    }
-    let mI = mean(guide, w, h, rad), mp = mean(p, w, h, rad), mIp = mean(gp, w, h, rad), mII = mean(gg, w, h, rad)
-    var a = [Float](repeating: 0, count: n), bias = a
-    for i in 0..<n {
-      let ai = (mIp[i] - mI[i] * mp[i]) / (mII[i] - mI[i] * mI[i] + eps)
-      a[i] = ai; bias[i] = mp[i] - ai * mI[i]
-    }
-    let ma = mean(a, w, h, rad), mb = mean(bias, w, h, rad)
-    var q = [Float](repeating: 0, count: n)
-    for i in 0..<n { q[i] = ma[i] * guide[i] + mb[i] }
-    return q
+  /// The guided filter with one plane (the picture's brightness) as the guide.
+  static func guidedGrey(_ guide: [Float], _ p: [Float], _ w: Int, _ h: Int, _ rad: Int, _ eps: Float) -> [Float] {
+    let mI = mean(guide, w, h, rad), mp = mean(p, w, h, rad)
+    let mIp = mean(vDSP.multiply(guide, p), w, h, rad), mII = mean(vDSP.square(guide), w, h, rad)
+    let cov = vDSP.subtract(mIp, vDSP.multiply(mI, mp))
+    let variance = vDSP.add(eps, vDSP.subtract(mII, vDSP.square(mI)))
+    let a = vDSP.divide(cov, variance)
+    let b = vDSP.subtract(mp, vDSP.multiply(a, mI))
+    return vDSP.add(vDSP.multiply(mean(a, w, h, rad), guide), mean(b, w, h, rad))
   }
 
-  /// The guided filter with the picture's colours as the guide (a 3 x 3 covariance a pixel).
+  /// The guided filter with the picture's three colours as the guide (a 3 x 3 covariance a pixel).
   static func guidedColour(_ r: [Float], _ g: [Float], _ b: [Float], _ p: [Float], _ w: Int, _ h: Int, _ rad: Int, _ eps: Float) -> [Float] {
     let n = w * h
-    func times(_ x: [Float], _ y: [Float]) -> [Float] {
-      var o = [Float](repeating: 0, count: n)
-      for i in 0..<n { o[i] = x[i] * y[i] }
-      return o
-    }
     let mr = mean(r, w, h, rad), mg = mean(g, w, h, rad), mb = mean(b, w, h, rad), mp = mean(p, w, h, rad)
-    let mrp = mean(times(r, p), w, h, rad), mgp = mean(times(g, p), w, h, rad), mbp = mean(times(b, p), w, h, rad)
-    let mrr = mean(times(r, r), w, h, rad), mrg = mean(times(r, g), w, h, rad), mrb = mean(times(r, b), w, h, rad)
-    let mgg = mean(times(g, g), w, h, rad), mgb = mean(times(g, b), w, h, rad), mbb = mean(times(b, b), w, h, rad)
+    func cov(_ x: [Float], _ y: [Float], _ mx: [Float], _ my: [Float]) -> [Float] {
+      vDSP.subtract(mean(vDSP.multiply(x, y), w, h, rad), vDSP.multiply(mx, my))
+    }
+    let cr = cov(r, p, mr, mp), cg = cov(g, p, mg, mp), cb = cov(b, p, mb, mp)
+    let vrr = vDSP.add(eps, cov(r, r, mr, mr)), vrg = cov(r, g, mr, mg), vrb = cov(r, b, mr, mb)
+    let vgg = vDSP.add(eps, cov(g, g, mg, mg)), vgb = cov(g, b, mg, mb), vbb = vDSP.add(eps, cov(b, b, mb, mb))
     var ar = [Float](repeating: 0, count: n), ag = ar, ab = ar, bias = ar
     for i in 0..<n {
-      let cr = mrp[i] - mr[i] * mp[i], cg = mgp[i] - mg[i] * mp[i], cb = mbp[i] - mb[i] * mp[i]
-      let vrr = mrr[i] - mr[i] * mr[i] + eps, vrg = mrg[i] - mr[i] * mg[i], vrb = mrb[i] - mr[i] * mb[i]
-      let vgg = mgg[i] - mg[i] * mg[i] + eps, vgb = mgb[i] - mg[i] * mb[i], vbb = mbb[i] - mb[i] * mb[i] + eps
       // The symmetric covariance inverted by its cofactors.
-      let i00 = vgg * vbb - vgb * vgb, i01 = vgb * vrb - vrg * vbb, i02 = vrg * vgb - vgg * vrb
-      let i11 = vrr * vbb - vrb * vrb, i12 = vrb * vrg - vrr * vgb, i22 = vrr * vgg - vrg * vrg
-      let inv = 1 / (vrr * i00 + vrg * i01 + vrb * i02)
-      let a0 = (i00 * cr + i01 * cg + i02 * cb) * inv
-      let a1 = (i01 * cr + i11 * cg + i12 * cb) * inv
-      let a2 = (i02 * cr + i12 * cg + i22 * cb) * inv
+      let i00 = vgg[i] * vbb[i] - vgb[i] * vgb[i], i01 = vgb[i] * vrb[i] - vrg[i] * vbb[i], i02 = vrg[i] * vgb[i] - vgg[i] * vrb[i]
+      let i11 = vrr[i] * vbb[i] - vrb[i] * vrb[i], i12 = vrb[i] * vrg[i] - vrr[i] * vgb[i], i22 = vrr[i] * vgg[i] - vrg[i] * vrg[i]
+      let inv = 1 / (vrr[i] * i00 + vrg[i] * i01 + vrb[i] * i02)
+      let a0 = (i00 * cr[i] + i01 * cg[i] + i02 * cb[i]) * inv
+      let a1 = (i01 * cr[i] + i11 * cg[i] + i12 * cb[i]) * inv
+      let a2 = (i02 * cr[i] + i12 * cg[i] + i22 * cb[i]) * inv
       ar[i] = a0; ag[i] = a1; ab[i] = a2
       bias[i] = mp[i] - a0 * mr[i] - a1 * mg[i] - a2 * mb[i]
     }
-    let mar = mean(ar, w, h, rad), mag = mean(ag, w, h, rad), mab = mean(ab, w, h, rad), mbias = mean(bias, w, h, rad)
-    var q = [Float](repeating: 0, count: n)
-    for i in 0..<n { q[i] = mar[i] * r[i] + mag[i] * g[i] + mab[i] * b[i] + mbias[i] }
-    return q
+    let red = vDSP.multiply(mean(ar, w, h, rad), r), green = vDSP.multiply(mean(ag, w, h, rad), g)
+    let blue = vDSP.multiply(mean(ab, w, h, rad), b)
+    return vDSP.add(vDSP.add(red, green), vDSP.add(blue, mean(bias, w, h, rad)))
   }
 
   /// The mean over the (2 rad + 1)-pixel square round each pixel, the square cut at the edges
