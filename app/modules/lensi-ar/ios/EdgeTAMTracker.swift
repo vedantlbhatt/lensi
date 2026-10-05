@@ -204,6 +204,12 @@ final class EdgeTAMTracker {
   private let boxIn: MLMultiArray
   private static let one: UInt16 = 0x3C00 // 1.0 in half precision
 
+  /// The last step's frame, still to go into memory (`commit`): its features and the mask taken.
+  private var unremembered: (features: MLMultiArray, heads: Heads, k: Int)?
+  /// Milliseconds the memory model last took (`commit`): not in any step's `Cut.ms`, since the
+  /// answer doesn't wait for it.
+  private(set) var lastMemoryMs: Double = 0
+
   /// Frames followed since `start`.
   private(set) var frames = 0
   var started: Bool { cond != nil }
@@ -248,13 +254,17 @@ final class EdgeTAMTracker {
     cond = (memory, heads.pointer(k))
     recent = []
     pointers = []
+    unremembered = nil
     frames = 1
     return try cut(heads, k, &ms)
   }
 
-  /// The thing in the next picture.
+  /// The thing in the next picture. Its frame goes into memory afterwards (`commit`), so the
+  /// answer comes back without waiting for the memory model; the next step commits it if the
+  /// caller hasn't.
   func step(_ picture: Encoded) throws -> Cut {
     guard let cond else { throw EdgeTAMError.notStarted }
+    try commit()
     var ms = picture.ms
     let (features, high0, high1) = (picture.features, picture.high0, picture.high1)
     let n = EdgeTAMTracker.self
@@ -287,12 +297,23 @@ final class EdgeTAMTracker {
     }
     let heads = try Heads(out, candidates: 3)
     let k = heads.best
-    self.recent.append(try remember(features, heads, k, binarize: false, &ms))
-    if self.recent.count > n.numMem - 1 { self.recent.removeFirst() }
+    unremembered = (features, heads, k)
     self.pointers.insert(heads.pointer(k), at: 0)
     if self.pointers.count > n.numPtrs - 1 { self.pointers.removeLast() }
     frames += 1
     return try cut(heads, k, &ms)
+  }
+
+  /// The last step's frame into memory, for the next step: what `step` leaves until its answer is
+  /// on its way (LensiARView calls it once the answer is handed over, while the next frame is
+  /// awaited). Nothing to do if it's done already.
+  func commit() throws {
+    guard let p = unremembered else { return }
+    unremembered = nil
+    var ms: [String: Double] = [:]
+    recent.append(try remember(p.features, p.heads, p.k, binarize: false, &ms))
+    if recent.count > EdgeTAMTracker.numMem - 1 { recent.removeFirst() }
+    lastMemoryMs = ms["memory"] ?? 0
   }
 
   // MARK: - Steps

@@ -573,6 +573,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         guard self.liveSegments else { return }
         self.takeLive(results, asked: prompts, at: captured, seenBy: camera)
       }
+      // The answers are on their way: each tracker's frame goes into its memory now, while the
+      // next frame is awaited (EdgeTAMTracker.commit).
+      if edge != nil { self?.rememberEdge() }
+    }
+  }
+
+  /// On `samQueue`: each tracker's last frame into its memory (EdgeTAMTracker.commit), once its
+  /// answer has been handed over, so no answer waits for the memory model.
+  private func rememberEdge() {
+    for tracker in edgeTrackers.values {
+      do {
+        try tracker.commit()
+      } catch {
+        NSLog("[lensi] EdgeTAM's memory failed: %@", error.localizedDescription)
+      }
     }
   }
 
@@ -617,7 +632,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         edgeTrackers[p.key] = tracker
       }
       let now = CACurrentMediaTime()
-      edgeStepMs = cut.ms
+      edgeStepMs = cut.ms.merging(["memory": edgeTrackers[p.key]?.lastMemoryMs ?? 0]) { a, _ in a }
       if now - edgeLogTime > 3 {
         edgeLogTime = now
         let ms = cut.ms.sorted { $0.key < $1.key }.map { String(format: "%@ %.0f", $0.key, $0.value) }.joined(separator: ", ")
@@ -1076,6 +1091,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           self.wideTimes[key] = nil
         }
       }
+      self.rememberEdge()
     }
   }
 
