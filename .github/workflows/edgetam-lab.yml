@@ -1,0 +1,43 @@
+name: edgetam-lab
+
+# EdgeTAM (Meta's on-device SAM 2) on the bottle video (tools/edgetam): the reference in PyTorch,
+# the Core ML models the app ships, and the app's own EdgeTAMTracker.swift, frame by frame. Push
+# to the edgetam-lab branch; the results (and the compiled models) land on ci-edgetam.
+
+on:
+  push:
+    branches: [edgetam-lab]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: edgetam-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edgetam:
+    name: EdgeTAM on the bottle video
+    runs-on: xcode-27
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Reference, Core ML, and the app's tracker
+        run: bash tools/edgetam/ci.sh
+      - name: Push results to ci-edgetam
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          [ -d out/edgetam ] || exit 0
+          rm -rf ../ci-edgetam && cp -R out/edgetam ../ci-edgetam && cd ../ci-edgetam
+          echo "$SHA" > COMMIT.txt
+          git init -q && git checkout -q -b ci-edgetam && git add -A
+          git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "EdgeTAM results for $SHA"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-edgetam
