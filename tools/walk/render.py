@@ -5,8 +5,10 @@
 The outlines are in the app's upright picture (the sensor image turned `.right`); the frames
 are drawn as the iPad recorded them, turned so the room's up is up. Writes, top over bottom:
 
-  <name>-before-after.mp4  the app before its depth was put right / now (both pinned 40% too far)
+  <name>-before-after.mp4  the app before / now (both pinned 40% too far)
+  <name>-depth-only.mp4    before / with only the depth put right
   <name>-lidar.mp4         before / now with LiDAR, as on a Pro iPhone
+  <name>-right-depth.mp4   before / now, both pinned at the right depth
   <name>-depth.mp4         ARKit alone at a depth 40% off / at the right depth: what a wrong
                            depth does by itself as the camera moves
 and <name>.mp4, the app now, bigger.
@@ -27,14 +29,22 @@ CAPTIONS = {
     "app@true": "Before, pinned at the right depth",
     "app@far": "Before: pinned 40% too far, never put right",
     "app@near": "Before: pinned 30% too near",
-    "fix@far": "Now: pinned 40% too far, put right from its cuts",
-    "fix@near": "Now: pinned 30% too near, put right from its cuts",
-    "lidar@far": "Now with LiDAR: pinned 40% too far, put right",
+    "fix@true": "Depth put right, pinned at the right depth",
+    "fix@far": "Depth put right from its cuts (pinned 40% too far)",
+    "fix@near": "Depth put right from its cuts (pinned 30% too near)",
+    "look@far": "Depth put right from its cuts (pinned 40% too far)",
+    "look@near": "Depth put right from its cuts (pinned 30% too near)",
+    "lidar@far": "Depth put right by LiDAR (pinned 40% too far)",
+    "tight@true": "Now, pinned at the right depth",
+    "tight@far": "Now: pinned 40% too far, put right",
+    "tlidar@far": "Now with LiDAR: pinned 40% too far, put right",
 }
 
 PAIRS = [
-    ("before-after", "app@far", "fix@far"),
-    ("lidar", "app@far", "lidar@far"),
+    ("before-after", "app@far", "tight@far"),
+    ("depth-only", "app@far", "look@far"),
+    ("lidar", "app@far", "tlidar@far"),
+    ("right-depth", "app@true", "tight@true"),
     ("depth", "arkit@far", "arkit@true"),
 ]
 
@@ -73,7 +83,9 @@ def main():
     h, w = first.shape[:2]
     fps = 30
     s = 2
-    app = "fix@far"
+    app = os.environ.get("WALK_APP", "tight@far")
+    if app not in runs:
+        app = "fix@far"
     single = writer(os.path.join(out_dir, f"{name}.mp4"), w * s, h * s, fps)
     pairs = [(top, bottom, writer(os.path.join(out_dir, f"{name}-{tag}.mp4"), w, h * 2, fps))
              for tag, top, bottom in PAIRS if top in runs and bottom in runs]

@@ -157,6 +157,9 @@ struct LiveShape {
   private(set) var still = true
   /// Its last looks, from each camera that cut it wholly (`sighted`).
   private(set) var sights: [Sight] = []
+  /// Which way it was seen from (from its middle, unit) when the last cut was taken: a still
+  /// thing seen from about there again is asked about with the tight gate (`turned`).
+  private(set) var lastView: simd_float3?
 
   /// One camera's look at a whole cut: where the camera was, which way it saw the cut's middle,
   /// and how big the cut looked from there (its spread over its range: radians).
@@ -209,12 +212,12 @@ struct LiveShape {
     return dt == 0 ? world : world.map { $0 + velocity * dt }
   }
 
-  /// SAM's cut of it, laid in the world from a frame captured at `t`, blended into where it
-  /// should be by then: a moving thing is followed, and its edge settles unless it's really
-  /// changing shape (OutlineMath.steady). SAM takes a while: if the flow has carried the
-  /// outline past `t`, the cut is brought along the same way first. `measure` false (the phone
-  /// itself was moving fast, so where the cut landed says little about the thing's own speed):
-  /// its speed only fades.
+  /// SAM's cut of it, laid in the world from a frame captured at `t` by a camera at `origin`,
+  /// blended into where it should be by then: a moving thing is followed, and its edge settles
+  /// unless it's really changing shape (OutlineMath.steady). SAM takes a while: if the flow has
+  /// carried the outline past `t`, the cut is brought along the same way first. `measure` false
+  /// (the phone itself was moving fast, so where the cut landed says little about the thing's
+  /// own speed): its speed only fades.
   mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval, how: OutlineMath.Smoothing = .standard, measure: Bool = true,
                      seenFrom origin: simd_float3? = nil) {
     var forwarded = fresh
@@ -240,9 +243,21 @@ struct LiveShape {
     seen = at
     cut = t
     misses = 0
-    // The cut was laid at the depth it already had; from where the camera was, the way to its
-    // middle and how big it looked hold wherever it really is (`sighted`).
-    if let origin { sighted(fresh, from: origin) }
+    if let origin {
+      let v = origin - OutlineMath.centre(world)
+      let d = simd_length(v)
+      if d > 0.01 { lastView = v / d }
+    }
+  }
+
+  /// How far round (radians) the view of it from `origin` has turned since its last cut; nil
+  /// when there's been no cut from a known place.
+  func turned(from origin: simd_float3) -> Float? {
+    guard let lastView else { return nil }
+    let v = origin - OutlineMath.centre(world)
+    let d = simd_length(v)
+    guard d > 0.01 else { return nil }
+    return acos(min(max(simd_dot(v / d, lastView), -1), 1))
   }
 
   // MARK: How far away it is

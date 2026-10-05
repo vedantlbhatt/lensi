@@ -129,6 +129,23 @@ enum LiveTracker {
     /// glass table top, the wooden floor under a wooden table) creeps in a little each cut
     /// past the loose gate (tools/pin, on ARKit recordings).
     static let strict = Gate(minIoU: 0.5, areaRatio: 0.6...1.67)
+    /// A close match only: for a still thing seen from about where it was last cut. Its outline
+    /// can only change as the view of it does, so a cut that's grown onto a neighbour (a towel
+    /// hanging beside a trolley, the strict gate let it in and each cut after crept further)
+    /// is refused (tools/walk).
+    static let tight = Gate(minIoU: 0.7, areaRatio: 0.8...1.25)
+  }
+
+  /// A still thing seen from within this angle (radians) of where its last cut was taken from
+  /// is asked about with the tight gate (`Gate.tight`).
+  static let tightTurn: Float = 0.15
+
+  /// How to ask about a thing (`asking(still:)`), with the tight gate for a still one seen from
+  /// about where it was last cut (`turned`: radians since; nil when unknown).
+  static func asking(still: Bool, turned: Float?) -> (grow: CGFloat, gate: Gate, smoothing: OutlineMath.Smoothing) {
+    var how = asking(still: still)
+    if still, let turned, turned < tightTurn { how.gate = .tight }
+    return how
   }
 
   /// Below this speed (in its own sizes a second) a thing counts as still. ARKit takes the

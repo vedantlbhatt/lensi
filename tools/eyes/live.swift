@@ -403,6 +403,7 @@ func checkDepth() -> Bool {
       last = camera(at: at, looking: target)
       guard let fresh = cut(last, through: OutlineMath.centre(shape.world)) else { continue }
       shape.take(fresh, at: Double(i) * 0.125, how: .still, measure: true, seenFrom: last.position)
+      shape.sighted(fresh, from: last.position)
     }
     let got = simd_distance(OutlineMath.centre(shape.world), last.position)
     let want = simd_distance(target, last.position)
