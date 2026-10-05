@@ -167,6 +167,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// ARKit is back at 1x (where they're at, measured inside the cut, or a guess its lines of
   /// sight put right: LiveShape.sight). Hidden at 1x until then.
   private var flatPins: Set<String> = []
+  /// Pinned things back at 1x from 0.5x, not cut since: ARKit was paused, and its world can come
+  /// back somewhere else, so where they should be isn't trusted for their first cut (followEdge).
+  private var returning: Set<String> = []
   /// The strip at 0.5x: the frame its things were found in (their outlines are on it), and the
   /// highlighted one's layer.
   private var wideScrubFrame: (buffer: CVPixelBuffer, t: CFTimeInterval)?
@@ -357,6 +360,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// Up close, how much bigger or smaller the part on the picture can make the whole outline
     /// in one cut (LiveTracker.follow).
     var scaleLimit: CGFloat = 1.4
+    /// Back at 1x from 0.5x: where it should be may be stale (ARKit's world can come back
+    /// elsewhere); its cut is laid afresh where it's seen.
+    var returning = false
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -452,7 +458,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         let asking = LiveTracker.asking(still: shape.still)
         prompts.append(LivePrompt(key: key, point: nil, box: box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
                                   follows: true, gate: .loose, smoothing: asking.smoothing, edge: true,
-                                  scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4))
+                                  scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4, returning: returning.contains(key)))
       }
       // Pinned at 0.5x: EdgeTAM is already following them; their first cut here lays them in the world.
       for key in pinOrder where flatPins.contains(key) {
@@ -597,13 +603,19 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       // behind the phone): ARKit's world moved under it (paused at 0.5x, it can come back with its
       // world somewhere else), or it moved further than it was followed. Laid through where it
       // was, it'd stay wrong, or never be laid at all; it's laid afresh where it's seen.
-      let astray = !p.unplaced && !Self.touchesEdge(seen)
-        && (p.predicted.map { LiveTracker.iou(seen, LiveTracker.clipped($0)) < 0.05 } ?? true)
+      let whole = !Self.touchesEdge(seen)
+      let astray = !p.unplaced && (p.returning || (whole && (p.predicted.map { LiveTracker.iou(seen, LiveTracker.clipped($0)) < 0.05 } ?? true)))
       if p.unplaced || astray {
+        // Up close, the whole outline as it should be, moved onto the part of it on the picture
+        // however far that is from where it should be (that's what's stale).
+        if !whole, let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
+           let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: p.scaleLimit) {
+          ring = moved
+        }
         // Where it's measured to be (LiDAR, ARKit's points on it), else as far off as it was along
         // its middle's line of sight (pinned at 0.5x: a metre), which its lines of sight put right
         // as it's followed (LiveShape.sight).
-        let middle = Self.middle(seen)
+        let middle = Self.middle(ring)
         let (origin, dir) = camera.ray(middle)
         if let d = measured?.inside(seen) ?? camera.medianDepth(of: points, inside: seen) {
           anchor = origin + dir * camera.range(depth: d, through: middle)
@@ -618,8 +630,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // that doesn't fit where the thing should be isn't taken (ARKit holds it meanwhile): laid
         // as the whole thing, or carried far by it, it threw the whole outline about a close-up
         // sink and washer (tools/walk).
-        guard let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit) else { continue }
-        ring = whole
+        guard let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit) else { continue }
+        ring = followed
       }
       let plane = camera.withPlane(through: anchor)
       let world = ring.compactMap { plane.onPlane($0) }
@@ -698,6 +710,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let key = prompt.key
       if let cut = found[key] {
         let world = cut.world
+        returning.remove(key)
         if cut.replace, let old = liveShapes[key] {
           // Seen nowhere near where it should be (ARKit's world moved under it): where it was
           // goes, and it's laid afresh where it was seen, still pinned.
@@ -973,6 +986,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     } else {
       for (_, l) in wideLayers { l.removeFromSuperlayer() }
       wideLayers = [:]
+      // ARKit was paused: where pinned things were may not be where its world puts them now.
+      returning = Set(pinOrder.filter { liveShapes[$0]?.pinned == true })
       wideScrubLayer?.removeFromSuperlayer()
       wideScrubLayer = nil
       wideScrubFrame = nil
@@ -2183,6 +2198,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       contexts[pid] = nil
       flatPins.remove(pid)
       flatCallouts[pid] = nil
+      returning.remove(pid)
     }
     pinOrder.removeAll { pins[$0] == nil }
   }
@@ -2194,6 +2210,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     contexts.removeAll()
     flatPins.removeAll()
     flatCallouts.removeAll()
+    returning.removeAll()
   }
 
   // MARK: - Live guide

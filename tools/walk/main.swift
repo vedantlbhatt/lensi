@@ -577,8 +577,11 @@ final class Run {
   /// 0.5x) and resumed with its world somewhere else.
   let shift: Bool
   /// The whole thing seen by EdgeTAM nowhere near where it should be is laid afresh where it's
-  /// seen (LensiARView.followEdge); off: blended in through where it was, as before.
+  /// seen (LensiARView.followEdge), as is its first cut once the world has moved (as back at 1x
+  /// from 0.5x); off: blended in through where it was, as before.
   let replace: Bool
+  /// The world has just moved and it hasn't been cut since (LensiARView.returning).
+  var returning = false
   var tracker: EdgeTAMTracker?
   var shape: LiveShape?
   var pending: Cut?
@@ -711,6 +714,7 @@ for (k, f) in window.enumerated() {
   for run in runs {
     // The phone as this run's ARKit sees itself (shift@*: in a world moved halfway through).
     let camera = run.shift && k >= shiftFrom ? trueCamera.shifted(worldShift) : trueCamera
+    if run.shift, k == shiftFrom { run.returning = true }
     // Between cuts, its own pixels (LensiARView.flowLive), not while the phone moves fast.
     if !run.once, !run.shift, !fast, var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still && shape.depthKnown), let previous, let flowFrame {
       if shape.carry(from: previous.frame, previous.camera, at: previous.t, to: flowFrame, camera, at: t) { run.carried += 1 }
@@ -788,9 +792,16 @@ for (k, f) in window.enumerated() {
         // behind the phone): the world moved under it. Laid afresh where it's seen, as far off as it
         // was along its line of sight (or where LiDAR puts it).
         let predictedNow = camera.upright(now)
-        let astray = !edgeOf(seen) && (predictedNow.map { LiveTracker.iou(seen, LiveTracker.clipped($0)) < 0.05 } ?? true)
+        let whole = !edgeOf(seen)
+        let astray = run.returning || (whole && (predictedNow.map { LiveTracker.iou(seen, LiveTracker.clipped($0)) < 0.05 } ?? true))
         if run.replace, astray {
-          let inside = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
+          // Up close, the whole outline as it should be, moved onto the part on the picture however
+          // far that is from where it should be (that's what's stale).
+          if !whole, let predicted = predictedNow, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
+             let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4) {
+            ring = moved
+          }
+          let inside = CGPoint(x: ring.map(\.x).reduce(0, +) / CGFloat(ring.count), y: ring.map(\.y).reduce(0, +) / CGFloat(ring.count))
           let (origin, dir) = camera.ray(inside)
           var range = min(max(simd_distance(camera.position, OutlineMath.centre(now)), 0.2), 6)
           if run.lidar, let lidarMap, let d = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) {
@@ -798,15 +809,16 @@ for (k, f) in window.enumerated() {
             range = camera.range(depth: d, through: inside)
           }
           let plane = camera.withPlane(through: origin + dir * range)
-          let laid = seen.compactMap { plane.onPlane($0) }
-          if laid.count == seen.count { world = laid }
+          let laid = ring.compactMap { plane.onPlane($0) }
+          if laid.count == ring.count { world = laid }
           replace = true
           run.replaced += 1
+          run.returning = false
         } else {
           if edgeOf(seen), let predicted = predictedNow, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
             let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
-            if let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose, scaleLimit: limit) {
-              ring = whole
+            if let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose, scaleLimit: limit) {
+              ring = followed
             } else {
               taken = false
               run.refused += 1

@@ -135,6 +135,8 @@ enum LiveTracker {
     /// hanging beside a trolley, the strict gate let it in and each cut after crept further)
     /// is refused (tools/walk).
     static let tight = Gate(minIoU: 0.7, areaRatio: 0.8...1.25)
+    /// Anything: where it should be is what's stale (ARKit's world moved under it).
+    static let any = Gate(minIoU: -1, areaRatio: 0...CGFloat.greatestFiniteMagnitude)
   }
 
   /// A still thing (its depth known) seen from within this angle (radians) of where its last
