@@ -63,6 +63,18 @@ python tools/edgetam/report.py footage/shaker "$REF" "$OUT/swift.json" "$OUT" sh
 echo "== The Core ML models in parts.Tracker (Python)"
 python tools/edgetam/check_coreml.py "$EDGETAM" "$PWD/build/edgetam" "$PWD/footage/shaker" "$REF" "$BOX" \
   "$PWD/$OUT/coreml-ALL.json" ALL 2>&1 | tee "$OUT/coreml-ALL.txt" | grep -v "^frame" | tee -a "$OUT/summary.txt"
+# The same models with their weights in 8 bits a value (EDGETAM_WEIGHTS=int8): half the size. The
+# app's tracker with them, scored the same way.
+echo "== Core ML, 8-bit weights"
+if EDGETAM_WEIGHTS=int8 python tools/edgetam/convert.py "$EDGETAM" "$PWD/build/edgetam-int8" 2>&1 | grep -v "%|" | tee "$OUT/convert-int8.txt"; then
+  mkdir -p "$OUT/models-int8"
+  for m in EdgeTAMEncoder EdgeTAMPrompt EdgeTAMTrack EdgeTAMMemory; do
+    xcrun coremlcompiler compile "build/edgetam-int8/$m.mlpackage" "$OUT/models-int8/" >/dev/null
+  done
+  du -sh "$OUT"/models-int8/* | tee "$OUT/model-sizes-int8.txt"
+  LENSI_MODELS_DIR="$OUT/models-int8" ./edgetrack footage/shaker "$OUT/swift-int8.json" "$BOX" 2>&1 | tee "$OUT/swift-int8.txt"
+  REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/swift-int8.json" "$OUT" shaker-int8 outline shown 2>&1 | tee -a "$OUT/summary.txt"
+fi
 # The reference's masks, for looking at the runs elsewhere.
 tar -czf "$OUT/reference.tgz" -C "$(dirname "$REF")" "$(basename "$REF")"
 exit 0
