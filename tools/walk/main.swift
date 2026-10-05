@@ -36,6 +36,8 @@
 //                10% bigger or smaller once its depth is known, never laid as the whole thing);
 //                edge@far's depth from lines of sight, edgel@far's from LiDAR (with the EdgeTAM
 //                models in LENSI_MODELS_DIR; left out without them)
+//   edgeb@far    edge@far, and a cut from a frame taken while the phone moved fast (a blur) not taken
+//                for a still thing whose depth is known (ARKit holds it)
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -555,6 +557,8 @@ struct Cut {
   var middle: CGPoint? = nil
   /// Laid afresh rather than blended in: the whole thing seen nowhere near where it should be.
   var replace = false
+  /// Made from a frame taken while the phone moved fast (a blur).
+  var blurred = false
 }
 
 final class Run {
@@ -587,6 +591,9 @@ final class Run {
   let replace: Bool
   /// Carried by the flow moved whole (LiveFlow.carry) rather than bent with its thing (the app).
   let whole: Bool
+  /// A cut from a frame taken while the phone moved fast (a blur) isn't taken for a still thing
+  /// whose depth is known: ARKit holds that, and a blurred cut can only add its own errors.
+  let skipBlur: Bool
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var tracker: EdgeTAMTracker?
@@ -600,9 +607,11 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0, measured = 0, replaced = 0
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
-       clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false) {
+       clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
+       skipBlur: Bool = false) {
     self.label = label
     self.whole = whole
+    self.skipBlur = skipBlur
     self.start = start
     self.once = once
     self.lidar = lidar
@@ -634,6 +643,7 @@ let runs = [
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
   Run("edgew@far", start: 1.4, noflow: true, sight: true, edge: true, whole: true),
+  Run("edgeb@far", start: 1.4, noflow: true, sight: true, edge: true, skipBlur: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   Run("shift@true", start: 1, noflow: true, sight: true, edge: true, shift: true),
   Run("shiftn@true", start: 1, noflow: true, sight: true, edge: true, shift: true, replace: false),
@@ -808,19 +818,23 @@ for (k, f) in window.enumerated() {
     if let cut = run.pending, cut.due <= k {
       run.pending = nil
       if var shape = run.shape {
+        // A blur's cut of a thing ARKit holds: not taken, nor measured from (edgeb@far).
+        let skip = run.skipBlur && cut.blurred && shape.still && shape.depthKnown && !cut.replace
         if let world = cut.world, cut.replace {
           // Laid afresh where it was seen (LensiARView.takeLive), still pinned.
           shape = LiveShape(world: world, at: cut.t, follows: true)
           shape.bends = !run.whole
           shape.pinned = true
           shape.depthKnown = cut.depth != nil
+        } else if skip {
         } else if let world = cut.world {
           shape.take(world, at: cut.t, how: cut.smoothing, measure: !fast, seenFrom: cut.camera.position)
         } else {
           shape.misses += 1
           shape.velocity *= 0.5
         }
-        if let depth = cut.depth {
+        if skip {
+        } else if let depth = cut.depth {
           shape.setDepth(depth, seenBy: cut.camera, weight: LiveShape.lidarWeight)
           run.measured += 1
         } else if run.sight, let middle = cut.middle, shape.sight(middle, seenBy: cut.camera, at: cut.t) {
@@ -924,6 +938,7 @@ for (k, f) in window.enumerated() {
       var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: asking.smoothing)
       pending.middle = middle
       pending.replace = replace
+      pending.blurred = fast
       run.pending = pending
     } else if !run.edge, !run.once, run.pending == nil, k % every == 0, let shape = run.shape {
       // SAM asked where it should be now (LensiARView.segmentLive's follow): up close, about the
