@@ -71,6 +71,9 @@ done
 # The outline moved whole between answers (LiveFlow.carry, the app before LiveFlow.bend).
 EDGETRACK_LIVE_MS=60 EDGETRACK_BEND=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60whole.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60whole.json" "$OUT" shaker-live60whole live 2>&1 | tee -a "$OUT/summary.txt"
+# Each answer taken as it is rather than glided into what was shown (on DAVIS that's a little better).
+EDGETRACK_LIVE_MS=60 EDGETRACK_GLIDE=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60noglide.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
+REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60noglide.json" "$OUT" shaker-live60noglide live 2>&1 | tee -a "$OUT/summary.txt"
 # LiveFlow.bend's settings tried on the bottle (tools/track tries the same on DAVIS, bend-*).
 for v in INSET=2 INSET=5 MOST=0.4 SIGMA=1 SIGMA=4 HOME=2; do
   name="live60-$(echo "$v" | tr 'A-Z=.' 'a-z--')"
