@@ -68,11 +68,8 @@ for ms in 60 100; do
   EDGETRACK_LIVE_MS=$ms LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live$ms.json" "$BOX" 2>&1 | tee "$OUT/live$ms.txt" | tee -a "$OUT/summary.txt"
   python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live$ms.json" "$OUT" "shaker-live$ms" live 2>&1 | tee -a "$OUT/summary.txt"
 done
-# The outline bent between answers rather than moved whole (LiveFlow.bend), and answers taken as
-# they are rather than glided into.
-EDGETRACK_LIVE_MS=60 EDGETRACK_BEND=1 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60bend.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
-REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60bend.json" "$OUT" shaker-live60bend live 2>&1 | tee -a "$OUT/summary.txt"
-EDGETRACK_LIVE_MS=60 EDGETRACK_GLIDE=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60whole.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
+# The outline moved whole between answers (LiveFlow.carry, the app before LiveFlow.bend).
+EDGETRACK_LIVE_MS=60 EDGETRACK_BEND=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60whole.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60whole.json" "$OUT" shaker-live60whole live 2>&1 | tee -a "$OUT/summary.txt"
 # What the timing alone costs, with the outline moved perfectly between answers, or not at all.
 python tools/edgetam/timing.py "$REF" "$OUT/swift.json" 2 2 3 3 2>&1 | tee -a "$OUT/summary.txt"

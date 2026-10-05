@@ -15,8 +15,9 @@
 // at their own times (EDGETRACK_FPS, 30), EdgeTAM started on a frame only when the app would
 // start it, each answer ready that many milliseconds after its frame and drawn from the first
 // frame after that, and the outline moved between answers. Writes each frame's "live" outline.
-// EDGETRACK_BEND=1 bends it between answers (LiveFlow.bend) rather than moving it whole;
-// EDGETRACK_GLIDE=0 takes each answer as it is rather than gliding into it.
+// Between answers the outline is bent with the thing (LiveFlow.bend, as the app's flow carries it);
+// EDGETRACK_BEND=0 moves it whole instead (LiveFlow.carry, the app before); EDGETRACK_GLIDE=0
+// takes each answer as it is rather than gliding into it.
 import CoreImage
 import Foundation
 import ImageIO
@@ -149,7 +150,7 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool) throws -> [St
 if let ms = Double(ProcessInfo.processInfo.environment["EDGETRACK_LIVE_MS"] ?? "") {
   let fps = Double(ProcessInfo.processInfo.environment["EDGETRACK_FPS"] ?? "") ?? 30
   let env = ProcessInfo.processInfo.environment
-  let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] == "1", glides: env["EDGETRACK_GLIDE"] != "0")
+  let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] != "0", glides: env["EDGETRACK_GLIDE"] != "0")
   try JSONSerialization.data(withJSONObject: result).write(to: URL(fileURLWithPath: outPath))
   exit(0)
 }

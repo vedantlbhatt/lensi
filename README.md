@@ -128,17 +128,17 @@ CI also builds for the iOS 27 Simulator, drives scripted captures through deep l
 | bolt on a belt | lost | 8.3 px | 0.6 px | |
 | bolt moving its width a cut | lost | lost at the second cut | held, 9.3 px | |
 
-EdgeTAM, as pinned things are followed now, on the same footage against the same hand-drawn outlines (`edgetam`: every frame; `edgetam@8`: every third, the flow carrying it between):
+EdgeTAM, as pinned things are followed now, on the same footage against the same hand-drawn outlines (`edgetam`: every frame; `edgetam@8`: every third, the flow carrying it between). Both draw each answer on the frame it was made from, which no phone can; `live` plays each clip at its own 24 fps as the phone runs EdgeTAM: a look only once the last answer is in and 50 ms after the last start (12 a second here), each answer 60 ms after its frame, moved on from there to the frame shown. Moved whole between answers (`LiveFlow.carry`), a leg that swings leaves the outline behind; bent (`livebend`, `LiveFlow.bend`, what the app does now) it keeps up:
 
-| clip | SAM (`lensi@8`) | EdgeTAM every frame | EdgeTAM every third |
-|---|---|---|---|
-| car round a roundabout | J 91.7%, jerk 3.8 px | J 97.5%, 1.3 px | J 95.9%, 5.1 px |
-| car through a junction | J 92.8%, 1.7 px | J 96.8%, 1.0 px | J 95.7%, 2.5 px |
-| drifting car | J 71.1%, 19.1 px | J 93.2%, 10.2 px | J 86.7%, 31.1 px |
-| dog | J 81.2%, 10.6 px | J 93.9%, 7.6 px | J 86.8%, 11.9 px |
-| parkour | J 73.4%, 7.5 px | J 93.0%, 4.0 px | J 78.5%, 10.5 px |
+| clip | SAM (`lensi@8`) | EdgeTAM every frame | every third | as the phone runs it, moved whole | bent (the app) |
+|---|---|---|---|---|---|
+| car round a roundabout | J 91.7%, jerk 3.8 px | J 97.5%, 1.3 px | J 95.9%, 5.1 px | J 94.2%, 4.7 px | J 96.2%, 1.3 px |
+| car through a junction | J 92.8%, 1.7 px | J 96.8%, 1.0 px | J 95.7%, 2.5 px | J 94.7%, 2.2 px | J 95.7%, 1.0 px |
+| drifting car | J 71.1%, 19.1 px | J 93.2%, 10.2 px | J 86.7%, 31.1 px | J 78.1%, 21.5 px | J 86.1%, 18.7 px |
+| dog | J 81.2%, 10.6 px | J 93.9%, 7.6 px | J 86.8%, 11.9 px | J 76.2%, 10.8 px | J 87.3%, 9.2 px |
+| parkour | J 73.4%, 7.5 px | J 93.0%, 4.0 px | J 78.5%, 10.5 px | J 61.8%, 11.4 px | J 76.8%, 8.1 px |
 
-From its memory of the thing it holds on where SAM's re-cuts drift (J 94.9% on average against 82.0%), and the more often it runs the better: the app asks it up to 20 times a second.
+From its memory of the thing EdgeTAM holds on where SAM's re-cuts drift (J 94.9% on average against 82.0%), and the more often it runs the better: the app asks it up to 20 times a second. As the phone runs it, bending takes the average from 81.0% to 88.4% and the drawn line from 6.7 px to 3.8 px off the real edge; taking each answer as it is rather than gliding into it adds a little on the cars (97.4%, 96.5%) and nothing elsewhere. 100 ms late, moved whole: 75.5%.
 
 At 4 cuts a second (a hot phone, or a guide part waiting its turn) coasting loses fast things (dog J 32%, drifting car 10%) and LiveFlow keeps them (73%, 53%). LiveFlow costs 2-3 ms a frame plus about 1 ms per outline on a Mac core. Not measured here: ARKit (the phone's own motion), SAM's speed on a phone's Neural Engine, heat. `bash tools/track/ci.sh` reproduces it on a Mac; results and videos land on the `ci-track` branch.
 
@@ -152,10 +152,11 @@ A pinned thing is followed by [EdgeTAM](https://github.com/facebookresearch/Edge
 | the app's `EdgeTAMTracker.swift` with the Core ML models (CI's Mac) vs that predictor | 533 | mean 0.981, worst 0.936; never lost |
 | EdgeTAM on every other frame (15 a second, about a phone's rate) vs every frame | 267 | mean 0.993, worst 0.960 |
 | the app itself in the iOS Simulator, with the models it ships, on its 360x640 demo clip at 15 fps (`10h`), what it drew vs the predictor | 267 | mean 0.964, worst 0.900; never lost (each step's own outline: 0.967, worst 0.904), about 1 s a frame on the Simulator's CPU |
-| the clip played as the phone's camera (`EDGETRACK_LIVE_MS=60`): a look only when the app would start one (15 a second at 30 fps), each answer 60 ms after its frame, moved on by LiveFlow in between; what's drawn on every frame | 533 | mean 0.924, worst 0.691; 130 frames under 0.9 |
-| the same, each answer 100 ms late (10 looks a second) | 533 | mean 0.896, worst 0.592; 238 frames under 0.9 |
+| the clip played as the phone's camera (`EDGETRACK_LIVE_MS=60`): a look only when the app would start one (15 a second at 30 fps), each answer 60 ms after its frame, bent with the bottle by its own pixels in between (`LiveFlow.bend`); what's drawn on every frame | 533 | mean 0.957, worst 0.713; 26 frames under 0.9 |
+| the same with the outline moved whole between answers (`LiveFlow.carry`, the app before) | 533 | mean 0.924, worst 0.678; 133 frames under 0.9 |
+| moved whole, each answer 100 ms late (10 looks a second) | 533 | mean 0.897, worst 0.573; 229 frames under 0.9 |
 
-Every row above but the last two draws each outline on the frame it was made from, which no phone does: it looks at most 20 times a second, each answer lands some tens of milliseconds after its frame, and something has to move the outline in between (ARKit at 1x, the gyro at 0.5x). Played as the phone's camera, the bottle's outline trails it in the fastest moves (the close-up, frames 180 to 210). [`tools/edgetam/timing.py`](tools/edgetam/timing.py) splits that up, at the same timing: with the outline moved exactly as the bottle moved between answers (what a phone that knew its own motion perfectly would do, which ARKit approaches for a thing standing still), mean 0.950, worst 0.763 (the outline changes shape as the view turns while an answer is on its way; every frame: 0.976); not moved at all, 0.728. The clip has no ARKit or gyro, so the live run moves it by the bottle's own pixels (LiveFlow), and a black, smooth bottle gives it little to follow: 0.924. Not measured here: EdgeTAM's real speed on an iPhone (60 ms is about Meta's 16 frames a second on an iPhone 15 Pro Max), and ARKit on this clip.
+Every row above but the last three draws each outline on the frame it was made from, which no phone does: it looks at most 20 times a second, each answer lands some tens of milliseconds after its frame, and something has to move the outline in between (ARKit for a still thing at 1x, the gyro at 0.5x, the thing's own pixels otherwise). Played as the phone's camera and moved whole between answers, the bottle's outline trailed it in the fastest moves (the close-up, frames 180 to 210). [`tools/edgetam/timing.py`](tools/edgetam/timing.py) splits that up, at the same timing: with the outline moved exactly as the bottle moved between answers (what a phone that knew its own motion perfectly would do, which ARKit approaches for a thing standing still), mean 0.950, worst 0.761 (every frame: 0.976): moved whole, however well, an outline lags the bottle's change of shape as the view turns while an answer is on its way. Not moved at all, 0.728. Bent with the bottle's own pixels instead (`LiveFlow.bend`: each point of the outline followed by a point just inside the edge there), 0.957. The clip has no ARKit or gyro. Not measured here: EdgeTAM's real speed on an iPhone (60 ms is about Meta's 16 frames a second on an iPhone 15 Pro Max; the app now says what it is, `onLiveStats`), and ARKit on this clip.
 
 In the Simulator, `lensi:///?scene=shaker&edgetam=shaker` has the app itself run EdgeTAM over every frame of the clip with the models it ships (`LensiAR.trackVideo`, on the Simulator's CPU), glide each outline into the last as the phone draws it, and write the clip again with the outline drawn on every frame (`lensi-edgetam.mp4`, made by the app); the virtual camera then plays the app's own run in place of the bundled track. CI's run does it (`10h-edgetam-in-app`, filmed once the run is done) next to pinning the bottle from the strip (`10g`). The virtual camera plays demo footage natively (`DemoVideoView`) and draws what's pinned in the same display frame as the picture: drawn from JavaScript, an outline landed a few frames late whenever the Simulator was busy, beside a thing that moved fast.
 

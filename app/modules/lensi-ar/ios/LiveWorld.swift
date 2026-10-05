@@ -417,8 +417,9 @@ struct LiveShape {
   }
 
   /// One frame to the next (`a`, seen by camera `ca` at `ta`; `b`, by `cb` at `tb`): the
-  /// outline seen from `ca`, carried on the picture by its own pixels (LiveFlow), laid back in
-  /// the world on a plane through its middle as `cb` sees it. The phone's own motion is in the
+  /// outline seen from `ca`, carried on the picture by its own pixels and bent with them
+  /// (LiveFlow.bend: an arm that swings takes its part of the outline along), laid back in the
+  /// world on a plane through its middle as `cb` sees it. The phone's own motion is in the
   /// picture's too and cancels out in the round trip; what's left is the thing's. False when
   /// it couldn't be carried (it's behind the camera, or too little of it could be followed),
   /// or a cut from a later frame already says where it is.
@@ -427,7 +428,7 @@ struct LiveShape {
                       to b: LiveFlow.Frame, _ cb: FrozenCamera, at tb: CFTimeInterval) -> Bool {
     guard seen <= ta + 0.001 else { return false }
     let then = placed(at: ta)
-    guard let seenFrom = ca.upright(then), let moved = LiveFlow.carry(seenFrom, from: a, to: b) else { return false }
+    guard let seenFrom = ca.upright(then), let moved = LiveFlow.bend(seenFrom, from: a, to: b) else { return false }
     let plane = cb.withPlane(through: OutlineMath.centre(then))
     let laid = moved.compactMap { plane.onPlane($0) }
     guard laid.count == moved.count else { return false }
