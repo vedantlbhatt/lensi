@@ -1,6 +1,8 @@
 import { NativeModule, requireNativeModule, requireNativeView } from 'expo';
 
-import type { LensiAREvents, LensiARModuleShape, LensiARViewProps } from './types';
+import type { ComponentType } from 'react';
+
+import type { DemoVideoProps, LensiAREvents, LensiARModuleShape, LensiARViewProps } from './types';
 
 export * from './types';
 export type { DemoScene, VideoThing, VideoTracks } from './demo';
@@ -28,6 +30,8 @@ export const isSupported: boolean = LensiAR.isSupported;
 /** No ARKit (e.g. the Simulator): the app shows a virtual camera over the demo scenes. */
 export const isVirtual = !LensiAR.isSupported;
 export const LensiARView = requireNativeView<LensiARViewProps>('LensiAR');
+/** The virtual camera's footage with pins outlined in the same frame as the picture (the web uses expo-video and SVG). */
+export const DemoVideoView: ComponentType<DemoVideoProps> | null = requireNativeView<DemoVideoProps>('LensiAR', 'DemoVideoView');
 
 /** Web preview hook; the real recogniser hears the real question. */
 export function setDemoQuestion(_q: string) {}

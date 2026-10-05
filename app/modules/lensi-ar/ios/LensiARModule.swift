@@ -269,5 +269,27 @@ public class LensiARModule: Module {
         view.scrubClear()
       }.runOnQueue(.main)
     }
+
+    // The virtual camera's footage, with what's pinned in it outlined in the same display frame
+    // as the picture (DemoVideoView). Not the default view: requireNativeView('LensiAR', 'DemoVideoView').
+    View(DemoVideoView.self) {
+      Events("onFrame")
+
+      Prop("source") { (view: DemoVideoView, uri: String) in
+        view.setSource(uri)
+      }
+
+      Prop("tracks") { (view: DemoVideoView, json: String) in
+        view.setTracks(json)
+      }
+
+      Prop("pins") { (view: DemoVideoView, pins: [DemoPin]) in
+        view.setPins(pins)
+      }
+
+      Prop("highlight") { (view: DemoVideoView, pin: DemoPin?) in
+        view.setHighlight(pin?.track ?? -1, color: pin?.color ?? "#ffffff")
+      }
+    }
   }
 }

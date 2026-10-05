@@ -6,6 +6,7 @@ import type { ComponentType } from 'react';
 import { DEMO_SCENES, sceneForUri, type DemoScene } from './demo';
 import type {
   Analysis,
+  DemoVideoProps,
   IntelligenceEvent,
   IntelligenceStatus,
   LensiAREvents,
@@ -19,6 +20,8 @@ import type {
 
 export * from './types';
 export type { DemoScene, VideoThing, VideoTracks } from './demo';
+/** No native player on the web: the virtual camera draws its footage with expo-video and SVG. */
+export const DemoVideoView: ComponentType<DemoVideoProps> | null = null;
 export { DEMO_SCENES, sceneForUri };
 
 type Listener<K extends keyof LensiAREvents> = LensiAREvents[K];

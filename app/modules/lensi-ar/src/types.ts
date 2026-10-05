@@ -194,3 +194,20 @@ export type TrackRun = {
   medianMs: number;
   loadMs: number;
 };
+
+/** A pinned thing on the virtual camera's footage: which tracked thing, in what colour, named what. */
+export type DemoPin = { track: number; color: string; label: string };
+
+/** The virtual camera's footage with its pinned things outlined in the same frame (iOS: DemoVideoView). */
+export type DemoVideoProps = {
+  /** The clip, a local file URI. */
+  source: string;
+  /** Its packed tracks (tools/strip/pack.py's format), as JSON. */
+  tracks: string;
+  pins: DemoPin[];
+  /** The strip's highlighted thing, if any. */
+  highlight: DemoPin | null;
+  /** The video frame showing (each time it changes). */
+  onFrame?: (e: { nativeEvent: { frame: number } }) => void;
+  style?: import('react-native').StyleProp<import('react-native').ViewStyle>;
+};

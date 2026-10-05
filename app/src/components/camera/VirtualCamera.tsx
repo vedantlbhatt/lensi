@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import Animated, {
@@ -15,7 +15,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { DEMO_SCENES, setDemoQuestion, type DemoScene, type VideoTracks, type ZoomRange } from '../../../modules/lensi-ar/src';
+import { Asset } from 'expo-asset';
+import { DEMO_SCENES, DemoVideoView, setDemoQuestion, type DemoScene, type VideoTracks, type ZoomRange } from '../../../modules/lensi-ar/src';
 import { boxToView, centroid, fitRect, pointInPolygon, polygonIoU, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
 import type { Pt } from '../../lib/types';
@@ -169,6 +170,26 @@ export const VirtualCamera = forwardRef<
   // Which frame of a video scene is showing.
   const [frame, setFrame] = useState(0);
   const frameRef = useRef(0);
+  // On iOS the footage and its pinned outlines are drawn natively, in the same display frame
+  // (DemoVideoView): JavaScript only needs to know which frame is showing, for the strip.
+  const native = !!video && !!DemoVideoView;
+  const [videoUri, setVideoUri] = useState<string | null>(null);
+  useEffect(() => {
+    if (!native || !video) return;
+    let alive = true;
+    setVideoUri(null);
+    const asset = Asset.fromModule(video.source);
+    void asset.downloadAsync().then(() => {
+      if (alive) setVideoUri(asset.localUri ?? asset.uri);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [native, video]);
+  const tracksJson = useMemo(() => (tracks ? JSON.stringify(tracks) : ''), [tracks]);
+  const onNativeFrame = useCallback((e: { nativeEvent: { frame: number } }) => {
+    frameRef.current = e.nativeEvent.frame;
+  }, []);
   const onFrame = useCallback((f: number) => {
     frameRef.current = f;
     setFrame(f);
@@ -292,7 +313,22 @@ export const VirtualCamera = forwardRef<
   return (
     <View style={StyleSheet.absoluteFill} collapsable={false}>
       <Animated.View key={scene.key} entering={FadeIn.duration(380)} exiting={FadeOut.duration(260)} style={[StyleSheet.absoluteFill, !video && kb]}>
-        {video ? (
+        {video && native && DemoVideoView ? (
+          videoUri ? (
+            <DemoVideoView
+              source={videoUri}
+              tracks={tracksJson}
+              pins={pinned.filter((p) => p.track !== undefined).map((p) => ({ track: p.track as number, color: pen, label: p.label }))}
+              highlight={(() => {
+                const i = strip?.index ?? -1;
+                const t = strip && i >= 0 && !strip.pinned.includes(i) ? strip.things[i] : undefined;
+                return t && t.track !== undefined ? { track: t.track, color: pen, label: t.label } : null;
+              })()}
+              onFrame={onNativeFrame}
+              style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }}
+            />
+          ) : null
+        ) : video ? (
           <SceneVideo source={video.source} fit={fit} fps={tracks?.fps ?? 15} frames={tracks?.frames ?? 150} onFrame={onFrame} />
         ) : (
           <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
@@ -302,18 +338,18 @@ export const VirtualCamera = forwardRef<
         {(() => {
           const i = strip?.index ?? -1;
           const t = strip && i >= 0 && !strip.pinned.includes(i) ? strip.things[i] : undefined;
-          const shape = t ? shapeOf(t) : null;
+          const shape = t && !(native && t.track !== undefined) ? shapeOf(t) : null;
           return t && shape ? (
             <GuideOutline key={`s-${i}-${t.label}`} part={{ id: `s${i}`, label: t.label, at: { x: 0.5, y: 0.5 }, outline: shape }} fit={fit} pen={pen} focused />
           ) : null;
         })()}
         {/* Pinned things: outlined in the lens colour, named just above, wherever they've gone. */}
         {pinned.map((p) => {
-          const shape = shapeOf(p);
+          const shape = native && p.track !== undefined ? null : shapeOf(p);
           return shape ? <GuideOutline key={p.id} part={{ id: p.id, label: p.label, at: { x: 0.5, y: 0.5 }, outline: shape }} fit={fit} pen={pen} focused /> : null;
         })}
         {pinned.map((p) => {
-          const shape = shapeOf(p);
+          const shape = native && p.track !== undefined ? null : shapeOf(p);
           return shape ? <PinTag key={`t-${p.id}`} pin={{ ...p, polygon: shape }} fit={fit} pen={pen} screenW={width} /> : null;
         })}
         {guidePins?.parts.map((p) => <GuideOutline key={`o-${p.id}`} part={p} fit={fit} pen={pen} focused={guidePins.focus === p.id} />)}
