@@ -13,12 +13,17 @@ struct Detection {
 /// Runs everything that has to be instant on the phone: YOLO object detection
 /// on the Neural Engine and subject segmentation for the tap highlight.
 final class Detector {
-  /// The Neural Engine and GPU on a phone; CPU only in the Simulator, where a
-  /// virtualised GPU can't compile Core ML networks ("On-device compilation
-  /// within a VM only supports CPU").
+  /// The Neural Engine on a phone (the CPU for whatever it can't run), not the GPU: that draws
+  /// the camera and the outlines with it, and SAM's bursts there (dozens of decoder passes when a
+  /// finger lands on the strip) cost it frames. Both SAM models are float16 for the Neural Engine
+  /// (tools/sam/convert.py), and so is YOLO. CPU only in the Simulator, where a virtualised GPU
+  /// can't compile Core ML networks ("On-device compilation within a VM only supports CPU"); a
+  /// Mac (tools/) uses everything it has.
   static var computeUnits: MLComputeUnits {
     #if targetEnvironment(simulator)
     return .cpuOnly
+    #elseif os(iOS)
+    return .cpuAndNeuralEngine
     #else
     return .all
     #endif
