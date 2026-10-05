@@ -27,7 +27,9 @@
 //              the flow (the phone moves it by ARKit or the gyro); live100 the same 100 ms late;
 //              livebend with the outline bent by the flow (LiveFlow.bend: each point followed on
 //              its own) rather than moved whole; livewhole and livebendwhole taking each answer as
-//              it is rather than gliding into it (all four from the same EdgeTAM looks)
+//              it is rather than gliding into it; liveshift bent between answers but each late
+//              answer only moved on by how far the outline's middle has (LiveShape.take at 1x)
+//              (all from the same EdgeTAM looks)
 //   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -569,18 +571,24 @@ final class EdgeLiveRunner: Runner {
   let bends: LiveFlow.Bending?
   /// Each answer glided into the last (OutlineMath.glide), or taken as it is.
   let glides: Bool
+  /// A late answer brought up to the frame shown only by how far the outline's middle has moved
+  /// since its frame, then glided into what's shown (as LiveShape.take does at 1x), rather than
+  /// bent there frame by frame like the outline.
+  let shifts: Bool
   private var flows: [Int: LiveFlow.Frame] = [:]
   private var pending: (frame: Int, ready: Double, cut: EdgeTAMTracker.Cut)?
   private var lastStart = -Double.infinity
   private var stored: [CGPoint]?
   private var storedFrame = 0
 
-  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: LiveFlow.Bending? = nil, glides: Bool = true) {
+  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: LiveFlow.Bending? = nil, glides: Bool = true,
+       shifts: Bool = false) {
     self.run = run
     self.latency = latency
     self.fps = fps
     self.bends = bends
     self.glides = glides
+    self.shifts = shifts
     super.init(label, tracking: true, smoothing: nil, every: 1, flow: flow, scaling: true)
   }
 
@@ -602,7 +610,18 @@ final class EdgeLiveRunner: Runner {
     if let o = outline { outline = carried(o, from: f - 1, to: f) }
     if let p = pending, p.ready <= t + 1e-9 {
       pending = nil
-      if p.cut.visible {
+      if p.cut.visible, shifts, let now = outline, p.frame < shown.count, shown[p.frame].count >= 3 {
+        // As LiveShape.take: moved on by how far what's shown has moved since its frame, then
+        // glided into what's shown now.
+        let px = { (q: CGPoint) in simd_float3(Float(q.x * scale.width), Float(q.y * scale.height), 0) }
+        let then = shown[p.frame].map(px), current = now.map(px)
+        let by = OutlineMath.centre(current) - OutlineMath.centre(then)
+        let ring = OutlineMath.resample(p.cut.outline, scale: scale).map { px($0) + by }
+        let glided = OutlineMath.glide(current, ring).map { CGPoint(x: CGFloat($0.x) / scale.width, y: CGFloat($0.y) / scale.height) }
+        stored = glided
+        storedFrame = f
+        outline = glided
+      } else if p.cut.visible {
         let px = { (q: CGPoint) in simd_float3(Float(q.x * scale.width), Float(q.y * scale.height), 0) }
         let ring = OutlineMath.resample(p.cut.outline, scale: scale).map(px)
         let last = glides ? stored.map { carried($0, from: storedFrame, to: p.frame).map(px) } : nil
@@ -674,6 +693,7 @@ let runners = [
     EdgeLiveRunner("livebend", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard),
     EdgeLiveRunner("livewhole", latency: 0.06, fps: fps, flow: flow, run: live, glides: false),
     EdgeLiveRunner("livebendwhole", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard, glides: false),
+    EdgeLiveRunner("liveshift", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard, shifts: true),
   ] + bendings.map { pair -> Runner in EdgeLiveRunner(pair.0, latency: 0.06, fps: fps, flow: flow, run: live, bends: pair.1) } + [
     EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, run: EdgeLiveRun(d)),
   ]
