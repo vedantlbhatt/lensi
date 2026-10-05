@@ -176,6 +176,9 @@ struct LiveShape {
   /// How far ahead (seconds) its own motion carries a moving thing when nothing newer says where it
   /// is (`placed`, and what's drawn between frames). tools/track tries less (1x-lead*).
   var lead: CFTimeInterval = 0.3
+  /// The flow starts looking where the outline would be were it standing still where it's laid: the
+  /// phone's own motion, which ARKit knows (LiveFlow's prior). tools/walk tries it (edgeg@far).
+  var guided = false
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
@@ -450,8 +453,18 @@ struct LiveShape {
                       to b: LiveFlow.Frame, _ cb: FrozenCamera, at tb: CFTimeInterval) -> Bool {
     guard seen <= ta + 0.001 else { return false }
     let then = placed(at: ta)
+    var predict: (([CGPoint]) -> [CGPoint])?
+    if guided {
+      let plane = ca.withPlane(through: OutlineMath.centre(then))
+      predict = { points in
+        let world = points.compactMap { plane.onPlane($0) }
+        guard world.count == points.count, let seen = cb.upright(world) else { return points }
+        return seen
+      }
+    }
     guard let seenFrom = ca.upright(then),
-          let moved = bends ? LiveFlow.bend(seenFrom, from: a, to: b) : LiveFlow.carry(seenFrom, from: a, to: b) else { return false }
+          let moved = bends ? LiveFlow.bend(seenFrom, from: a, to: b, predict: predict)
+            : LiveFlow.carry(seenFrom, from: a, to: b, predict: predict) else { return false }
     let plane = cb.withPlane(through: OutlineMath.centre(then))
     let laid = moved.compactMap { plane.onPlane($0) }
     guard laid.count == moved.count else { return false }

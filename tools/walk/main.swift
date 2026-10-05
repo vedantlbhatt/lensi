@@ -38,6 +38,8 @@
 //                models in LENSI_MODELS_DIR; left out without them)
 //   edgeb@far    edge@far, and a cut from a frame taken while the phone moved fast (a blur) not taken
 //                for a still thing whose depth is known (ARKit holds it)
+//   edgeg@far    edge@far, the flow starting where the poses say the outline went (LiveShape.guided),
+//                and carrying it while the phone moves fast too
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -595,6 +597,9 @@ final class Run {
   /// A cut from a frame taken while the phone moved fast (a blur) isn't taken for a still thing
   /// whose depth is known: ARKit holds that, and a blurred cut can only add its own errors.
   let skipBlur: Bool
+  /// The flow starts looking where ARKit's poses say the outline went (LiveShape.guided), and so
+  /// keeps carrying it while the phone moves fast.
+  let guided: Bool
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var tracker: EdgeTAMTracker?
@@ -609,10 +614,11 @@ final class Run {
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
-       skipBlur: Bool = false) {
+       skipBlur: Bool = false, guided: Bool = false) {
     self.label = label
     self.whole = whole
     self.skipBlur = skipBlur
+    self.guided = guided
     self.start = start
     self.once = once
     self.lidar = lidar
@@ -645,6 +651,7 @@ let runs = [
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
   Run("edgew@far", start: 1.4, noflow: true, sight: true, edge: true, whole: true),
   Run("edgeb@far", start: 1.4, noflow: true, sight: true, edge: true, skipBlur: true),
+  Run("edgeg@far", start: 1.4, noflow: true, sight: true, edge: true, guided: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   Run("shift@true", start: 1, noflow: true, sight: true, edge: true, shift: true),
   Run("shiftn@true", start: 1, noflow: true, sight: true, edge: true, shift: true, replace: false),
@@ -813,7 +820,7 @@ for (k, f) in window.enumerated() {
     let camera = run.shift && k >= shiftFrom ? trueCamera.shifted(worldShift) : trueCamera
     if run.shift, k == shiftFrom { run.returning = true }
     // Between cuts, its own pixels (LensiARView.flowLive), not while the phone moves fast.
-    if !run.once, !run.shift, !fast, var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still && shape.depthKnown), let previous, let flowFrame {
+    if !run.once, !run.shift, !fast || run.guided, var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still && shape.depthKnown), let previous, let flowFrame {
       if shape.carry(from: previous.frame, previous.camera, at: previous.t, to: flowFrame, camera, at: t) { run.carried += 1 }
       run.shape = shape
     }
@@ -828,6 +835,7 @@ for (k, f) in window.enumerated() {
           // Laid afresh where it was seen (LensiARView.takeLive), still pinned.
           shape = LiveShape(world: world, at: cut.t, follows: true)
           shape.bends = !run.whole
+          shape.guided = run.guided
           shape.pinned = true
           shape.depthKnown = cut.depth != nil
         } else if skip {
@@ -864,6 +872,7 @@ for (k, f) in window.enumerated() {
       }
       var shape = LiveShape(world: laid, at: t, follows: true)
       shape.bends = !run.whole
+      shape.guided = run.guided
       shape.pinned = true
       // Pinned at its true depth: as the app pins where LiDAR or ARKit's points put it.
       shape.depthKnown = run.start == 1
