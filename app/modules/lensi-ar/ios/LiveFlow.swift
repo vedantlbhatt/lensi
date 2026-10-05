@@ -263,7 +263,10 @@ enum LiveFlow {
   /// inside the edge there, tracked on its own (and back again, to be sure of it), so an arm or a
   /// leg that moves differently from the body takes its part of the outline with it. What each
   /// point moves beyond the whole outline's carry is smoothed along the edge and kept within
-  /// `most` of the outline's size; a point that couldn't be followed keeps the whole carry. Nil
+  /// `most` of the outline's size; a point that couldn't be followed keeps the whole carry. An
+  /// outline that runs off the picture is carried whole: its points there can't be followed, and
+  /// bent from the rest its shape drifted until EdgeTAM's cuts no longer fitted it (a sink up
+  /// close on tools/walk's walk-arounds, lost in 42% of frames against 1% carried whole). Nil
   /// when the outline can't be carried at all.
   static func bend(_ outline: [CGPoint], from a: Frame, to b: Frame, _ how: Bending = .standard) -> [CGPoint]? {
     let inset = how.inset, most = how.most
@@ -272,6 +275,9 @@ enum LiveFlow {
     guard n >= 8, whole.count == n else { return whole }
     let sw = Float(a.w), sh = Float(a.h)
     let p = outline.map { SIMD2<Float>(Float($0.x) * sw, Float($0.y) * sh) }
+    // Wholly on the picture, with room for the window round each point followed.
+    let margin = inset + Float(window) + 1
+    guard p.allSatisfy({ $0.x > margin && $0.x < sw - margin && $0.y > margin && $0.y < sh - margin }) else { return whole }
     let c = whole.map { SIMD2<Float>(Float($0.x) * sw, Float($0.y) * sh) }
     let middle = p.reduce(SIMD2<Float>.zero, +) / Float(n)
     let size = (p.map { simd_length_squared($0 - middle) }.reduce(0, +) / Float(n)).squareRoot()
