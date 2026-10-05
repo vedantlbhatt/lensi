@@ -34,7 +34,9 @@
 //              camera held still, so the flow carries all the picture's motion: 1x-whole moved
 //              whole between cuts (the app before bending), 1x-bend bent but a late cut only moved
 //              on by how far the middle went, 1x-bendfwd a late cut bent along as the outline was;
-//              1x-light and 1x-minimal blending each answer in lighter (OutlineMath.Smoothing)
+//              1x-light and 1x-minimal blending each answer in lighter (OutlineMath.Smoothing),
+//              1x-lead1 and 1x-lead0 carried ahead by its own motion 0.1 s at most, or not at all
+//              (LiveShape.lead, 0.3 s in the app)
 //   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -671,6 +673,8 @@ final class LiveShapeRunner: Runner {
   let forwardsBent: Bool
   /// How each answer is blended in (LiveShape.take; the app uses .standard for a moving thing).
   let how: OutlineMath.Smoothing
+  /// How far ahead its own motion carries it (LiveShape.lead; the app's is 0.3 s).
+  let lead: CFTimeInterval
   private var camera: FrozenCamera?
   private var shape: LiveShape?
   private var flows: [Int: LiveFlow.Frame] = [:]
@@ -678,8 +682,9 @@ final class LiveShapeRunner: Runner {
   private var lastStart = -Double.infinity
 
   init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: Bool, forwardsBent: Bool,
-       how: OutlineMath.Smoothing = .standard) {
+       how: OutlineMath.Smoothing = .standard, lead: CFTimeInterval = 0.3) {
     self.run = run
+    self.lead = lead
     self.latency = latency
     self.fps = fps
     self.bendsIt = bends
@@ -733,6 +738,7 @@ final class LiveShapeRunner: Runner {
           s.pinned = true
           s.bends = bendsIt
           s.forwardsBent = forwardsBent
+          s.lead = lead
           shape = s
         }
       }
@@ -796,6 +802,8 @@ let runners = [
     LiveShapeRunner("1x-bendfwd", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true),
     LiveShapeRunner("1x-light", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, how: .light),
     LiveShapeRunner("1x-minimal", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, how: .minimal),
+    LiveShapeRunner("1x-lead1", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, lead: 0.1),
+    LiveShapeRunner("1x-lead0", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, lead: 0),
   ] + bendings.map { pair -> Runner in EdgeLiveRunner(pair.0, latency: 0.06, fps: fps, flow: flow, run: live, bends: pair.1) } + [
     EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, run: EdgeLiveRun(d)),
   ]

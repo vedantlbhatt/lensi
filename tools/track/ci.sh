@@ -11,7 +11,8 @@
 set -o pipefail
 mkdir -p out/track footage
 # DAVIS 2017 (CC BY-NC 4.0): real videos with the moving object drawn by hand in every frame.
-SEQS="car-roundabout car-shadow drift-straight dog parkour"
+# soccerball, dogs-jump and motocross-jump: small and fast, as a thing thrown or kicked is.
+SEQS="car-roundabout car-shadow drift-straight dog parkour soccerball dogs-jump motocross-jump"
 if [ ! -d footage/DAVIS/JPEGImages ]; then
   if curl -fsSL --max-time 600 -o davis.zip https://data.vision.ee.ethz.ch/csergi/share/davis/DAVIS-2017-trainval-480p.zip; then
     for s in $SEQS; do unzip -q -o davis.zip "DAVIS/JPEGImages/480p/$s/*" "DAVIS/Annotations/480p/$s/*" -d footage || echo "no $s"; done

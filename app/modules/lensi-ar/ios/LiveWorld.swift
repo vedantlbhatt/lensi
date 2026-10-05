@@ -173,6 +173,10 @@ struct LiveShape {
   /// it off whenever the phone moves (tools/walk).
   var depthKnown = false
 
+  /// How far ahead (seconds) its own motion carries a moving thing when nothing newer says where it
+  /// is (`placed`, and what's drawn between frames). tools/track tries less (1x-lead*).
+  var lead: CFTimeInterval = 0.3
+
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
   /// things (tools/track measured 30, 60 and adaptive). That's for a thing that moves.
@@ -211,8 +215,8 @@ struct LiveShape {
   /// Where it is at `t`: a moving thing's outline carried along by its own motion (at most
   /// 0.3 s ahead). A still one is where it is: carried by a speed that's only noise, it swung.
   func placed(at t: CFTimeInterval) -> [simd_float3] {
-    guard !still, simd_length(velocity) >= 0.02 else { return world }
-    let dt = Float(min(max(t - seen, 0), 0.3))
+    guard !still, lead > 0, simd_length(velocity) >= 0.02 else { return world }
+    let dt = Float(min(max(t - seen, 0), lead))
     return dt == 0 ? world : world.map { $0 + velocity * dt }
   }
 
@@ -508,7 +512,7 @@ struct LiveShape {
     var shown = target
     if let last = drawn, last.count == target.count, now - drawnAt < 0.25 {
       let dt = Float(now - drawnAt)
-      let v = !still && simd_length(velocity) >= 0.02 ? velocity : .zero
+      let v = !still && lead > 0 && simd_length(velocity) >= 0.02 ? velocity : .zero
       let carried = last.map { $0 + v * dt }
       if simd_distance(OutlineMath.centre(carried), OutlineMath.centre(target)) < OutlineMath.spread(target) {
         let k = 1 - exp(-dt / (still ? LiveShape.easeStill : LiveShape.ease))
