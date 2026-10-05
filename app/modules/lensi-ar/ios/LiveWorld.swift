@@ -151,6 +151,9 @@ struct LiveShape {
   /// What the last display frame drew, and when.
   var drawn: [simd_float3]?
   var drawnAt: CFTimeInterval = 0
+  /// Between cuts the flow bends it with its thing (LiveFlow.bend); false: moves it whole
+  /// (LiveFlow.carry), as before (tools/walk and tools/pin measure the two side by side).
+  var bends = true
   /// Still in the world, as last judged (`judge`): it starts still, counts as moving past
   /// LiveTracker.movingAbove and as still again under LiveTracker.stillBelow, so one noisy
   /// cut doesn't swap how it's asked about, blended and drawn.
@@ -428,7 +431,8 @@ struct LiveShape {
                       to b: LiveFlow.Frame, _ cb: FrozenCamera, at tb: CFTimeInterval) -> Bool {
     guard seen <= ta + 0.001 else { return false }
     let then = placed(at: ta)
-    guard let seenFrom = ca.upright(then), let moved = LiveFlow.bend(seenFrom, from: a, to: b) else { return false }
+    guard let seenFrom = ca.upright(then),
+          let moved = bends ? LiveFlow.bend(seenFrom, from: a, to: b) : LiveFlow.carry(seenFrom, from: a, to: b) else { return false }
     let plane = cb.withPlane(through: OutlineMath.centre(then))
     let laid = moved.compactMap { plane.onPlane($0) }
     guard laid.count == moved.count else { return false }

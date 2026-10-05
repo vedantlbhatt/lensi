@@ -580,6 +580,8 @@ final class Run {
   /// seen (LensiARView.followEdge), as is its first cut once the world has moved (as back at 1x
   /// from 0.5x); off: blended in through where it was, as before.
   let replace: Bool
+  /// Carried by the flow moved whole (LiveFlow.carry) rather than bent with its thing (the app).
+  let whole: Bool
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var tracker: EdgeTAMTracker?
@@ -593,8 +595,9 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0, measured = 0, replaced = 0
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
-       clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true) {
+       clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false) {
     self.label = label
+    self.whole = whole
     self.start = start
     self.once = once
     self.lidar = lidar
@@ -613,6 +616,7 @@ let runs = [
   Run("arkit@far", start: 1.4, once: true),
   Run("app@true", start: 1),
   Run("app@far", start: 1.4),
+  Run("whole@far", start: 1.4, whole: true),
   Run("lidar@far", start: 1.4, lidar: true),
   Run("steady@true", start: 1, noflow: true, tight: true),
   Run("steady@far", start: 1.4, noflow: true, tight: true),
@@ -624,6 +628,7 @@ let runs = [
 ] + (EdgeTAMTracker.Models.shared == nil ? [] : [
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
+  Run("edgew@far", start: 1.4, noflow: true, sight: true, edge: true, whole: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   Run("shift@true", start: 1, noflow: true, sight: true, edge: true, shift: true),
   Run("shiftn@true", start: 1, noflow: true, sight: true, edge: true, shift: true, replace: false),
@@ -728,6 +733,7 @@ for (k, f) in window.enumerated() {
         if let world = cut.world, cut.replace {
           // Laid afresh where it was seen (LensiARView.takeLive), still pinned.
           shape = LiveShape(world: world, at: cut.t, follows: true)
+          shape.bends = !run.whole
           shape.pinned = true
           shape.depthKnown = cut.depth != nil
         } else if let world = cut.world {
@@ -761,6 +767,7 @@ for (k, f) in window.enumerated() {
         exit(1)
       }
       var shape = LiveShape(world: laid, at: t, follows: true)
+      shape.bends = !run.whole
       shape.pinned = true
       // Pinned at its true depth: as the app pins where LiDAR or ARKit's points put it.
       shape.depthKnown = run.start == 1

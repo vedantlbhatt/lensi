@@ -387,6 +387,8 @@ final class Run {
   let gate: LiveTracker.Gate
   /// Ask as the app does: by the thing's own speed (LiveTracker.asking), not a fixed gate.
   let bySpeed: Bool
+  /// Carried by the flow moved whole (LiveFlow.carry) rather than bent with its thing (the app).
+  let whole: Bool
   var onBox: [Double] = []
   var shape: LiveShape?
   var fixedPrompt: (point: CGPoint, box: CGRect)?
@@ -396,8 +398,9 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0
 
   init(_ label: String, every: Int, flow: Bool = false, arkit: Bool = true,
-       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false) {
+       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false, whole: Bool = false) {
     self.label = label
+    self.whole = whole
     self.every = every
     self.flow = flow
     self.arkit = arkit
@@ -414,6 +417,7 @@ let runs = [
   Run("loose@8", every: 4, flow: true),
   Run("strict@8", every: 4, flow: true, grow: 0.1, gate: .strict),
   Run("lensi@8", every: 4, flow: true, bySpeed: true),
+  Run("whole@8", every: 4, flow: true, bySpeed: true, whole: true),
 ]
 
 var reference: [[CGPoint]] = []
@@ -513,6 +517,7 @@ for (k, f) in window.enumerated() {
               run.shape = shape
             } else {
               run.shape = LiveShape(world: world, at: t, follows: true)
+              run.shape?.bends = !run.whole
             }
           } else if var shape = run.shape {
             shape.misses += 1
