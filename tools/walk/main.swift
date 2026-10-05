@@ -26,6 +26,11 @@
 //                depth is known only 10% bigger or smaller, not 40%
 //   sight@far    steady, pinned 40% too far, its depth put right by where the lines of sight
 //                through its whole cuts cross (LiveShape.sight): no LiDAR, no points on it
+//   edge@*       the app now on a phone: followed by EdgeTAM (EdgeTAMTracker, Meta's on-device
+//                SAM 2, from its memory of the thing: no prompts, no gates) every other frame,
+//                its cuts laid in the world as above, up close the whole outline going where
+//                the part on the picture went; edge@far's depth from lines of sight, edgel@far's
+//                from LiDAR (with the EdgeTAM models in LENSI_MODELS_DIR; left out without them)
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
@@ -559,6 +564,9 @@ final class Run {
   let clamp: Bool
   /// Its depth put right by where the lines of sight through its whole cuts cross (LiveShape.sight).
   let sight: Bool
+  /// Followed by EdgeTAM instead of asking SAM (LensiARView.followEdge).
+  let edge: Bool
+  var tracker: EdgeTAMTracker?
   var shape: LiveShape?
   var pending: Cut?
   var shown: [[CGPoint]] = []
@@ -569,7 +577,7 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0, measured = 0
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
-       clamp: Bool = false, sight: Bool = false) {
+       clamp: Bool = false, sight: Bool = false, edge: Bool = false) {
     self.label = label
     self.start = start
     self.once = once
@@ -578,6 +586,7 @@ final class Run {
     self.tight = tight
     self.clamp = clamp
     self.sight = sight
+    self.edge = edge
   }
 }
 
@@ -594,7 +603,14 @@ let runs = [
   Run("clampl@far", start: 1.4, lidar: true, noflow: true, tight: true, clamp: true),
   Run("sight@far", start: 1.4, noflow: true, tight: true, sight: true),
   Run("sight@near", start: 0.7, noflow: true, tight: true, sight: true),
-]
+] + (EdgeTAMTracker.Models.shared == nil ? [] : [
+  Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
+  Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
+  Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
+])
+/// EdgeTAM every other frame (15 times a second: LensiARView asks it up to 20).
+let edgeEvery = 2
+let edgeEncoder = EdgeTAMTracker.Models.shared.flatMap { try? EdgeTAMTracker.Encoder(models: $0) }
 /// SAM asked every 4th frame (7.5 times a second; LensiARView asks as often as the phone keeps
 /// up, at least 80 ms apart), its answer landing two frames (66 ms) after the frame it was asked about.
 let every = 4
@@ -618,6 +634,8 @@ for (k, f) in window.enumerated() {
   let t = times[f]
   try sam.prepare(image: image, id: "frame", force: true)
   let flowFrame = LiveFlow.frame(image)
+  // EdgeTAM's encoder, once for every run that follows with it, on the frames it looks at.
+  let edgeFrame = (k == 0 || k % edgeEvery == 0) ? edgeEncoder.flatMap { try? $0.encode(CIImage(cgImage: image)) } : nil
 
   // How fast the phone itself turns and moves (LensiARView.trackPhone).
   if let last = lastPose {
@@ -700,7 +718,42 @@ for (k, f) in window.enumerated() {
       // Pinned at its true depth: as the app pins where LiDAR or ARKit's points put it.
       shape.depthKnown = run.start == 1
       run.shape = shape
-    } else if !run.once, run.pending == nil, k % every == 0, let shape = run.shape {
+      // EdgeTAM started from the pinned cut's box (LensiARView.followEdge's first step).
+      if run.edge, let edgeFrame, let models = EdgeTAMTracker.Models.shared {
+        let tracker = try EdgeTAMTracker(models: models)
+        _ = try tracker.start(edgeFrame, box: LiveTracker.bounds(truth))
+        run.tracker = tracker
+      }
+    } else if run.edge, run.pending == nil, k % edgeEvery == 0, let shape = run.shape, let tracker = run.tracker, let edgeFrame {
+      // EdgeTAM's step (LensiARView.followEdge): what it finds is laid in the world, up close the
+      // whole outline going where the part on the picture went.
+      let cut = try tracker.step(edgeFrame)
+      run.cuts += 1
+      var world: [simd_float3]?
+      var depth: Float?
+      var middle: CGPoint?
+      let now = shape.placed(at: t)
+      if cut.visible {
+        let seen = OutlineMath.resample(cut.outline, scale: size)
+        var ring = seen
+        let edgeOf = { (p: [CGPoint]) in p.contains { $0.x < 0.006 || $0.x > 0.994 || $0.y < 0.006 || $0.y > 0.994 } }
+        if edgeOf(seen), let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
+           let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose) {
+          ring = whole
+        }
+        let plane = camera.withPlane(through: OutlineMath.centre(now))
+        let laid = ring.compactMap { plane.onPlane($0) }
+        if laid.count == ring.count { world = laid }
+        if run.lidar, let lidarMap { depth = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) }
+        if !edgeOf(seen) {
+          middle = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
+        }
+      }
+      let asking = LiveTracker.asking(still: shape.still)
+      var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: asking.smoothing)
+      pending.middle = middle
+      run.pending = pending
+    } else if !run.edge, !run.once, run.pending == nil, k % every == 0, let shape = run.shape {
       // SAM asked where it should be now (LensiARView.segmentLive's follow): up close, about the
       // part on the picture, and the whole outline goes where that part went.
       let now = shape.placed(at: t)

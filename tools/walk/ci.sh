@@ -22,7 +22,7 @@ IDS="${ARKIT_SCENES:-42899714 48458656 41069021 41125696 41125763 41159525 41159
 47334103 47334234 47334256 47334380 47429925 47430001 47430033 47430051 47430479 47895353 47895534 47895556 47895745
 48018345 48018367 48018387 48018732 48018966 48458430 48458647 48458665}"
 PICK="${WALK_PICK:-10}"
-swiftc -O -o walk tools/walk/main.swift \
+swiftc -O -o walk tools/walk/main.swift app/modules/lensi-ar/ios/EdgeTAMTracker.swift \
   app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
   app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/LiveWorld.swift app/modules/lensi-ar/ios/LiveSeg.swift \
   app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift || exit 1

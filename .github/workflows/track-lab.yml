@@ -41,6 +41,7 @@ jobs:
           xcrun coremlcompiler compile build/sam/LensiSAMEncoder.mlpackage models-all/
           xcrun coremlcompiler compile build/sam/LensiSAMDecoder.mlpackage models-all/
           cp -R app/modules/lensi-ar/ios/Models/yolo11n.mlmodelc models-all/
+          cp -R app/modules/lensi-ar/ios/Models/EdgeTAM*.mlmodelc models-all/
       - uses: actions/cache@v4
         with:
           path: footage/DAVIS
