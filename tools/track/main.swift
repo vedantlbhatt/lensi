@@ -33,7 +33,8 @@
 //   1x-*       the app's own 1x path at that timing: LiveShape (take, carry, draw) with the
 //              camera held still, so the flow carries all the picture's motion: 1x-whole moved
 //              whole between cuts (the app before bending), 1x-bend bent but a late cut only moved
-//              on by how far the middle went, 1x-bendfwd a late cut bent along as the outline was
+//              on by how far the middle went, 1x-bendfwd a late cut bent along as the outline was;
+//              1x-light and 1x-minimal blending each answer in lighter (OutlineMath.Smoothing)
 //   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -668,18 +669,22 @@ final class LiveShapeRunner: Runner {
   let fps: Double
   let bendsIt: Bool
   let forwardsBent: Bool
+  /// How each answer is blended in (LiveShape.take; the app uses .standard for a moving thing).
+  let how: OutlineMath.Smoothing
   private var camera: FrozenCamera?
   private var shape: LiveShape?
   private var flows: [Int: LiveFlow.Frame] = [:]
   private var pending: (frame: Int, t: Double, ready: Double, cut: EdgeTAMTracker.Cut)?
   private var lastStart = -Double.infinity
 
-  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: Bool, forwardsBent: Bool) {
+  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: Bool, forwardsBent: Bool,
+       how: OutlineMath.Smoothing = .standard) {
     self.run = run
     self.latency = latency
     self.fps = fps
     self.bendsIt = bends
     self.forwardsBent = forwardsBent
+    self.how = how
     super.init(label, tracking: true, smoothing: nil, every: 1, flow: flow, scaling: true)
   }
 
@@ -707,7 +712,7 @@ final class LiveShapeRunner: Runner {
         if p.cut.visible {
           let plane = camera.withPlane(through: OutlineMath.centre(s.world))
           let laid = OutlineMath.resample(p.cut.outline, scale: scale).compactMap { plane.onPlane($0) }
-          if laid.count >= 3 { s.take(laid, at: p.t) }
+          if laid.count >= 3 { s.take(laid, at: p.t, how: how) }
         } else {
           s.misses += 1
         }
@@ -789,6 +794,8 @@ let runners = [
     LiveShapeRunner("1x-whole", latency: 0.06, fps: fps, flow: flow, run: live, bends: false, forwardsBent: false),
     LiveShapeRunner("1x-bend", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: false),
     LiveShapeRunner("1x-bendfwd", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true),
+    LiveShapeRunner("1x-light", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, how: .light),
+    LiveShapeRunner("1x-minimal", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, how: .minimal),
   ] + bendings.map { pair -> Runner in EdgeLiveRunner(pair.0, latency: 0.06, fps: fps, flow: flow, run: live, bends: pair.1) } + [
     EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, run: EdgeLiveRun(d)),
   ]
