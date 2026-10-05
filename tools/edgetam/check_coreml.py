@@ -39,8 +39,9 @@ enc, prm, trk, mem = (model(n) for n in ("EdgeTAMEncoder", "EdgeTAMPrompt", "Edg
 
 
 def run(key, m, inputs):
+    # The models take and give half precision throughout (convert.py's float16).
     t = time.time()
-    out = m.predict({k: (v.numpy().astype(np.float32) if torch.is_tensor(v) else v) for k, v in inputs.items()})
+    out = m.predict({k: (v.numpy().astype(np.float16) if torch.is_tensor(v) else v) for k, v in inputs.items()})
     timings[key].append((time.time() - t) * 1000)
     return out
 

@@ -1,3 +1,4 @@
+import Accelerate
 import CoreGraphics
 import CoreImage
 import CoreML
@@ -188,9 +189,12 @@ final class EdgeTAMTracker {
   }
 
   private let models: Models
-  private var cond: (memory: [Float], pointer: [Float])?
-  private var recent: [[Float]] = [] // the last six frames' memories, oldest first
-  private var pointers: [[Float]] = [] // the last fifteen frames' pointers, newest first
+  /// Memories and pointers are kept as the models make them, half precision (raw bits:
+  /// tools/edgetam/convert.py's models are float16 throughout), so they go back in without
+  /// converting.
+  private var cond: (memory: [UInt16], pointer: [UInt16])?
+  private var recent: [[UInt16]] = [] // the last six frames' memories, oldest first
+  private var pointers: [[UInt16]] = [] // the last fifteen frames' pointers, newest first
   private let memoryIn: MLMultiArray
   private let memoryValid: MLMultiArray
   private let pointersIn: MLMultiArray
@@ -198,6 +202,7 @@ final class EdgeTAMTracker {
   private let maskIn: MLMultiArray
   private let binarizeIn: MLMultiArray
   private let boxIn: MLMultiArray
+  private static let one: UInt16 = 0x3C00 // 1.0 in half precision
 
   /// Frames followed since `start`.
   private(set) var frames = 0
@@ -208,8 +213,9 @@ final class EdgeTAMTracker {
     self.models = models
     let n = EdgeTAMTracker.self
     func array(_ shape: [Int]) throws -> MLMultiArray {
-      let a = try MLMultiArray(shape: shape.map { NSNumber(value: $0) }, dataType: .float32)
-      a.withUnsafeMutableBufferPointer(ofType: Float.self) { p, _ in p.update(repeating: 0) }
+      let a = try MLMultiArray(shape: shape.map { NSNumber(value: $0) }, dataType: .float16)
+      guard EdgeTAMTracker.contiguous(a) else { throw EdgeTAMError.badOutput("input layout") }
+      a.withUnsafeMutableBytes { raw, _ in _ = raw.initializeMemory(as: UInt8.self, repeating: 0) }
       return a
     }
     memoryIn = try array([1, n.numMem * n.memTokens, n.memDim])
@@ -225,12 +231,10 @@ final class EdgeTAMTracker {
   func start(_ picture: Encoded, box: CGRect) throws -> Cut {
     var ms = picture.ms
     let (features, high0, high1) = (picture.features, picture.high0, picture.high1)
-    let s = Float(EdgeTAMTracker.side)
-    boxIn.withUnsafeMutableBufferPointer(ofType: Float.self) { p, _ in
-      p[0] = Float(box.minX) * s
-      p[1] = Float(box.minY) * s
-      p[2] = Float(box.maxX) * s
-      p[3] = Float(box.maxY) * s
+    let s = CGFloat(EdgeTAMTracker.side)
+    let corners = EdgeTAMTracker.halves([box.minX, box.minY, box.maxX, box.maxY].map { Float($0 * s) })
+    EdgeTAMTracker.fill(boxIn) { p in
+      for i in 0..<4 { p[i] = corners[i] }
     }
     let out = try timed("prompt", &ms) {
       try models.prompt.prediction(from: MLDictionaryFeatureProvider(dictionary: [
@@ -255,34 +259,25 @@ final class EdgeTAMTracker {
     let (features, high0, high1) = (picture.features, picture.high0, picture.high1)
     let n = EdgeTAMTracker.self
     let slot = n.memTokens * n.memDim
-    memoryIn.withUnsafeMutableBufferPointer(ofType: Float.self) { p, _ in
-      memoryValid.withUnsafeMutableBufferPointer(ofType: Float.self) { valid, _ in
-        valid.update(repeating: 0)
-        // Slot 0 the pinned frame; slot j (1...6) the frame 7 - j ago, so the newest is in slot 6.
-        cond.memory.withUnsafeBufferPointer { src in
-          _ = UnsafeMutableBufferPointer(rebasing: p[0..<slot]).update(fromContentsOf: src)
-        }
-        valid[0] = 1
-        for (i, mem) in recent.reversed().enumerated() {
-          let j = n.numMem - 1 - i
-          mem.withUnsafeBufferPointer { src in
-            _ = UnsafeMutableBufferPointer(rebasing: p[(j * slot)..<((j + 1) * slot)]).update(fromContentsOf: src)
-          }
-          valid[j] = 1
-        }
+    let recent = self.recent, pointers = self.pointers
+    // Slot 0 the pinned frame; slot j (1...6) the frame 7 - j ago, so the newest is in slot 6.
+    EdgeTAMTracker.fill(memoryIn) { p in
+      EdgeTAMTracker.copy(cond.memory, into: p, at: 0)
+      for (i, mem) in recent.reversed().enumerated() {
+        EdgeTAMTracker.copy(mem, into: p, at: (n.numMem - 1 - i) * slot)
       }
     }
-    pointersIn.withUnsafeMutableBufferPointer(ofType: Float.self) { p, _ in
-      pointerValid.withUnsafeMutableBufferPointer(ofType: Float.self) { valid, _ in
-        valid.update(repeating: 0)
-        let d = n.ptrDim
-        for (i, ptr) in ([cond.pointer] + pointers.prefix(n.numPtrs - 1)).enumerated() {
-          ptr.withUnsafeBufferPointer { src in
-            _ = UnsafeMutableBufferPointer(rebasing: p[(i * d)..<((i + 1) * d)]).update(fromContentsOf: src)
-          }
-          valid[i] = 1
-        }
-      }
+    EdgeTAMTracker.fill(memoryValid) { valid in
+      for j in 0..<n.numMem { valid[j] = 0 }
+      valid[0] = EdgeTAMTracker.one
+      for i in 0..<recent.count { valid[n.numMem - 1 - i] = EdgeTAMTracker.one }
+    }
+    let used = [cond.pointer] + pointers.prefix(n.numPtrs - 1)
+    EdgeTAMTracker.fill(pointersIn) { p in
+      for (i, ptr) in used.enumerated() { EdgeTAMTracker.copy(ptr, into: p, at: i * n.ptrDim) }
+    }
+    EdgeTAMTracker.fill(pointerValid) { valid in
+      for i in 0..<n.numPtrs { valid[i] = i < used.count ? EdgeTAMTracker.one : 0 }
     }
     let out = try timed("track", &ms) {
       try models.track.prediction(from: MLDictionaryFeatureProvider(dictionary: [
@@ -292,10 +287,10 @@ final class EdgeTAMTracker {
     }
     let heads = try Heads(out, candidates: 3)
     let k = heads.best
-    recent.append(try remember(features, heads, k, binarize: false, &ms))
-    if recent.count > n.numMem - 1 { recent.removeFirst() }
-    pointers.insert(heads.pointer(k), at: 0)
-    if pointers.count > n.numPtrs - 1 { pointers.removeLast() }
+    self.recent.append(try remember(features, heads, k, binarize: false, &ms))
+    if self.recent.count > n.numMem - 1 { self.recent.removeFirst() }
+    self.pointers.insert(heads.pointer(k), at: 0)
+    if self.pointers.count > n.numPtrs - 1 { self.pointers.removeLast() }
     frames += 1
     return try cut(heads, k, &ms)
   }
@@ -303,30 +298,32 @@ final class EdgeTAMTracker {
   // MARK: - Steps
 
   /// The memory of this frame with candidate `k` as its mask.
-  private func remember(_ features: MLMultiArray, _ heads: Heads, _ k: Int, binarize: Bool, _ ms: inout [String: Double]) throws -> [Float] {
+  private func remember(_ features: MLMultiArray, _ heads: Heads, _ k: Int, binarize: Bool, _ ms: inout [String: Double]) throws -> [UInt16] {
     let plane = EdgeTAMTracker.maskSide * EdgeTAMTracker.maskSide
-    maskIn.withUnsafeMutableBufferPointer(ofType: Float.self) { p, _ in
+    EdgeTAMTracker.fill(maskIn) { p in
       heads.masks.withUnsafeBufferPointer { src in
         _ = p.update(fromContentsOf: UnsafeBufferPointer(rebasing: src[(k * plane)..<((k + 1) * plane)]))
       }
     }
-    binarizeIn.withUnsafeMutableBufferPointer(ofType: Float.self) { p, _ in p[0] = binarize ? 1 : 0 }
+    EdgeTAMTracker.fill(binarizeIn) { p in p[0] = binarize ? EdgeTAMTracker.one : 0 }
     let out = try timed("memory", &ms) {
       try models.memory.prediction(from: MLDictionaryFeatureProvider(dictionary: [
         "features": features, "mask": maskIn, "binarize": binarizeIn,
       ]))
     }
     guard let memory = out.featureValue(for: "memory")?.multiArrayValue else { throw EdgeTAMError.badOutput("memory") }
-    let floats = EdgeTAMTracker.floats(memory)
-    guard floats.count == EdgeTAMTracker.memTokens * EdgeTAMTracker.memDim else { throw EdgeTAMError.badOutput("memory shape") }
-    return floats
+    let halves = EdgeTAMTracker.halves(memory)
+    guard halves.count == EdgeTAMTracker.memTokens * EdgeTAMTracker.memDim else { throw EdgeTAMError.badOutput("memory shape") }
+    return halves
   }
 
   private func cut(_ heads: Heads, _ k: Int, _ ms: inout [String: Double]) throws -> Cut {
     let n = EdgeTAMTracker.maskSide
     let plane = n * n
-    let logits = Array(heads.masks[(k * plane)..<((k + 1) * plane)])
     let start = CFAbsoluteTimeGetCurrent()
+    let logits = heads.masks.withUnsafeBufferPointer {
+      EdgeTAMTracker.floats(UnsafeBufferPointer(rebasing: $0[(k * plane)..<((k + 1) * plane)]))
+    }
     var outline: [CGPoint] = []
     var area: Float = 0
     if heads.score > 0 {
@@ -345,12 +342,12 @@ final class EdgeTAMTracker {
 
   // MARK: - Helpers
 
-  /// The mask decoder's answer: `candidates` masks (256 x 256 each), their IoU estimates, their
-  /// object pointers, and whether the thing is there at all.
+  /// The mask decoder's answer: `candidates` masks (256 x 256 each, half precision), their IoU
+  /// estimates, their object pointers (half precision), and whether the thing is there at all.
   private struct Heads {
-    let masks: [Float]
+    let masks: [UInt16]
     let ious: [Float]
-    let pointers: [Float]
+    let pointers: [UInt16]
     let score: Float
 
     init(_ out: MLFeatureProvider, candidates: Int) throws {
@@ -359,9 +356,9 @@ final class EdgeTAMTracker {
             let pointers = out.featureValue(for: "pointers")?.multiArrayValue,
             let score = out.featureValue(for: "score")?.multiArrayValue else { throw EdgeTAMError.badOutput("heads") }
       let n = EdgeTAMTracker.maskSide
-      self.masks = EdgeTAMTracker.floats(masks)
+      self.masks = EdgeTAMTracker.halves(masks)
       self.ious = EdgeTAMTracker.floats(ious)
-      self.pointers = EdgeTAMTracker.floats(pointers)
+      self.pointers = EdgeTAMTracker.halves(pointers)
       self.score = EdgeTAMTracker.floats(score).first ?? -1
       guard self.masks.count == candidates * n * n, self.ious.count == candidates,
             self.pointers.count == candidates * EdgeTAMTracker.ptrDim else { throw EdgeTAMError.badOutput("heads shape") }
@@ -374,7 +371,7 @@ final class EdgeTAMTracker {
       return k
     }
 
-    func pointer(_ k: Int) -> [Float] {
+    func pointer(_ k: Int) -> [UInt16] {
       let d = EdgeTAMTracker.ptrDim
       return Array(pointers[(k * d)..<((k + 1) * d)])
     }
@@ -387,17 +384,86 @@ final class EdgeTAMTracker {
     return value
   }
 
-  /// A contiguous float32 copy, whatever the array's type or strides.
-  static func floats(_ a: MLMultiArray) -> [Float] {
-    var contiguous = true
+  // MARK: - Half precision
+
+  /// Row-major with no gaps.
+  static func contiguous(_ a: MLMultiArray) -> Bool {
     var expected = 1
     for (dim, stride) in zip(a.shape.reversed(), a.strides.reversed()) {
-      if stride.intValue != expected { contiguous = false }
+      if stride.intValue != expected { return false }
       expected *= dim.intValue
     }
-    if contiguous, a.dataType == .float32 {
-      return a.withUnsafeBufferPointer(ofType: Float.self) { Array($0.prefix(a.count)) }
+    return true
+  }
+
+  /// An input array's values as half-precision bits, written by `body`.
+  static func fill(_ a: MLMultiArray, _ body: (UnsafeMutableBufferPointer<UInt16>) -> Void) {
+    a.withUnsafeMutableBytes { raw, _ in body(raw.bindMemory(to: UInt16.self)) }
+  }
+
+  static func copy(_ values: [UInt16], into p: UnsafeMutableBufferPointer<UInt16>, at offset: Int) {
+    values.withUnsafeBufferPointer { src in
+      _ = UnsafeMutableBufferPointer(rebasing: p[offset..<(offset + src.count)]).update(fromContentsOf: src)
+    }
+  }
+
+  /// An array's values as half-precision bits (contiguous, row-major), whatever its type or strides.
+  static func halves(_ a: MLMultiArray) -> [UInt16] {
+    if a.dataType == .float16, contiguous(a) {
+      return a.withUnsafeBytes { raw in Array(raw.bindMemory(to: UInt16.self).prefix(a.count)) }
+    }
+    return halves(floats(a))
+  }
+
+  /// A contiguous float32 copy, whatever the array's type or strides.
+  static func floats(_ a: MLMultiArray) -> [Float] {
+    if contiguous(a) {
+      if a.dataType == .float32 {
+        return a.withUnsafeBufferPointer(ofType: Float.self) { Array($0.prefix(a.count)) }
+      }
+      if a.dataType == .float16 {
+        return a.withUnsafeBytes { raw in
+          floats(UnsafeBufferPointer(rebasing: raw.bindMemory(to: UInt16.self).prefix(a.count)))
+        }
+      }
     }
     return MLShapedArray<Float>(converting: a).scalars
+  }
+
+  /// Half-precision bits to floats (vImage).
+  static func floats(_ h: UnsafeBufferPointer<UInt16>) -> [Float] {
+    let n = h.count
+    var out = [Float](repeating: 0, count: n)
+    guard n > 0, let base = h.baseAddress else { return out }
+    let (rows, width) = layout(n)
+    out.withUnsafeMutableBufferPointer { f in
+      var src = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: base), height: vImagePixelCount(rows),
+                              width: vImagePixelCount(width), rowBytes: width * 2)
+      var dst = vImage_Buffer(data: f.baseAddress!, height: vImagePixelCount(rows), width: vImagePixelCount(width), rowBytes: width * 4)
+      _ = vImageConvert_Planar16FtoPlanarF(&src, &dst, vImage_Flags(kvImageNoFlags))
+    }
+    return out
+  }
+
+  /// Floats to half-precision bits (vImage).
+  static func halves(_ f: [Float]) -> [UInt16] {
+    let n = f.count
+    var out = [UInt16](repeating: 0, count: n)
+    guard n > 0 else { return out }
+    let (rows, width) = layout(n)
+    f.withUnsafeBufferPointer { s in
+      out.withUnsafeMutableBufferPointer { h in
+        var src = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: s.baseAddress!), height: vImagePixelCount(rows),
+                                width: vImagePixelCount(width), rowBytes: width * 4)
+        var dst = vImage_Buffer(data: h.baseAddress!, height: vImagePixelCount(rows), width: vImagePixelCount(width), rowBytes: width * 2)
+        _ = vImageConvert_PlanarFtoPlanar16F(&src, &dst, vImage_Flags(kvImageNoFlags))
+      }
+    }
+    return out
+  }
+
+  /// `n` values as rows of 256 where they divide evenly, else one row.
+  private static func layout(_ n: Int) -> (rows: Int, width: Int) {
+    n % 256 == 0 ? (n / 256, 256) : (1, n)
   }
 }
