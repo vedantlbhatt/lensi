@@ -20,6 +20,7 @@ declare class LensiARNative extends NativeModule<LensiAREvents> implements Lensi
   speechStart: LensiARModuleShape['speechStart'];
   speechStop: LensiARModuleShape['speechStop'];
   setKeepAwake: LensiARModuleShape['setKeepAwake'];
+  trackVideo: LensiARModuleShape['trackVideo'];
 }
 
 export const LensiAR = requireNativeModule<LensiARNative>('LensiAR');

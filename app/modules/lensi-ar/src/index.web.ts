@@ -14,6 +14,7 @@ import type {
   NPt,
   Segment,
   SpeechEvent,
+  TrackRun,
 } from './types';
 
 export * from './types';
@@ -129,6 +130,11 @@ export const LensiAR = {
   },
 
   async intelligencePrewarm() {},
+
+  // No Core ML on the web.
+  async trackVideo(): Promise<TrackRun> {
+    throw new Error('EdgeTAM runs on iOS only');
+  },
 
   async intelligenceStatus(): Promise<IntelligenceStatus> {
     return { available: true, images: true, reason: 'Scripted demo (web preview)' };

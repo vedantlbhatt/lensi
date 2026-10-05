@@ -135,6 +135,25 @@ scenario 10f-slide-to-pin-video 18 "lensi:///?scene=aisle&scrub=0.05,0.6,0.88"
 # down to 0.5x. The bottle is pinned from the strip and followed by EdgeTAM, the app's own Swift
 # and Core ML (tools/edgetam), through the whole clip and round again.
 scenario 10g-slide-to-pin-shaker 34 "lensi:///?scene=shaker&scrub=0.3,0.5"
+# The app's own EdgeTAM on that clip, with the models it ships, on the Simulator's CPU: pinned on
+# the bottle in the first frame and followed through every third frame. What it found goes to
+# Documents (lensi-edgetam.json), copied out here once it's there.
+scenario 10h-edgetam-in-app 120 "lensi:///?scene=shaker&edgetam=shaker"
+if [ -n "$DATA" ]; then
+  for _ in $(seq 1 40); do [ -s "$DATA/Documents/lensi-edgetam.json" ] && break; sleep 3; done
+  if cp "$DATA/Documents/lensi-edgetam.json" "$OUT/" 2>/dev/null; then
+    found=$(python3 - "$OUT/lensi-edgetam.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+print("followed in %d of %d frames, median %.0f ms, models loaded in %.0f ms" % (r["seen"], r["count"], r["medianMs"], r["loadMs"]))
+PY
+)
+    tl "EdgeTAM in the app: $found"
+  else
+    tl "EdgeTAM in the app: nothing written"
+    echo "EdgeTAM in the app wrote nothing" >> "$OUT/problems.txt"
+  fi
+fi
 # The zoom dial: turned to 2.7x and left up, so the shot shows the dial itself.
 scenario 10d-zoom-dial 12 "lensi:///?scene=truck&zoom=2.7"
 # Over the air, the whole path: this build fetches the JavaScript ota.yml published for its

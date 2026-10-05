@@ -177,4 +177,20 @@ export type LensiARModuleShape = {
   speechStop(): Promise<void>;
   /** Keep the screen from locking (a hands-free job has no touches for minutes). */
   setKeepAwake(on: boolean): Promise<void>;
+  /**
+   * The app's EdgeTAM tracker on a video file with the models it ships: pinned with `box`
+   * (x0, y0, x1, y1, fractions of the picture) on the first frame, followed through every
+   * `every`-th frame after.
+   */
+  trackVideo(uri: string, box: [number, number, number, number], every: number): Promise<TrackRun>;
+};
+
+/** What `trackVideo` found: each frame it looked at, and how long that took. */
+export type TrackRun = {
+  frames: { frame: number; score: number; area: number; ms: number; outline: number[] }[];
+  seen: number;
+  count: number;
+  every: number;
+  medianMs: number;
+  loadMs: number;
 };

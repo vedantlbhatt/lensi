@@ -25,6 +25,8 @@ export type ScriptParams = {
   zoom?: string;
   /** Land a finger on the strip at the first of these (0–1 across it, comma-separated), slide through the rest and hold on the last: it pins that thing (CI films slide-to-pin). */
   scrub?: string;
+  /** Run the app's EdgeTAM on this demo scene's clip, with the models it ships, pinned on its tracked thing's first outline, and leave what it found in Documents (CI shows they load and follow in the app). */
+  edgetam?: string;
 };
 
 /** `"0.3,0.33"` as a point on the photo, or null when it isn't one. */

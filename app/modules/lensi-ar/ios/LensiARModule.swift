@@ -58,6 +58,31 @@ public class LensiARModule: Module {
       }
     }
 
+    // MARK: Following a thing through a video (EdgeTAM)
+
+    // The app's EdgeTAMTracker on a video file with the models it ships: pinned with `box`
+    // (x0, y0, x1, y1: fractions of the picture) on the first frame, followed through every
+    // `every`-th after (EdgeTAMVideo).
+    AsyncFunction("trackVideo") { (uri: String, box: [Double], every: Int, promise: Promise) in
+      guard box.count == 4, box.allSatisfy({ $0.isFinite }) else {
+        promise.reject("E_TRACK", "Bad box.")
+        return
+      }
+      let url = uri.hasPrefix("file:") ? URL(string: uri) : URL(fileURLWithPath: uri)
+      guard let url else {
+        promise.reject("E_TRACK", "Bad file.")
+        return
+      }
+      let rect = CGRect(x: box[0], y: box[1], width: box[2] - box[0], height: box[3] - box[1])
+      DispatchQueue.global(qos: .userInitiated).async {
+        do {
+          promise.resolve(try EdgeTAMVideo.track(url: url, box: rect, every: every))
+        } catch {
+          promise.reject("E_TRACK", error.localizedDescription)
+        }
+      }
+    }
+
     // MARK: Brain: Apple Intelligence (Foundation Models)
 
     AsyncFunction("intelligenceStatus") { () -> [String: Any] in

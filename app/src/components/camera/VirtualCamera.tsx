@@ -41,7 +41,7 @@ const nameOf = (label: string | null) => (label ? label.charAt(0).toUpperCase() 
 
 const decoded = new Map<string, Uint16Array>();
 /** A tracked thing's outline in frame `f` of a video scene (tools/strip/pack.py's format), or null before it's found. */
-function outlineAt(tracks: VideoTracks, i: number, f: number): Pt[] | null {
+export function outlineAt(tracks: VideoTracks, i: number, f: number): Pt[] | null {
   const th = tracks.things[i];
   if (!th || f < th.start) return null;
   let words = decoded.get(th.data);
