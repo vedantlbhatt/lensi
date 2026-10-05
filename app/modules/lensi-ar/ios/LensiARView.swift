@@ -592,27 +592,34 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       guard cut.visible else { continue }
       let seen = OutlineMath.resample(cut.outline, scale: upright)
       var ring = seen
-      // Up close it runs off the picture, and EdgeTAM can only outline the part on it: the whole
-      // outline goes where that part went, rather than stopping at the picture's edge. A part
-      // that doesn't fit where the thing should be isn't taken (ARKit holds it meanwhile): laid
-      // as the whole thing, or carried far by it, it threw the whole outline about a close-up
-      // sink and washer (tools/walk).
-      if Self.touchesEdge(seen), let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
-        guard let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit) else { continue }
-        ring = whole
-      }
       var anchor = p.anchor
-      if p.unplaced {
-        // Pinned at 0.5x, it has no place in the world yet: where it's measured to be (LiDAR, ARKit's
-        // points on it), else a metre off along its middle's line of sight, which its lines of
-        // sight put right as it's followed (LiveShape.sight).
+      // The whole thing on the picture, nowhere near where it should be (or where it should be is
+      // behind the phone): ARKit's world moved under it (paused at 0.5x, it can come back with its
+      // world somewhere else), or it moved further than it was followed. Laid through where it
+      // was, it'd stay wrong, or never be laid at all; it's laid afresh where it's seen.
+      let astray = !p.unplaced && !Self.touchesEdge(seen)
+        && (p.predicted.map { LiveTracker.iou(seen, LiveTracker.clipped($0)) < 0.05 } ?? true)
+      if p.unplaced || astray {
+        // Where it's measured to be (LiDAR, ARKit's points on it), else as far off as it was along
+        // its middle's line of sight (pinned at 0.5x: a metre), which its lines of sight put right
+        // as it's followed (LiveShape.sight).
         let middle = Self.middle(seen)
         let (origin, dir) = camera.ray(middle)
         if let d = measured?.inside(seen) ?? camera.medianDepth(of: points, inside: seen) {
           anchor = origin + dir * camera.range(depth: d, through: middle)
+        } else if astray {
+          anchor = origin + dir * min(max(simd_distance(camera.position, p.anchor), 0.2), 6)
         } else {
           anchor = origin + dir
         }
+      } else if Self.touchesEdge(seen), let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
+        // Up close it runs off the picture, and EdgeTAM can only outline the part on it: the whole
+        // outline goes where that part went, rather than stopping at the picture's edge. A part
+        // that doesn't fit where the thing should be isn't taken (ARKit holds it meanwhile): laid
+        // as the whole thing, or carried far by it, it threw the whole outline about a close-up
+        // sink and washer (tools/walk).
+        guard let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit) else { continue }
+        ring = whole
       }
       let plane = camera.withPlane(through: anchor)
       let world = ring.compactMap { plane.onPlane($0) }
@@ -623,7 +630,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       } else if let d = camera.medianDepth(of: points, inside: seen) {
         depth = (d, LiveShape.pointsWeight)
       }
-      found[p.key] = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(seen) ? Self.middle(seen) : nil)
+      found[p.key] = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(seen) ? Self.middle(seen) : nil, replace: astray)
     }
     return found
   }
@@ -677,6 +684,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// The middle of a cut of the whole thing (none of it off the picture), upright: its line of
     /// sight says how far it is once the phone has moved (LiveShape.sight).
     var middle: CGPoint? = nil
+    /// Laid afresh rather than blended in: EdgeTAM saw the whole thing nowhere near where it
+    /// should be (followEdge).
+    var replace = false
   }
 
   /// SAM's answers for one frame (captured at `t`, by `camera`): found shapes are blended into
@@ -688,9 +698,19 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let key = prompt.key
       if let cut = found[key] {
         let world = cut.world
-        // A pinned thing is blended back however long it was lost: its cut was asked for where
-        // it should be, and had to fit it there.
-        if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
+        if cut.replace, let old = liveShapes[key] {
+          // Seen nowhere near where it should be (ARKit's world moved under it): where it was
+          // goes, and it's laid afresh where it was seen, still pinned.
+          var shape = LiveShape(world: world, at: t, follows: old.follows)
+          shape.pinned = old.pinned
+          shape.tagOffset = old.tagOffset
+          shape.depthKnown = cut.depth != nil
+          if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
+          liveShapes[key] = shape
+          if let pin = pins[key] { pin.world = OutlineMath.centre(world) + (old.tagOffset ?? .zero) }
+        } else if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
+          // A pinned thing is blended back however long it was lost: its cut was asked for where
+          // it should be, and had to fit it there.
           // While the phone itself moves fast, where the cut landed says little about the
           // thing's own speed.
           shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: camera.position)

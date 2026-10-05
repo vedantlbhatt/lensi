@@ -26,6 +26,9 @@
 //                depth is known only 10% bigger or smaller, not 40%
 //   sight@far    steady, pinned 40% too far, its depth put right by where the lines of sight
 //                through its whole cuts cross (LiveShape.sight): no LiDAR, no points on it
+//   shift@true   edge, and from halfway on ARKit's world is somewhere else (paused at 0.5x and
+//                resumed): the whole thing seen nowhere near where it should be is laid afresh
+//   shiftn@true  the same without that: blended in through where it was
 //   edge@*       the app now on a phone: followed by EdgeTAM (EdgeTAMTracker, Meta's on-device
 //                SAM 2, from its memory of the thing: no prompts) every other frame, its cuts
 //                laid in the world as above, up close the whole outline going where the part on
@@ -545,6 +548,8 @@ struct Cut {
   let smoothing: OutlineMath.Smoothing
   /// The middle of a cut of the whole thing (none of it off the picture), upright.
   var middle: CGPoint? = nil
+  /// Laid afresh rather than blended in: the whole thing seen nowhere near where it should be.
+  var replace = false
 }
 
 final class Run {
@@ -568,6 +573,12 @@ final class Run {
   let sight: Bool
   /// Followed by EdgeTAM instead of asking SAM (LensiARView.followEdge).
   let edge: Bool
+  /// From halfway on, the phone's poses are in a world shifted by `worldShift`: ARKit paused (at
+  /// 0.5x) and resumed with its world somewhere else.
+  let shift: Bool
+  /// The whole thing seen by EdgeTAM nowhere near where it should be is laid afresh where it's
+  /// seen (LensiARView.followEdge); off: blended in through where it was, as before.
+  let replace: Bool
   var tracker: EdgeTAMTracker?
   var shape: LiveShape?
   var pending: Cut?
@@ -576,10 +587,10 @@ final class Run {
   var onBox: [Double] = []
   var middles: [CGPoint?] = []
   var depthRatio: [Double] = []
-  var cuts = 0, refused = 0, carried = 0, measured = 0
+  var cuts = 0, refused = 0, carried = 0, measured = 0, replaced = 0
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
-       clamp: Bool = false, sight: Bool = false, edge: Bool = false) {
+       clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true) {
     self.label = label
     self.start = start
     self.once = once
@@ -589,6 +600,8 @@ final class Run {
     self.clamp = clamp
     self.sight = sight
     self.edge = edge
+    self.shift = shift
+    self.replace = replace
   }
 }
 
@@ -609,7 +622,26 @@ let runs = [
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
+  Run("shift@true", start: 1, noflow: true, sight: true, edge: true, shift: true),
+  Run("shiftn@true", start: 1, noflow: true, sight: true, edge: true, shift: true, replace: false),
 ])
+/// ARKit's world, resumed somewhere else after a pause (shift@*): turned 8 degrees about the
+/// vertical and moved 25 cm across and 15 cm along.
+let worldShift: simd_float4x4 = {
+  let a: Float = 8 * .pi / 180
+  var m = matrix_identity_float4x4
+  m.columns.0 = simd_float4(cos(a), 0, -sin(a), 0)
+  m.columns.2 = simd_float4(sin(a), 0, cos(a), 0)
+  m.columns.3 = simd_float4(0.25, 0, -0.15, 1)
+  return m
+}()
+
+extension FrozenCamera {
+  /// The same camera as a world moved by `m` sees it.
+  func shifted(_ m: simd_float4x4) -> FrozenCamera {
+    FrozenCamera(transform: m * transform, intrinsics: intrinsics, resolution: resolution, crop: crop)
+  }
+}
 /// EdgeTAM every other frame (15 times a second: LensiARView asks it up to 20).
 let edgeEvery = 2
 let edgeEncoder = EdgeTAMTracker.Models.shared.flatMap { try? EdgeTAMTracker.Encoder(models: $0) }
@@ -674,9 +706,13 @@ for (k, f) in window.enumerated() {
     lidarCheck.append(Double(d / trueAhead))
   }
 
+  let shiftFrom = window.count / 2
+  let trueCamera = camera
   for run in runs {
+    // The phone as this run's ARKit sees itself (shift@*: in a world moved halfway through).
+    let camera = run.shift && k >= shiftFrom ? trueCamera.shifted(worldShift) : trueCamera
     // Between cuts, its own pixels (LensiARView.flowLive), not while the phone moves fast.
-    if !run.once, !fast, var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still && shape.depthKnown), let previous, let flowFrame {
+    if !run.once, !run.shift, !fast, var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still && shape.depthKnown), let previous, let flowFrame {
       if shape.carry(from: previous.frame, previous.camera, at: previous.t, to: flowFrame, camera, at: t) { run.carried += 1 }
       run.shape = shape
     }
@@ -685,7 +721,12 @@ for (k, f) in window.enumerated() {
     if let cut = run.pending, cut.due <= k {
       run.pending = nil
       if var shape = run.shape {
-        if let world = cut.world {
+        if let world = cut.world, cut.replace {
+          // Laid afresh where it was seen (LensiARView.takeLive), still pinned.
+          shape = LiveShape(world: world, at: cut.t, follows: true)
+          shape.pinned = true
+          shape.depthKnown = cut.depth != nil
+        } else if let world = cut.world {
           shape.take(world, at: cut.t, how: cut.smoothing, measure: !fast, seenFrom: cut.camera.position)
         } else {
           shape.misses += 1
@@ -734,6 +775,7 @@ for (k, f) in window.enumerated() {
       var world: [simd_float3]?
       var depth: Float?
       var middle: CGPoint?
+      var replace = false
       let now = shape.placed(at: t)
       if cut.visible {
         let seen = OutlineMath.resample(cut.outline, scale: size)
@@ -742,28 +784,49 @@ for (k, f) in window.enumerated() {
         // Up close the part on the picture moves a still thing whose depth is known only a little,
         // and is taken only if it's plausibly the thing (as LensiARView.segmentLive asks).
         var taken = true
-        if edgeOf(seen), let predicted = camera.upright(now), LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
-          let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
-          if let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose, scaleLimit: limit) {
-            ring = whole
-          } else {
-            taken = false
-            run.refused += 1
+        // The whole thing on the picture, nowhere near where it should be (or where it should be is
+        // behind the phone): the world moved under it. Laid afresh where it's seen, as far off as it
+        // was along its line of sight (or where LiDAR puts it).
+        let predictedNow = camera.upright(now)
+        let astray = !edgeOf(seen) && (predictedNow.map { LiveTracker.iou(seen, LiveTracker.clipped($0)) < 0.05 } ?? true)
+        if run.replace, astray {
+          let inside = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
+          let (origin, dir) = camera.ray(inside)
+          var range = min(max(simd_distance(camera.position, OutlineMath.centre(now)), 0.2), 6)
+          if run.lidar, let lidarMap, let d = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) {
+            depth = d
+            range = camera.range(depth: d, through: inside)
           }
-        }
-        if taken {
-          let plane = camera.withPlane(through: OutlineMath.centre(now))
-          let laid = ring.compactMap { plane.onPlane($0) }
-          if laid.count == ring.count { world = laid }
-          if run.lidar, let lidarMap { depth = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) }
-          if LiveShape.sightable(seen) {
-            middle = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
+          let plane = camera.withPlane(through: origin + dir * range)
+          let laid = seen.compactMap { plane.onPlane($0) }
+          if laid.count == seen.count { world = laid }
+          replace = true
+          run.replaced += 1
+        } else {
+          if edgeOf(seen), let predicted = predictedNow, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
+            let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
+            if let whole = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose, scaleLimit: limit) {
+              ring = whole
+            } else {
+              taken = false
+              run.refused += 1
+            }
+          }
+          if taken {
+            let plane = camera.withPlane(through: OutlineMath.centre(now))
+            let laid = ring.compactMap { plane.onPlane($0) }
+            if laid.count == ring.count { world = laid }
+            if run.lidar, let lidarMap { depth = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) }
+            if LiveShape.sightable(seen) {
+              middle = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
+            }
           }
         }
       }
       let asking = LiveTracker.asking(still: shape.still)
       var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: asking.smoothing)
       pending.middle = middle
+      pending.replace = replace
       run.pending = pending
     } else if !run.edge, !run.once, run.pending == nil, k % every == 0, let shape = run.shape {
       // SAM asked where it should be now (LensiARView.segmentLive's follow): up close, about the
@@ -830,9 +893,9 @@ for run in runs {
   let depthOff = mean(run.depthRatio.map { abs(log($0)) })
   let lastDepth = run.depthRatio.last ?? -1
   let slipped = slip(run.middles, against: boxMiddles)
-  print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  depth off %.0f%% (ends x%.2f)  (%ld cuts, %ld refused, %ld carried, %ld measured)",
+  print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  depth off %.0f%% (ends x%.2f)  (%ld cuts, %ld refused, %ld carried, %ld measured, %ld laid afresh)",
                run.label.padding(toLength: 11, withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
-               slipped, jerk(run.middles), (exp(depthOff) - 1) * 100, lastDepth, run.cuts, run.refused, run.carried, run.measured))
+               slipped, jerk(run.middles), (exp(depthOff) - 1) * 100, lastDepth, run.cuts, run.refused, run.carried, run.measured, run.replaced))
   runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
                   "depthOff": depthOff, "lastDepth": lastDepth, "cuts": run.cuts, "refused": run.refused, "carried": run.carried,
                   "measured": run.measured, "jPerFrame": run.j, "depthPerFrame": run.depthRatio,

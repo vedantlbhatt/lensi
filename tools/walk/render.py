@@ -38,6 +38,8 @@ CAPTIONS = {
     "edge@true": "EdgeTAM, pinned at the right depth",
     "edge@far": "EdgeTAM, depth from lines of sight, pinned 40% too far",
     "edgel@far": "EdgeTAM with LiDAR, pinned 40% too far",
+    "shift@true": "EdgeTAM, ARKit's world moved halfway (0.5x and back): laid afresh",
+    "shiftn@true": "EdgeTAM, ARKit's world moved halfway (0.5x and back): as before",
 }
 
 PAIRS = [
@@ -48,6 +50,7 @@ PAIRS = [
     ("sight", "steady@far", "sight@far"),
     ("edge", "steady@true", "edge@true"),
     ("edge-far", "steady@far", "edge@far"),
+    ("shift", "shiftn@true", "shift@true"),
     ("depth", "arkit@far", "arkit@true"),
 ]
 
