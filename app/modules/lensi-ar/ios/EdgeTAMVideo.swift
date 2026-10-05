@@ -33,7 +33,8 @@ enum EdgeTAMVideo {
       guard index % max(1, every) == 0, let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
       let picture = CIImage(cvPixelBuffer: buffer)
       let t0 = CFAbsoluteTimeGetCurrent()
-      let cut = frames.isEmpty ? try tracker.start(encoder.encode(picture), box: box) : try tracker.step(encoder.encode(picture))
+      let encoded = try encoder.encode(picture)
+      let cut = try frames.isEmpty ? tracker.start(encoded, box: box) : tracker.step(encoded)
       let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
       times.append(ms)
       if cut.visible { seen += 1 }

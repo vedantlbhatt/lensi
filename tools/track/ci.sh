@@ -29,7 +29,7 @@ done
 [ -f footage/bolt-detection.mp4 ] && python tools/track/frames.py footage/bolt-detection.mp4 footage/bolt 38 63
 [ -f footage/bolt-multi-size-detection.mp4 ] && python tools/track/frames.py footage/bolt-multi-size-detection.mp4 footage/bigbolt 1286 1362 2 960
 
-swiftc -O -o track tools/track/main.swift \
+swiftc -O -o track tools/track/main.swift app/modules/lensi-ar/ios/EdgeTAMTracker.swift \
   app/modules/lensi-ar/ios/SAMSegmenter.swift app/modules/lensi-ar/ios/OutlineMath.swift app/modules/lensi-ar/ios/LiveTracker.swift \
   app/modules/lensi-ar/ios/LiveFlow.swift app/modules/lensi-ar/ios/LiveSeg.swift app/modules/lensi-ar/ios/Analyzer.swift app/modules/lensi-ar/ios/Detector.swift || exit 1
 
