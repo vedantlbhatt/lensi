@@ -400,7 +400,8 @@ export default function Camera() {
         const asset = Asset.fromModule(source);
         await asset.downloadAsync();
         const film = new File(Paths.document, 'lensi-edgetam.mp4');
-        const run = await LensiAR.trackVideo(asset.localUri ?? asset.uri, box, 1, film.uri, pen);
+        // 0: played as the phone's camera (a look only when the app would start one, each answer late).
+        const run = await LensiAR.trackVideo(asset.localUri ?? asset.uri, box, 0, film.uri, pen);
         setSceneTracks(scene.key, run.tracks);
         new File(Paths.document, 'lensi-edgetam.json').write(JSON.stringify(run));
         console.log(`[lensi] EdgeTAM followed it in ${run.seen} of ${run.count} frames, ${Math.round(run.medianMs)} ms a frame`);

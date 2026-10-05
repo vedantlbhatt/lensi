@@ -15,7 +15,16 @@ import simd
 /// (OutlineMath.glide, in pixels, as at 0.5x); frames between steps keep the last. What's drawn
 /// comes back as the virtual camera's tracks (`tracks`, tools/strip/pack.py's format), and with
 /// `render` the app also writes the clip with it drawn on every frame, as the phone draws it.
+///
+/// `every` 0 plays the clip as the phone's camera instead (tools/edgetrack's EDGETRACK_LIVE_MS):
+/// a look starts on a frame only once the last answer is in and 50 ms after the last start (the
+/// app's limit), each answer is ready `latency` seconds after its frame and drawn from the first
+/// frame after that, and between answers the outline is bent with the thing by its own pixels
+/// (LiveFlow.bend; on the phone ARKit or the gyro also has the phone's own motion).
 enum EdgeTAMVideo {
+  /// How long an answer is assumed to take on a phone (`every` 0).
+  static let latency: Double = 0.06
+
   static func track(url: URL, box: CGRect, every: Int, render: URL? = nil, color: UIColor = .white) throws -> [String: Any] {
     let started = CFAbsoluteTimeGetCurrent()
     guard let models = EdgeTAMTracker.Models.shared else { throw EdgeTAMError.noModels }
@@ -33,8 +42,24 @@ enum EdgeTAMVideo {
     guard reader.startReading() else { throw reader.error ?? EdgeTAMError.badImage }
     let encoder = try EdgeTAMTracker.Encoder(models: models)
     let tracker = try EdgeTAMTracker(models: models)
+    let live = every == 0
     let step = max(1, every)
     var film: Film?
+    // Live: the answer on its way, when the last look started, the last answer (glided) where it
+    // was on its own frame, and each recent frame as LiveFlow sees it.
+    var pending: (frame: Int, ready: Double, cut: EdgeTAMTracker.Cut)?
+    var lastStart = -Double.infinity
+    var stored: [CGPoint]?
+    var storedFrame = 0
+    var flows: [Int: LiveFlow.Frame] = [:]
+    let flowContext = CIContext(options: [.cacheIntermediates: false])
+    func bent(_ o: [CGPoint], from a: Int, to b: Int) -> [CGPoint] {
+      var now = o
+      for k in max(a, 0)..<max(b, a) {
+        if let f0 = flows[k], let f1 = flows[k + 1], let next = LiveFlow.bend(now, from: f0, to: f1) { now = next }
+      }
+      return now
+    }
     var frames: [[String: Any]] = []
     var times: [Double] = []
     var seen = 0
@@ -51,7 +76,53 @@ enum EdgeTAMVideo {
         size = picture.extent.size
         if let render { film = try Film(url: render, size: size) }
       }
-      if index % step == 0 {
+      if live {
+        let t = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
+        let scale = CGFloat(LiveFlow.width) / max(size.width, 1)
+        let small = picture.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        flows[index] = flowContext.createCGImage(small, from: small.extent).flatMap { LiveFlow.frame($0) }
+        flows[index - 16] = nil
+        let px = { (p: CGPoint) in simd_float3(Float(p.x * size.width), Float(p.y * size.height), 0) }
+        let back = { (p: simd_float3) in CGPoint(x: CGFloat(p.x) / size.width, y: CGFloat(p.y) / size.height) }
+        // What's drawn, bent on to this frame.
+        var drawnNow = shown.map { $0.map(back) }.map { bent($0, from: index - 1, to: index) }
+        if let p = pending, p.ready <= t + 1e-6 {
+          pending = nil
+          if p.cut.visible {
+            let ring = OutlineMath.resample(p.cut.outline, scale: size).map(px)
+            let last = stored.map { bent($0, from: storedFrame, to: p.frame).map(px) }
+            let glided = OutlineMath.glide(last, ring).map(back)
+            stored = glided
+            storedFrame = p.frame
+            drawnNow = bent(glided, from: p.frame, to: index)
+          } else {
+            stored = nil
+            drawnNow = nil
+          }
+        }
+        if index == 0 || (pending == nil && t - lastStart > 0.05) {
+          let t0 = CFAbsoluteTimeGetCurrent()
+          let encoded = try encoder.encode(picture)
+          let cut = try index == 0 ? tracker.start(encoded, box: box) : tracker.step(encoded)
+          let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+          times.append(ms)
+          if cut.visible { seen += 1 }
+          frames.append([
+            "frame": index, "score": Double(cut.score), "area": Double(cut.area), "ms": ms,
+            "outline": (cut.visible ? OutlineMath.resample(cut.outline, count: 32) : []).flatMap { [Double($0.x), Double($0.y)] },
+          ])
+          lastStart = t
+          if index == 0 {
+            // Pinned on this frame: the strip's outline is there at once.
+            stored = cut.visible ? OutlineMath.resample(cut.outline, scale: size) : nil
+            storedFrame = 0
+            drawnNow = stored
+          } else {
+            pending = (index, t + latency, cut)
+          }
+        }
+        shown = drawnNow.map { $0.map(px) }
+      } else if index % step == 0 {
         let t0 = CFAbsoluteTimeGetCurrent()
         let encoded = try encoder.encode(picture)
         let cut = try frames.isEmpty ? tracker.start(encoded, box: box) : tracker.step(encoded)
@@ -115,7 +186,7 @@ enum EdgeTAMVideo {
       "things": [thing],
     ]
     var result: [String: Any] = [
-      "frames": frames, "seen": seen, "count": frames.count, "every": step, "medianMs": median, "loadMs": loadMs,
+      "frames": frames, "seen": seen, "count": frames.count, "every": live ? 0 : step, "medianMs": median, "loadMs": loadMs,
       "tracks": tracks,
     ]
     if let render { result["video"] = render.path }

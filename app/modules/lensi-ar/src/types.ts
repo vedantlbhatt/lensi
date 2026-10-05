@@ -196,7 +196,9 @@ export type LensiARModuleShape = {
   /**
    * The app's EdgeTAM tracker on a video file with the models it ships: pinned with `box`
    * (x0, y0, x1, y1, fractions of the picture) on the first frame, followed through every
-   * `every`-th frame after. With `render` (a file path or URI), the clip is written there again
+   * `every`-th frame after; `every` 0 plays the clip as the phone's camera instead (a look only
+   * when the app would start one, each answer 60 ms after its frame, the outline bent with the
+   * thing in between). With `render` (a file path or URI), the clip is written there again
    * with what it followed drawn on every frame in `color`, as the phone draws a pinned thing.
    */
   trackVideo(
