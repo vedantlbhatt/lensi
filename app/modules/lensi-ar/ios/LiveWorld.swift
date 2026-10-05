@@ -162,8 +162,9 @@ struct LiveShape {
   var carries: [(t: CFTimeInterval, from: [simd_float3], to: [simd_float3])] = []
   /// Still in the world, as last judged (`judge`): it starts still, counts as moving past
   /// LiveTracker.movingAbove and as still again under LiveTracker.stillBelow, so one noisy
-  /// cut doesn't swap how it's asked about, blended and drawn.
-  private(set) var still = true
+  /// cut doesn't swap how it's asked about, blended and drawn. (Set only by `judge`, but for
+  /// tools/track's 1x-moving, which starts a thing as moving.)
+  var still = true
   /// Which way it was seen from (from its middle, unit) when the last cut was taken: a still
   /// thing seen from about there again is asked about with the tight gate (`turned`).
   private(set) var lastView: simd_float3?
@@ -179,6 +180,8 @@ struct LiveShape {
   /// The flow starts looking where the outline would be were it standing still where it's laid: the
   /// phone's own motion, which ARKit knows (LiveFlow's prior). tools/walk tries it (edgeg@far).
   var guided = false
+  /// What's drawn eases onto where it is (`draw`); false: drawn where it is (tools/track's 1x-noease).
+  var eases = true
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
@@ -523,7 +526,7 @@ struct LiveShape {
   mutating func draw(at now: CFTimeInterval) -> [simd_float3] {
     let target = placed(at: now)
     var shown = target
-    if let last = drawn, last.count == target.count, now - drawnAt < 0.25 {
+    if eases, let last = drawn, last.count == target.count, now - drawnAt < 0.25 {
       let dt = Float(now - drawnAt)
       let v = !still && lead > 0 && simd_length(velocity) >= 0.02 ? velocity : .zero
       let carried = last.map { $0 + v * dt }

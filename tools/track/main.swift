@@ -36,7 +36,9 @@
 //              on by how far the middle went, 1x-bendfwd a late cut bent along as the outline was;
 //              1x-light and 1x-minimal blending each answer in lighter (OutlineMath.Smoothing),
 //              1x-lead1 and 1x-lead0 carried ahead by its own motion 0.1 s at most, or not at all
-//              (LiveShape.lead, 0.3 s in the app)
+//              (LiveShape.lead, 0.3 s in the app); 1x-noease drawn where it is rather than eased
+//              onto it, 1x-moving started as a moving thing rather than a still one, 1x-free both
+//              and each answer blended in minimally: what of the 1x path costs it against the flat one
 //   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -675,6 +677,10 @@ final class LiveShapeRunner: Runner {
   let how: OutlineMath.Smoothing
   /// How far ahead its own motion carries it (LiveShape.lead; the app's is 0.3 s).
   let lead: CFTimeInterval
+  /// What's drawn eases onto where it is (LiveShape.eases, as in the app).
+  let eases: Bool
+  /// Starts judged moving rather than still (the app starts every thing still).
+  let moving: Bool
   private var camera: FrozenCamera?
   private var shape: LiveShape?
   private var flows: [Int: LiveFlow.Frame] = [:]
@@ -682,9 +688,11 @@ final class LiveShapeRunner: Runner {
   private var lastStart = -Double.infinity
 
   init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: Bool, forwardsBent: Bool,
-       how: OutlineMath.Smoothing = .standard, lead: CFTimeInterval = 0.3) {
+       how: OutlineMath.Smoothing = .standard, lead: CFTimeInterval = 0.3, eases: Bool = true, moving: Bool = false) {
     self.run = run
     self.lead = lead
+    self.eases = eases
+    self.moving = moving
     self.latency = latency
     self.fps = fps
     self.bendsIt = bends
@@ -739,6 +747,8 @@ final class LiveShapeRunner: Runner {
           s.bends = bendsIt
           s.forwardsBent = forwardsBent
           s.lead = lead
+          s.eases = eases
+          if moving { s.still = false }
           shape = s
         }
       }
@@ -805,6 +815,10 @@ let runners = [
     LiveShapeRunner("1x-minimal", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, how: .minimal),
     LiveShapeRunner("1x-lead1", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, lead: 0.1),
     LiveShapeRunner("1x-lead0", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, lead: 0),
+    LiveShapeRunner("1x-noease", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, eases: false),
+    LiveShapeRunner("1x-moving", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, moving: true),
+    LiveShapeRunner("1x-free", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true, how: .minimal,
+                    eases: false, moving: true),
   ] + bendings.map { pair -> Runner in EdgeLiveRunner(pair.0, latency: 0.06, fps: fps, flow: flow, run: live, bends: pair.1) } + [
     EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, run: EdgeLiveRun(d)),
   ]
