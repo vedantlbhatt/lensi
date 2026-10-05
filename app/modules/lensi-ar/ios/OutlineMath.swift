@@ -35,25 +35,31 @@ enum OutlineMath {
     return out
   }
 
-  /// `new` started at whichever point lines it up best with `old` (same count, same winding),
-  /// and the RMS gap between them once lined up.
+  /// `new` started at whichever point lines it up best with `old` (same count), run the same way
+  /// round as `old`, and the RMS gap between them once lined up. SAM's contours don't always run
+  /// the same way round: lined up only by where they start, a cut that ran the other way paired
+  /// each point with one across the shape, and blending the two (`steady`, LiveShape.draw)
+  /// collapsed the outline towards its middle (tools/pin: J fell from 98% to 3% for a few frames).
   static func align(_ new: [simd_float3], to old: [simd_float3]) -> (points: [simd_float3], gap: Float) {
     let n = new.count
     guard n > 0, n == old.count else { return (new, .greatestFiniteMagnitude) }
-    var best = 0
+    let reversed = Array(new.reversed())
+    var best = (ring: new, shift: 0)
     var bestCost = Float.greatestFiniteMagnitude
-    for shift in 0..<n {
-      var cost: Float = 0
-      for i in 0..<n {
-        cost += simd_distance_squared(new[(i + shift) % n], old[i])
-        if cost >= bestCost { break }
-      }
-      if cost < bestCost {
-        bestCost = cost
-        best = shift
+    for ring in [new, reversed] {
+      for shift in 0..<n {
+        var cost: Float = 0
+        for i in 0..<n {
+          cost += simd_distance_squared(ring[(i + shift) % n], old[i])
+          if cost >= bestCost { break }
+        }
+        if cost < bestCost {
+          bestCost = cost
+          best = (ring, shift)
+        }
       }
     }
-    return ((0..<n).map { new[($0 + best) % n] }, (bestCost / Float(n)).squareRoot())
+    return ((0..<n).map { best.ring[($0 + best.shift) % n] }, (bestCost / Float(n)).squareRoot())
   }
 
   /// RMS distance of the points from their middle: how big the outline is, to judge a gap by.
@@ -139,5 +145,59 @@ enum OutlineMath {
     let follow: Float = jump < how.still ? how.followStill : how.followMoving
     let middle = co + (cn - co) * follow
     return (zip(old, shape).map { o, n in middle + (o - co) * keep + n * (1 - keep) }, change)
+  }
+
+  /// Triangles covering a simple polygon (indices into `p`, three a triangle), by clipping ears;
+  /// a fan from the first point if the polygon crosses itself and runs out of ears.
+  static func triangulate(_ p: [SIMD2<Float>]) -> [Int] {
+    let n = p.count
+    guard n >= 3 else { return [] }
+    var area: Float = 0
+    for i in 0..<n {
+      let a = p[i], b = p[(i + 1) % n]
+      area += a.x * b.y - b.x * a.y
+    }
+    // Counter-clockwise from here on.
+    var left = area >= 0 ? Array(0..<n) : Array((0..<n).reversed())
+    func cross(_ o: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    }
+    func inTriangle(_ q: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) -> Bool {
+      cross(a, b, q) > 0 && cross(b, c, q) > 0 && cross(c, a, q) > 0
+    }
+    var out: [Int] = []
+    out.reserveCapacity(3 * (n - 2))
+    var k = 0
+    var sinceEar = 0
+    while left.count > 3 {
+      if sinceEar > left.count {
+        // No ear left: the polygon crosses itself. Fan the rest.
+        for i in 1..<(left.count - 1) { out += [left[0], left[i], left[i + 1]] }
+        return out
+      }
+      let m = left.count
+      let i0 = left[(k + m - 1) % m], i1 = left[k % m], i2 = left[(k + 1) % m]
+      let a = p[i0], b = p[i1], c = p[i2]
+      var ear = cross(a, b, c) > 0
+      if ear {
+        for j in left where j != i0 && j != i1 && j != i2 {
+          if inTriangle(p[j], a, b, c) {
+            ear = false
+            break
+          }
+        }
+      }
+      if ear {
+        out += [i0, i1, i2]
+        left.remove(at: k % m)
+        sinceEar = 0
+        k = k % max(left.count, 1)
+      } else {
+        k = (k + 1) % m
+        sinceEar += 1
+      }
+    }
+    out += left
+    return out
   }
 }

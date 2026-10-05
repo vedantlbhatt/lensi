@@ -110,11 +110,23 @@ struct LiveShape {
   /// What the last display frame drew, and when.
   var drawn: [simd_float3]?
   var drawnAt: CFTimeInterval = 0
+  /// Still in the world, as last judged (`judge`): it starts still, counts as moving past
+  /// LiveTracker.movingAbove and as still again under LiveTracker.stillBelow, so one noisy
+  /// cut doesn't swap how it's asked about, blended and drawn.
+  private(set) var still = true
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
-  /// things (tools/track measured 30, 60 and adaptive).
+  /// things (tools/track measured 30, 60 and adaptive). That's for a thing that moves.
   static let ease: Float = 0.03
+  /// A still thing's: ARKit already holds it where it is however the phone moves (that isn't
+  /// eased at all: the points are in the world), so all a cut or the flow can add is its own
+  /// noise, and on ARKit recordings that tripled how much a still outline lurched from frame to
+  /// frame (tools/pin).
+  static let easeStill: Float = 0.15
+  /// A still thing the flow says moved less than this much of its size in one step (about half
+  /// its size a second) didn't: that's the flow's noise (tools/pin).
+  static let stillFlow: Float = 0.015
 
   init(world: [simd_float3], at t: CFTimeInterval, follows: Bool) {
     self.world = world
@@ -123,14 +135,25 @@ struct LiveShape {
     self.follows = follows
   }
 
+  /// Still or moving again, by its own speed now (`still`).
+  mutating func judge() {
+    let speed = CGFloat(sizesPerSecond)
+    if still {
+      if speed > LiveTracker.movingAbove { still = false }
+    } else if speed < LiveTracker.stillBelow {
+      still = true
+    }
+  }
+
   /// How fast the thing itself moves, in its own sizes a second (LiveTracker.asking).
   var sizesPerSecond: Float {
     simd_length(velocity) / max(OutlineMath.spread(world), 0.01)
   }
 
-  /// Where it is at `t`: its outline carried along by its own motion (at most 0.3 s ahead).
+  /// Where it is at `t`: a moving thing's outline carried along by its own motion (at most
+  /// 0.3 s ahead). A still one is where it is: carried by a speed that's only noise, it swung.
   func placed(at t: CFTimeInterval) -> [simd_float3] {
-    guard simd_length(velocity) >= 0.02 else { return world }
+    guard !still, simd_length(velocity) >= 0.02 else { return world }
     let dt = Float(min(max(t - seen, 0), 0.3))
     return dt == 0 ? world : world.map { $0 + velocity * dt }
   }
@@ -138,8 +161,10 @@ struct LiveShape {
   /// SAM's cut of it, laid in the world from a frame captured at `t`, blended into where it
   /// should be by then: a moving thing is followed, and its edge settles unless it's really
   /// changing shape (OutlineMath.steady). SAM takes a while: if the flow has carried the
-  /// outline past `t`, the cut is brought along the same way first.
-  mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval, how: OutlineMath.Smoothing = .standard) {
+  /// outline past `t`, the cut is brought along the same way first. `measure` false (the phone
+  /// itself was moving fast, so where the cut landed says little about the thing's own speed):
+  /// its speed only fades.
+  mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval, how: OutlineMath.Smoothing = .standard, measure: Bool = true) {
     var forwarded = fresh
     var at = t
     if seen > t {
@@ -152,10 +177,13 @@ struct LiveShape {
     lastChange = steadied.change
     // Its speed, when the flow isn't measuring it.
     let dt = Float(at - seen)
-    if dt > 0.01 {
+    if !measure {
+      velocity *= 0.7
+    } else if dt > 0.01 {
       let v = (OutlineMath.centre(next) - OutlineMath.centre(world)) / dt
       velocity = velocity * 0.4 + v * 0.6
     }
+    judge()
     world = next
     seen = at
     cut = t
@@ -177,10 +205,18 @@ struct LiveShape {
     let plane = cb.withPlane(through: OutlineMath.centre(then))
     let laid = moved.compactMap { plane.onPlane($0) }
     guard laid.count == moved.count else { return false }
-    let by = OutlineMath.centre(laid) - OutlineMath.centre(then)
+    var by = OutlineMath.centre(laid) - OutlineMath.centre(then)
     let dt = Float(tb - ta)
-    if dt > 0.005 { velocity = velocity * 0.5 + by / dt * 0.5 }
-    world = laid
+    if still, simd_length(by) < LiveShape.stillFlow * OutlineMath.spread(then) {
+      // Still, and the flow says it barely moved: that's the flow's noise. It stays put.
+      by = .zero
+      velocity *= 0.8
+      world = then
+    } else {
+      if dt > 0.005 { velocity = velocity * 0.5 + by / dt * 0.5 }
+      world = laid
+    }
+    judge()
     seen = tb
     moves.append((t: tb, by: by))
     moves.removeAll { tb - $0.t > 1 }
@@ -189,16 +225,17 @@ struct LiveShape {
 
   /// What to draw at `now`: eased onto where it is now rather than jumping when a cut lands;
   /// carried along with the thing meanwhile, so the easing never lags its motion. A jump of
-  /// more than its own size (something else) is taken at once.
+  /// more than its own size (something else) is taken at once. A still thing eases slower
+  /// (`easeStill`): the phone's motion isn't in this at all, only the thing's.
   mutating func draw(at now: CFTimeInterval) -> [simd_float3] {
     let target = placed(at: now)
     var shown = target
     if let last = drawn, last.count == target.count, now - drawnAt < 0.25 {
       let dt = Float(now - drawnAt)
-      let v = simd_length(velocity) >= 0.02 ? velocity : .zero
+      let v = !still && simd_length(velocity) >= 0.02 ? velocity : .zero
       let carried = last.map { $0 + v * dt }
       if simd_distance(OutlineMath.centre(carried), OutlineMath.centre(target)) < OutlineMath.spread(target) {
-        let k = 1 - exp(-dt / LiveShape.ease)
+        let k = 1 - exp(-dt / (still ? LiveShape.easeStill : LiveShape.ease))
         let lined = OutlineMath.align(target, to: carried).points
         shown = zip(carried, lined).map { $0 + ($1 - $0) * k }
       }

@@ -114,18 +114,18 @@ for (f, url) in files.enumerated() {
   if recut {
     for thing in things {
       let now = thing.shape.placed(at: t)
-      let speed = thing.shape.misses < 2 ? CGFloat(thing.shape.sizesPerSecond) : 0
-      let asking = LiveTracker.asking(sizesPerSecond: speed)
-      guard let predicted = cam.upright(now), predicted.contains(where: { unit.contains($0) }),
+      let asking = LiveTracker.asking(still: thing.shape.misses >= 2 || thing.shape.still)
+      // Up close (here: walking off the edge) SAM is asked about the part on the picture.
+      guard let predicted = cam.upright(now), LiveTracker.visibleFraction(predicted) >= LiveTracker.minVisible,
             let p = LiveTracker.prompt(for: predicted, scale: size, grow: asking.grow) else { continue }
       let m = try sam.segment(id: "frame", points: [p.point], labels: [1], box: p.box, prior: predicted)
       thing.cuts += 1
       var world: [simd_float3]?
       if m.score >= 0.5, m.polygon.count > 2 {
         let ring = OutlineMath.resample(m.polygon, scale: size)
-        if LiveTracker.accepts(ring, predicted: predicted, gate: asking.gate) {
-          let laid = ring.compactMap { cam.onPlane($0) }
-          if laid.count == ring.count { world = laid }
+        if let taken = LiveTracker.follow(cut: ring, predicted: predicted, gate: asking.gate) {
+          let laid = taken.compactMap { cam.onPlane($0) }
+          if laid.count == taken.count { world = laid }
         } else {
           thing.refused += 1
         }

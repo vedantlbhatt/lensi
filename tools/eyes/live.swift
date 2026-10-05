@@ -151,6 +151,16 @@ func checkOutlineMath() -> Bool {
   let (aligned, gap) = OutlineMath.align(turned, to: circle)
   expect(gap < 1e-5 && simd_distance(aligned[0], circle[0]) < 1e-6, "align: gap \(gap)")
   expect(abs(OutlineMath.spread(circle) - 0.1) < 1e-4, "spread: \(OutlineMath.spread(circle))")
+  // Run the other way round (as SAM's contours sometimes are): lined up the same way round.
+  let backwards = Array(turned.reversed())
+  let (unreversed, backGap) = OutlineMath.align(backwards, to: circle)
+  expect(backGap < 1e-5 && zip(unreversed, circle).allSatisfy { simd_distance($0, $1) < 1e-6 }, "align a ring run backwards: gap \(backGap)")
+  // ...so blending it in, eased or steadied, doesn't fold the outline in on itself.
+  var easing = LiveShape(world: circle, at: 0, follows: true)
+  _ = easing.draw(at: 0)
+  easing.take(backwards.map { $0 + simd_float3(0.002, 0, 0) }, at: 0.033)
+  let folded = (1...6).map { easing.draw(at: 0.033 + Double($0) / 60) }.map { OutlineMath.spread($0) }.min() ?? 0
+  expect(folded > 0.095, "a cut run backwards doesn't collapse what's drawn: smallest spread \(folded)")
 
   // Nudged a hair: blended (moves only part way). Somewhere else: replaced outright.
   // (2% of its size: jitter, so it only goes part way.)
@@ -202,11 +212,99 @@ func checkTracker() -> Bool {
   let p = LiveTracker.prompt(for: square, scale: CGSize(width: 1, height: 1))
   expect(p.map { $0.box.contains(CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)) && $0.box.width > 0.2 } ?? false, "the box prompt holds the outline, grown")
   expect(abs(LiveTracker.iou(square, square) - 1) < 0.001, "IoU of a shape with itself")
+
+  // Up close: half a thing off the picture's right edge.
+  let half = [CGPoint(x: 0.8, y: 0.4), CGPoint(x: 1.2, y: 0.4), CGPoint(x: 1.2, y: 0.6), CGPoint(x: 0.8, y: 0.6)]
+  expect(abs(LiveTracker.visibleFraction(half) - 0.5) < 1e-6, "half off the edge is half visible: \(LiveTracker.visibleFraction(half))")
+  expect(abs(LiveTracker.area(LiveTracker.clipped(half)) - 0.04) < 1e-6, "clipped to the picture")
+  expect(LiveTracker.clipped(square) == square, "a thing wholly on the picture isn't clipped")
+  let hp = LiveTracker.prompt(for: half, scale: CGSize(width: 1, height: 1))
+  expect(hp.map { $0.point.x > 0.8 && $0.point.x < 1 && $0.box.maxX <= 1 } ?? false, "the prompt's point is on the picture: \(String(describing: hp))")
+  // It moved 0.05 left: SAM cuts the part on the picture, which still reaches the edge.
+  let cutHalf = [CGPoint(x: 0.75, y: 0.4), CGPoint(x: 1, y: 0.4), CGPoint(x: 1, y: 0.6), CGPoint(x: 0.75, y: 0.6)]
+  let followed = LiveTracker.follow(cut: cutHalf, predicted: half, gate: .strict)
+  expect(followed.map { zip($0, half).allSatisfy { abs($0.x - ($1.x - 0.05)) < 1e-6 && abs($0.y - $1.y) < 1e-6 } } ?? false,
+         "the whole thing moves 0.05 left, still half off the edge: \(String(describing: followed))")
+  expect(LiveTracker.follow(cut: cutHalf.map { CGPoint(x: $0.x - 0.5, y: $0.y) }, predicted: half) == nil, "a cut somewhere else is refused up close too")
+  expect(LiveTracker.follow(cut: moved, predicted: square) == moved, "wholly in view, the cut is taken as it is")
+  // Taller than the picture, cut off at the top and the bottom, moved right: only across is known.
+  let tall = [CGPoint(x: 0.4, y: -0.3), CGPoint(x: 0.6, y: -0.3), CGPoint(x: 0.6, y: 1.3), CGPoint(x: 0.4, y: 1.3)]
+  let fit = LiveTracker.edgeFit(from: LiveTracker.bounds(LiveTracker.clipped(tall)), to: CGRect(x: 0.43, y: 0, width: 0.2, height: 1))
+  expect(abs(fit.to.x - fit.from.x - 0.03) < 1e-6 && fit.to.y == fit.from.y && abs(fit.scale - 1) < 1e-6, "a tall thing's move: \(fit)")
+  // Feet off the bottom, a step closer: 20% bigger, its top 0.05 higher.
+  let feet = [CGPoint(x: 0.4, y: 0.5), CGPoint(x: 0.6, y: 0.5), CGPoint(x: 0.6, y: 1.3), CGPoint(x: 0.4, y: 1.3)]
+  let closer = [CGPoint(x: 0.38, y: 0.45), CGPoint(x: 0.62, y: 0.45), CGPoint(x: 0.62, y: 1), CGPoint(x: 0.38, y: 1)]
+  let grown = LiveTracker.follow(cut: closer, predicted: feet)
+  let want = [CGPoint(x: 0.38, y: 0.45), CGPoint(x: 0.62, y: 0.45), CGPoint(x: 0.62, y: 1.41), CGPoint(x: 0.38, y: 1.41)]
+  expect(grown.map { zip($0, want).allSatisfy { abs($0.x - $1.x) < 1e-6 && abs($0.y - $1.y) < 1e-6 } } ?? false,
+         "a step closer, the whole thing grows from its top: \(String(describing: grown))")
   if failures.isEmpty {
     print("tracker: ok")
     return true
   }
   for f in failures { print("FAIL tracker: \(f)") }
+  return false
+}
+
+/// LiveShape's still and moving, and OutlineMath's triangles, on cases with known answers.
+func checkShape() -> Bool {
+  var failures: [String] = []
+  func expect(_ condition: Bool, _ what: String) { if !condition { failures.append(what) } }
+  let ring = (0..<16).map { i -> simd_float3 in
+    let a = Float(i) / 16 * 2 * .pi
+    return simd_float3(0.1 * cos(a), 0.1 * sin(a), -1)
+  }
+  var shape = LiveShape(world: ring, at: 0, follows: true)
+  expect(shape.still, "a new shape starts still")
+  // A noisy speed doesn't move a still thing ahead.
+  shape.velocity = simd_float3(0.05, 0, 0)
+  shape.judge()
+  expect(shape.still && shape.placed(at: 0.2) == ring, "a still thing isn't carried ahead by a little speed")
+  // Fast enough, it's moving, and carried ahead; slowing down, it's still again only under stillBelow.
+  shape.velocity = simd_float3(0.2, 0, 0)
+  shape.judge()
+  let ahead = shape.placed(at: 0.1)
+  expect(!shape.still && abs(OutlineMath.centre(ahead).x - 0.02) < 1e-4, "a moving thing is carried ahead: \(OutlineMath.centre(ahead))")
+  shape.velocity = simd_float3(0.06, 0, 0)
+  shape.judge()
+  expect(!shape.still, "between the two speeds it stays moving")
+  shape.velocity = simd_float3(0.03, 0, 0)
+  shape.judge()
+  expect(shape.still, "slow enough, still again")
+  // A cut while the phone itself moved fast doesn't measure its speed.
+  var fast = LiveShape(world: ring, at: 0, follows: true)
+  fast.take(ring.map { $0 + simd_float3(0.05, 0, 0) }, at: 0.1, how: .standard, measure: false)
+  expect(simd_length(fast.velocity) < 1e-6, "no speed from a cut the phone's motion blurred: \(fast.velocity)")
+
+  // Triangles over polygons: their area is the polygon's, either way round, concave too.
+  func area2(_ p: [SIMD2<Float>]) -> Float {
+    var s: Float = 0
+    for i in 0..<p.count { s += p[i].x * p[(i + 1) % p.count].y - p[(i + 1) % p.count].x * p[i].y }
+    return abs(s) / 2
+  }
+  func covered(_ p: [SIMD2<Float>], _ t: [Int]) -> Float {
+    stride(from: 0, to: t.count, by: 3).reduce(Float(0)) { s, i in
+      let a = p[t[i]], b = p[t[i + 1]], c = p[t[i + 2]]
+      return s + abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) / 2
+    }
+  }
+  let u: [SIMD2<Float>] = [[0.2, 0.2], [0.3, 0.2], [0.3, 0.7], [0.7, 0.7], [0.7, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]
+  for (name, poly) in [("U", u), ("U the other way", Array(u.reversed()))] {
+    let t = OutlineMath.triangulate(poly)
+    expect(t.count == 3 * (poly.count - 2) && abs(covered(poly, t) - area2(poly)) < 1e-5, "\(name): \(t.count / 3) triangles, \(covered(poly, t)) of \(area2(poly))")
+  }
+  let wobbly = (0..<64).map { i -> SIMD2<Float> in
+    let a = Float(i) / 64 * 2 * .pi
+    let r = 1 + 0.35 * sin(3 * a) + 0.15 * sin(7 * a)
+    return SIMD2<Float>(r * cos(a), r * sin(a))
+  }
+  let wt = OutlineMath.triangulate(wobbly)
+  expect(wt.count == 3 * 62 && abs(covered(wobbly, wt) - area2(wobbly)) < 1e-3, "a wobbly 64-gon: \(wt.count / 3) triangles")
+  if failures.isEmpty {
+    print("shape: ok")
+    return true
+  }
+  for f in failures { print("FAIL shape: \(f)") }
   return false
 }
 

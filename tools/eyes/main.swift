@@ -131,6 +131,7 @@ try data.write(to: outDir.appendingPathComponent("summary.json"))
 let liveOK = checkLivePath(images)
 let mathOK = checkOutlineMath()
 let trackerOK = checkTracker()
+let shapeOK = checkShape()
 let flowOK = checkFlow(images)
 let cameraOK = checkCamera()
-if !liveOK || !mathOK || !trackerOK || !flowOK || !cameraOK { exit(1) }
+if !liveOK || !mathOK || !trackerOK || !shapeOK || !flowOK || !cameraOK { exit(1) }

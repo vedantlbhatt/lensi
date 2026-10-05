@@ -297,20 +297,15 @@ export const VirtualCamera = forwardRef<
           <Image source={scene.asset} style={{ position: 'absolute', left: fit.x, top: fit.y, width: fit.w, height: fit.h }} contentFit="fill" transition={0} />
         )}
         {/* Inside the drifting layer, so the outline and tags ride the scene like pins on a real camera. */}
-        {/* The strip's things while a finger is on it: the highlighted one in the lens colour, the rest faint. */}
-        {strip?.things.map((t, i) => {
-          const shape = shapeOf(t);
-          return strip.pinned.includes(i) || !shape ? null : (
-            <GuideOutline
-              key={`s-${i}-${t.label}`}
-              part={{ id: `s${i}`, label: t.label, at: { x: 0.5, y: 0.5 }, outline: shape }}
-              fit={fit}
-              pen={pen}
-              focused={i === strip.index}
-              faint={i !== strip.index}
-            />
-          );
-        })}
+        {/* The strip's highlighted thing while a finger is on it, in the lens colour; nothing else. */}
+        {(() => {
+          const i = strip?.index ?? -1;
+          const t = strip && i >= 0 && !strip.pinned.includes(i) ? strip.things[i] : undefined;
+          const shape = t ? shapeOf(t) : null;
+          return t && shape ? (
+            <GuideOutline key={`s-${i}-${t.label}`} part={{ id: `s${i}`, label: t.label, at: { x: 0.5, y: 0.5 }, outline: shape }} fit={fit} pen={pen} focused />
+          ) : null;
+        })()}
         {/* Pinned things: outlined in the lens colour, named just above, wherever they've gone. */}
         {pinned.map((p) => {
           const shape = shapeOf(p);
