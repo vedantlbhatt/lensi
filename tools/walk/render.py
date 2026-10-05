@@ -6,9 +6,8 @@ The outlines are in the app's upright picture (the sensor image turned `.right`)
 are drawn as the iPad recorded them, turned so the room's up is up. Writes, top over bottom:
 
   <name>-before-after.mp4  the app before / now, pinned at the right depth
-  <name>-far.mp4           before / now with LiDAR, both pinned 40% too far
-  <name>-calmp.mp4         before / held still up close
-  <name>-slow.mp4          before / blended slowly and held still up close
+  <name>-far.mp4           before / now, both pinned 40% too far
+  <name>-lidar.mp4         before / now with LiDAR, both pinned 40% too far
   <name>-depth.mp4         ARKit alone at a depth 40% off / at the right depth: what a wrong
                            depth does by itself as the camera moves
 and <name>.mp4, the app now, bigger.
@@ -40,9 +39,8 @@ CAPTIONS = {
 
 PAIRS = [
     ("before-after", "app@true", "steady@true"),
-    ("far", "app@far", "steadyl@far"),
-    ("calmp", "app@true", "calmp@true"),
-    ("slow", "app@true", "slowp@true"),
+    ("far", "app@far", "steady@far"),
+    ("lidar", "app@far", "steadyl@far"),
     ("depth", "arkit@far", "arkit@true"),
 ]
 

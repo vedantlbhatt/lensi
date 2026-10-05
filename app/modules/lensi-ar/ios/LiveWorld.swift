@@ -158,8 +158,11 @@ struct LiveShape {
   /// Which way it was seen from (from its middle, unit) when the last cut was taken: a still
   /// thing seen from about there again is asked about with the tight gate (`turned`).
   private(set) var lastView: simd_float3?
-  /// How long what's drawn of it takes to ease onto where it is while it's still (`easeStill`).
-  var stillEase = LiveShape.easeStill
+  /// How far away it is has been measured: it was pinned where LiDAR or ARKit's points put it,
+  /// or one of them has since agreed with where it is (`setDepth`). A still thing is then left
+  /// to ARKit between cuts; until then the flow keeps it on its thing, as a wrong depth slides
+  /// it off whenever the phone moves (tools/walk).
+  var depthKnown = false
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
@@ -242,17 +245,6 @@ struct LiveShape {
     }
   }
 
-  /// A cut of a still thing that agrees with where it's drawn (LiveTracker.agrees) is SAM's
-  /// noise, not news: it isn't blended in. Blending such cuts in made an outline that ARKit alone
-  /// holds dead still on its thing slip against it seven times as much, in a jump each time a cut
-  /// landed (tools/walk). It still says the thing is there.
-  mutating func confirmed(at t: CFTimeInterval) {
-    misses = 0
-    cut = t
-    velocity *= 0.5
-    judge()
-  }
-
   /// How far round (radians) the view of it from `origin` has turned since its last cut; nil
   /// when there's been no cut from a known place.
   func turned(from origin: simd_float3) -> Float? {
@@ -310,8 +302,12 @@ struct LiveShape {
     let middle = OutlineMath.centre(world)
     let ahead = -simd_mul(camera.transform.inverse, simd_float4(middle, 1)).z
     guard ahead > 0.05, depth > 0.05, depth.isFinite else { return }
+    if abs(depth / ahead - 1) < LiveShape.depthAgrees { depthKnown = true }
     setRange(simd_distance(middle, camera.position) * depth / ahead, from: camera.position, weight: weight)
   }
+
+  /// A measured depth within this much of where it is agrees with it (`depthKnown`).
+  static let depthAgrees: Float = 0.15
 
   /// Puts it `range` metres from `origin`, along the lines of sight from there (so from there it
   /// looks just the same), `weight` of the way, and at most twice or half as far in one go.
@@ -372,7 +368,7 @@ struct LiveShape {
       let v = !still && simd_length(velocity) >= 0.02 ? velocity : .zero
       let carried = last.map { $0 + v * dt }
       if simd_distance(OutlineMath.centre(carried), OutlineMath.centre(target)) < OutlineMath.spread(target) {
-        let k = 1 - exp(-dt / (still ? stillEase : LiveShape.ease))
+        let k = 1 - exp(-dt / (still ? LiveShape.easeStill : LiveShape.ease))
         let lined = OutlineMath.align(target, to: carried).points
         shown = zip(carried, lined).map { $0 + ($1 - $0) * k }
       }

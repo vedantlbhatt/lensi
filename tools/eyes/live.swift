@@ -309,8 +309,8 @@ func checkShape() -> Bool {
 }
 
 
-/// How far away a pinned thing is (LiveShape.setRange, setDepth, depthInside), and a still
-/// thing's calm (LiveTracker.agrees, LiveShape.confirmed), on cases with known answers.
+/// How far away a pinned thing is (LiveShape.setRange, setDepth, depthInside, FrozenCamera.
+/// medianDepth), and which gate a still thing is asked about with, on cases with known answers.
 func checkDepth() -> Bool {
   var failures: [String] = []
   func expect(_ condition: Bool, _ what: String) { if !condition { failures.append(what) } }
@@ -373,17 +373,25 @@ func checkDepth() -> Bool {
     expect(from.medianDepth(of: Array(inRing.prefix(5)), inside: ring) == nil, "five points said how far it is")
   }
 
-  // A still thing's calm: a cut that overlaps where it should be by 85% only says it's there.
-  let nudged = square.map { CGPoint(x: $0.x + 0.01, y: $0.y) }
-  let shifted = square.map { CGPoint(x: $0.x + 0.06, y: $0.y) }
-  expect(LiveTracker.agrees(nudged, predicted: square), "a cut 1% off agrees")
-  expect(!LiveTracker.agrees(shifted, predicted: square), "a cut 6% off (15% of its size) agrees")
-  var calm = LiveShape(world: disc, at: 0, follows: true)
-  calm.misses = 1
-  calm.velocity = simd_float3(0.01, 0, 0)
-  calm.confirmed(at: 0.5)
-  expect(calm.misses == 0 && calm.cut == 0.5 && calm.world == disc && simd_length(calm.velocity) < 0.006,
-         "confirmed: \(calm.misses) misses, cut at \(calm.cut), speed \(calm.velocity)")
+  // A measured depth that agrees with where it is says its depth is known; one far off doesn't.
+  if let picture = from.upright(disc) {
+    let laid = picture.compactMap { from.withPlane(through: target).onPlane($0) }
+    var right = LiveShape(world: laid, at: 0, follows: true)
+    right.setDepth(2.1, seenBy: from, weight: 0.3)
+    var wrong = LiveShape(world: laid, at: 0, follows: true)
+    wrong.setDepth(2.8, seenBy: from, weight: 0.3)
+    expect(right.depthKnown && !wrong.depthKnown, "depth known: \(right.depthKnown) agreeing, \(wrong.depthKnown) 40% off")
+  }
+  // A still thing seen from about where it was last cut is asked about with the tight gate.
+  var seen = LiveShape(world: disc, at: 0, follows: true)
+  seen.take(disc, at: 0.1, how: .still, seenFrom: home)
+  let near = seen.turned(from: home + simd_float3(0.1, 0, 0)) ?? 9
+  let round = seen.turned(from: home + simd_float3(1.2, 0, 0)) ?? 0
+  expect(near < LiveTracker.tightTurn && LiveTracker.asking(still: true, turned: near).gate.minIoU == LiveTracker.Gate.tight.minIoU,
+         "a step aside: turned \(near), tight gate")
+  expect(round > LiveTracker.tightTurn && LiveTracker.asking(still: true, turned: round).gate.minIoU == LiveTracker.Gate.strict.minIoU,
+         "walked round: turned \(round), strict gate")
+  expect(LiveTracker.asking(still: false, turned: near).gate.minIoU == LiveTracker.Gate.loose.minIoU, "a moving thing: loose gate")
   if failures.isEmpty {
     print("depth: ok")
     return true

@@ -289,8 +289,6 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// gentle for a still thing).
     var gate: LiveTracker.Gate = .loose
     var smoothing: OutlineMath.Smoothing = .standard
-    /// A still thing: a cut that agrees with where it should be only confirms it.
-    var still = false
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -333,7 +331,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             LiveTracker.visibleFraction(predicted) >= LiveTracker.minVisible,
             let p = LiveTracker.prompt(for: predicted, scale: upright, grow: asking.grow) else { return nil }
       return LivePrompt(key: key, point: p.point, box: p.box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
-                        follows: true, gate: asking.gate, smoothing: asking.smoothing, still: still)
+                        follows: true, gate: asking.gate, smoothing: asking.smoothing)
     }
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
@@ -415,8 +413,6 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             }
             ring = taken
           }
-          // A still thing's cut that agrees with where it should be only says it's still there.
-          let agreed = p.still && p.predicted.map { LiveTracker.agrees(cut, predicted: $0) } == true
           // Onto the thing's plane in the world.
           let plane = camera.withPlane(through: p.anchor)
           let world = ring.compactMap { plane.onPlane($0) }
@@ -428,7 +424,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           } else if let d = camera.medianDepth(of: points, inside: cut) {
             depth = (d, LiveShape.pointsWeight)
           }
-          found[p.key] = LiveCut(world: world, agreed: agreed, depth: depth)
+          found[p.key] = LiveCut(world: world, depth: depth)
         }
       } catch {
         failure = error.localizedDescription
@@ -488,12 +484,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     return OutlineMath.centre(shape.placed(at: t)) + offset
   }
 
-  /// One of SAM's cuts, laid in the world: whether it only agrees with where a still thing is
-  /// drawn (it's then only confirmed: LiveShape.confirmed), and how far away the thing is as
-  /// measured inside it (and how much to go by that), if anything did.
+  /// One of SAM's cuts, laid in the world, and how far away its thing is as measured inside it
+  /// (and how much to go by that), if anything did.
   private struct LiveCut {
     let world: [simd_float3]
-    let agreed: Bool
     let depth: (metres: Float, weight: Float)?
   }
 
@@ -509,14 +503,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // A pinned thing is blended back however long it was lost: its cut was asked for where
         // it should be, and had to fit it there.
         if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
-          if cut.agreed {
-            // A still thing just where it's drawn: ARKit holds it there, dead still.
-            shape.confirmed(at: t)
-          } else {
-            // While the phone itself moves fast, where the cut landed says little about the
-            // thing's own speed.
-            shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: camera.position)
-          }
+          // While the phone itself moves fast, where the cut landed says little about the
+          // thing's own speed.
+          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: camera.position)
           if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
           liveShapes[key] = shape
         } else {
@@ -550,7 +539,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// moves its own width between cuts (a bolt on a belt) is lost (tools/track measures both).
   private func flowLive(_ frame: ARFrame) {
     guard liveSegments, sam != nil, !flowBusy, frame.timestamp - lastFlowTime >= 1.0 / 30,
-          liveShapes.values.contains(where: { $0.follows && !$0.still }) else { return }
+          liveShapes.values.contains(where: { $0.follows && !Self.heldByARKit($0) }) else { return }
     flowBusy = true
     lastFlowTime = frame.timestamp
     let buffer = frame.capturedImage
@@ -584,11 +573,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// too and cancels out in the round trip; what's left is the thing's.
   private func carryLive(from a: LiveFlow.Frame, _ ca: FrozenCamera, at ta: CFTimeInterval,
                          to b: LiveFlow.Frame, _ cb: FrozenCamera, at tb: CFTimeInterval) {
-    // A still thing isn't carried: ARKit already holds it where it is, and all the flow could
-    // add is its own noise (tools/walk).
-    for (key, var shape) in liveShapes where shape.follows && shape.misses < 2 && !shape.still {
+    for (key, var shape) in liveShapes where shape.follows && shape.misses < 2 && !Self.heldByARKit(shape) {
       if shape.carry(from: a, ca, at: ta, to: b, cb, at: tb) { liveShapes[key] = shape }
     }
+  }
+
+  /// A still thing whose depth has been measured isn't carried by the flow: ARKit already holds
+  /// it where it is, and the flow could add only its own noise. On handheld walk-arounds that
+  /// took the outline's wobble against its thing from 8 px to 3 (tools/walk). Laid at a depth
+  /// that's only a guess, the flow keeps it on its thing as the phone moves.
+  private static func heldByARKit(_ shape: LiveShape) -> Bool {
+    shape.still && shape.depthKnown
   }
 
   /// Every display frame: each live outline drawn where its thing is now (carried along by
@@ -1196,6 +1191,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// YOLO's name for it, when it's one of YOLO's things.
     let label: String?
     let confidence: Float
+    /// Laid where LiDAR or ARKit's points put it, rather than where a raycast guessed.
+    let depthKnown: Bool
     /// Its pin once it's pinned (holding on it again does nothing).
     var pinId: String?
   }
@@ -1289,14 +1286,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     for f in found where !kept.contains(where: { LiveTracker.iou($0.polygon, f.polygon) > 0.6 }) {
       kept.append(f)
     }
-    var laid: [(world: [simd_float3], find: ScrubFind, at: CGPoint)] = []
+    var laid: [(world: [simd_float3], find: ScrubFind, at: CGPoint, depthKnown: Bool)] = []
     for f in kept {
       let ring = OutlineMath.resample(f.polygon, scale: upright)
       let middle = LiveTracker.interiorPoint(f.polygon, scale: upright)
       // How far it is: LiDAR's depth inside it, else ARKit's points on it, else a raycast through
       // its middle (which can hit the wall behind it: LiveShape puts that right as it's followed).
       let anchor: simd_float3
-      if let d = depth?.inside(ring) ?? camera.medianDepth(of: points, inside: ring) {
+      let measured = depth?.inside(ring) ?? camera.medianDepth(of: points, inside: ring)
+      if let d = measured {
         let (origin, dir) = camera.ray(middle)
         anchor = origin + dir * camera.range(depth: d, through: middle)
       } else {
@@ -1305,13 +1303,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let plane = camera.withPlane(through: anchor)
       let world = ring.compactMap { plane.onPlane($0) }
       guard world.count == ring.count, let (p, _) = project(OutlineMath.centre(world)), bounds.contains(p) else { continue }
-      laid.append((world: world, find: f, at: p))
+      laid.append((world: world, find: f, at: p, depthKnown: measured != nil))
     }
     // Left to right as they are on screen.
     laid.sort { ($0.at.x, $0.at.y) < ($1.at.x, $1.at.y) }
     laid = Array(laid.prefix(14))
     scrubThings = laid.map { l in
-      ScrubThing(world: l.world, label: l.find.label, confidence: l.find.confidence, pinId: nil)
+      ScrubThing(world: l.world, label: l.find.label, confidence: l.find.confidence, depthKnown: l.depthKnown, pinId: nil)
     }
     scrubIndex = nil
     scrubNode?.removeFromParentNode()
@@ -1351,6 +1349,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     contexts[id] = FrozenCamera(frame: frame, crop: crop).withPlane(through: centre)
     var shape = LiveShape(world: thing.world, at: frame.timestamp, follows: true)
     shape.pinned = true
+    shape.depthKnown = thing.depthKnown
     shape.tagOffset = .zero
     liveShapes[id] = shape
     let node = OutlineNode()
