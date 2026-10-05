@@ -139,6 +139,8 @@ A pinned thing is followed by [EdgeTAM](https://github.com/facebookresearch/Edge
 | the app's `EdgeTAMTracker.swift` with the Core ML models (CI's Mac) vs that predictor | 533 | mean 0.981, worst 0.936; never lost |
 | EdgeTAM on every other frame (15 a second, about a phone's rate) vs every frame | 267 | mean 0.993, worst 0.960 |
 
+In the Simulator, `lensi:///?scene=shaker&edgetam=shaker` has the app itself run EdgeTAM over the clip with the models it ships (`LensiAR.trackVideo`, on the Simulator's CPU) and leave what it found in Documents; CI's run does it (`10h-edgetam-in-app`) next to pinning the bottle from the strip (`10g`). The virtual camera plays demo footage natively (`DemoVideoView`) and draws what's pinned in the same display frame as the picture: drawn from JavaScript, an outline landed a few frames late whenever the Simulator was busy, beside a thing that moved fast.
+
 On a flat picture (0.5x, and the virtual camera's track) each new outline is glided into the last: carried onto it by the affine map that fits best, so motion and zoom pass straight through, and only what's left (the mask's edge noise) eased in (`OutlineMath.glide`). [`tools/edgetam/smooth.py`](tools/edgetam/smooth.py) is the app's outline code in Python for trying such things on the full-precision masks. `bash tools/edgetam/ci.sh` on a Mac reproduces all of it (the `edgetam-lab` workflow), and the compiled models and the outlines drawn on the clip land on the `ci-edgetam` branch.
 
 ### Pinned while the phone moves, on real ARKit recordings
