@@ -64,7 +64,7 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         let r = m.rotationRate
         self.lock.lock()
         self.turns.append((t: m.timestamp, rate: simd_float3(Float(r.x), Float(r.y), Float(r.z))))
-        if self.turns.count > 200 { self.turns.removeFirst(self.turns.count - 200) }
+        if self.turns.count > 300 { self.turns.removeFirst(self.turns.count - 300) }
         self.lock.unlock()
       }
     }
@@ -156,11 +156,12 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
 
   /// Upright picture points (0…1) seen at `t0`, where they'd be seen at `t1` given how the phone
   /// turned meanwhile: each one's line of sight from the lens turned back by that much. The phone
-  /// moving (not turning) isn't in it; over a tenth of a second that's small at 0.5x.
+  /// moving (not turning) isn't in it; over a tenth of a second that's small at 0.5x. Up to 2 s
+  /// back (the strip's things are found on a frame from a second or so before they're drawn).
   /// `size`: the upright picture in pixels.
   func warp(_ points: [CGPoint], from t0: CFTimeInterval, to t1: CFTimeInterval, size: CGSize) -> [CGPoint] {
     let fov = fieldOfView
-    guard fov > 0.1, t1 > t0, t1 - t0 < 0.5, size.width > 0, size.height > 0 else { return points }
+    guard fov > 0.1, t1 > t0, t1 - t0 < 2, size.width > 0, size.height > 0 else { return points }
     let theta = turned(from: t0, to: t1)
     let angle = simd_length(theta)
     guard angle > 1e-4, angle < 0.6 else { return points }

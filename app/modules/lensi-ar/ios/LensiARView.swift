@@ -171,6 +171,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// highlighted one's layer.
   private var wideScrubFrame: (buffer: CVPixelBuffer, t: CFTimeInterval)?
   private var wideScrubLayer: FlatOutline?
+  /// Callouts the brain put on a thing pinned at 0.5x before it was in the world: placed with
+  /// it once it is (`takeLive`).
+  private var flatCallouts: [String: [(id: String, x: Double, y: Double, text: String)]] = [:]
   /// 0.5x is there: ARKit's own ultra-wide, or the ultra-wide camera on its own.
   private var hasUltraWide: Bool { ultraWideFormat != nil || UltraWideCamera.available }
   private var recorder: Recorder?
@@ -712,6 +715,19 @@ final class LensiARView: ExpoView, ARSessionDelegate {
             shape.depthKnown = cut.depth != nil
             pin.world = OutlineMath.centre(world)
             flatPins.remove(key)
+            // Its callouts were put on a crop of it from the ultra-wide; the box round it here
+            // stands in for that crop.
+            if let seen = camera.upright(world) {
+              let r = LiveTracker.bounds(seen)
+              let crop = r.insetBy(dx: -r.width * 0.15, dy: -r.height * 0.15).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+              if !crop.isNull, crop.width > 0.02, crop.height > 0.02 {
+                contexts[key] = FrozenCamera(transform: camera.transform, intrinsics: camera.intrinsics, resolution: camera.resolution,
+                                             crop: crop).withPlane(through: pin.world)
+              }
+            }
+            for c in flatCallouts.removeValue(forKey: key) ?? [] {
+              addCallout(parentId: key, id: c.id, x: c.x, y: c.y, text: c.text)
+            }
           } else if let pin = pins[key] {
             let offset = pin.world - OutlineMath.centre(world)
             shape.tagOffset = simd_length(offset) < 0.5 ? offset : .zero
@@ -1871,7 +1887,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// following it on the ultra-wide (`wideFrame`); it's laid in the world from its first cut
   /// once ARKit is back at 1x. Its picture goes to JS (onSelect) to be named, as at 1x.
   private func scrubPinWide(_ index: Int) -> String? {
-    guard let flat = scrubThings[index].flat, let found = wideScrubFrame else { return nil }
+    // Without EdgeTAM (still loading, or missing) nothing could follow it here.
+    guard let edge = edgeTAM, let flat = scrubThings[index].flat, let found = wideScrubFrame else { return nil }
     let id = UUID().uuidString
     let pin = Pin(id: id, parentId: nil, world: .zero, text: "Looking", color: accent)
     let tag = TagNode()
@@ -1883,21 +1900,21 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     scrubThings[index].pinId = id
     wideOutlines[id] = flat
     wideTimes[id] = found.t
-    // EdgeTAM starts on it on samQueue, where its trackers live.
-    if let edge = edgeTAM {
-      let box = LiveTracker.bounds(flat)
-      let buffer = found.buffer
-      samQueue.async { [weak self] in
-        guard let self else { return }
-        do {
-          let encoder = try self.edgeEncoder ?? EdgeTAMTracker.Encoder(models: edge)
-          self.edgeEncoder = encoder
-          let tracker = try EdgeTAMTracker(models: edge)
-          _ = try tracker.start(encoder.encode(CIImage(cvPixelBuffer: buffer).oriented(.right)), box: box)
-          self.edgeTrackers[id] = tracker
-        } catch {
-          NSLog("[lensi] EdgeTAM couldn't start on a thing pinned at 0.5x: %@", error.localizedDescription)
-        }
+    // EdgeTAM starts on it on samQueue, where its trackers live; if it can't, it's unpinned
+    // rather than left with nothing to follow it.
+    let box = LiveTracker.bounds(flat)
+    let start = found.buffer
+    samQueue.async { [weak self] in
+      guard let self else { return }
+      do {
+        let encoder = try self.edgeEncoder ?? EdgeTAMTracker.Encoder(models: edge)
+        self.edgeEncoder = encoder
+        let tracker = try EdgeTAMTracker(models: edge)
+        _ = try tracker.start(encoder.encode(CIImage(cvPixelBuffer: start).oriented(.right)), box: box)
+        self.edgeTrackers[id] = tracker
+      } catch {
+        NSLog("[lensi] EdgeTAM couldn't start on a thing pinned at 0.5x: %@", error.localizedDescription)
+        DispatchQueue.main.async { self.removePin(id: id) }
       }
     }
     layoutWide()
@@ -2122,6 +2139,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
 
   /// `x`/`y` are 0...1 inside the crop that was sent with onSelect.
   func addCallout(parentId: String, id: String, x: Double, y: Double, text: String) {
+    // On a thing pinned at 0.5x and not yet in the world: placed with it.
+    if flatPins.contains(parentId), pins[parentId] != nil, pins[id] == nil {
+      flatCallouts[parentId, default: []].append((id: id, x: x, y: y, text: text))
+      return
+    }
     guard pins[id] == nil, let parent = pins[parentId], let ctx = contexts[parentId] else { return }
     let upright = CGPoint(
       x: ctx.crop.minX + CGFloat(x) * ctx.crop.width,
@@ -2139,6 +2161,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       pins[pid] = nil
       contexts[pid] = nil
       flatPins.remove(pid)
+      flatCallouts[pid] = nil
     }
     pinOrder.removeAll { pins[$0] == nil }
   }
@@ -2149,6 +2172,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     pinOrder.removeAll()
     contexts.removeAll()
     flatPins.removeAll()
+    flatCallouts.removeAll()
   }
 
   // MARK: - Live guide
