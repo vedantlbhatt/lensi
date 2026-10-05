@@ -999,9 +999,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let now = wide.latest?.t ?? CACurrentMediaTime()
       let moved = wide.warp(outline, from: wideTimes[id] ?? now, to: now, size: wideSize)
       let points = moved.map { zoomed(wide.layerPoint($0)) }
-      let path = CGMutablePath()
-      path.addLines(between: points)
-      path.closeSubpath()
+      let path = OutlineMath.curvePath(points)
       flat.draw(path, color: pin.label.color.cgColor, width: 2.5, fillOpacity: 0.1)
       flat.isHidden = false
       // Its tag just above it, as at 1x.

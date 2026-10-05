@@ -189,6 +189,49 @@ enum OutlineMath {
     }
   }
 
+  /// Rings at least this dense are drawn as a curve (`curve`, `curvePath`); a coarser one (a box,
+  /// a few corners) keeps its corners.
+  static let curveFrom = 24
+
+  /// A closed ring drawn as a smooth curve: the quadratic B-spline through the midpoints of its
+  /// sides, each corner its control point, `per` points a side. Drawn straight from point to
+  /// point, a ring of 64 shows its corners up close; this has none, and stays within a fraction
+  /// of a side of the ring (it never overshoots, as a curve through the points can).
+  static func curve(_ ring: [simd_float3], per: Int = 4) -> [simd_float3] {
+    let n = ring.count
+    guard n >= curveFrom, per >= 2 else { return ring }
+    var out: [simd_float3] = []
+    out.reserveCapacity(n * per)
+    for i in 0..<n {
+      let a = (ring[(i + n - 1) % n] + ring[i]) * 0.5
+      let c = ring[i]
+      let b = (ring[i] + ring[(i + 1) % n]) * 0.5
+      for k in 0..<per {
+        let t = Float(k) / Float(per), u = 1 - t
+        out.append(a * (u * u) + c * (2 * u * t) + b * (t * t))
+      }
+    }
+    return out
+  }
+
+  /// The same curve as a closed path on a flat picture (Core Graphics draws its quadratic
+  /// segments exactly); a coarse ring straight from corner to corner.
+  static func curvePath(_ ring: [CGPoint]) -> CGPath {
+    let path = CGMutablePath()
+    let n = ring.count
+    guard n >= 3 else { return path }
+    guard n >= curveFrom else {
+      path.addLines(between: ring)
+      path.closeSubpath()
+      return path
+    }
+    func mid(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
+    path.move(to: mid(ring[n - 1], ring[0]))
+    for i in 0..<n { path.addQuadCurve(to: mid(ring[i], ring[(i + 1) % n]), control: ring[i]) }
+    path.closeSubpath()
+    return path
+  }
+
   /// A closed ring's points smoothed along it (a Gaussian `sigma` points wide): the stair-steps of
   /// a mask's edge, not its shape.
   static func blurred(_ ring: [CGPoint], sigma: CGFloat) -> [CGPoint] {

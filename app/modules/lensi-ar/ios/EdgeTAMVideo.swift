@@ -173,9 +173,7 @@ enum EdgeTAMVideo {
         ctx.translateBy(x: 0, y: size.height)
         ctx.scaleBy(x: 1, y: -1)
         if let outline, outline.count >= 3 {
-          let path = CGMutablePath()
-          path.addLines(between: outline.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) })
-          path.closeSubpath()
+          let path = OutlineMath.curvePath(outline.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) })
           let width = 2.5 * scale
           ctx.setLineJoin(.round)
           ctx.setLineCap(.round)

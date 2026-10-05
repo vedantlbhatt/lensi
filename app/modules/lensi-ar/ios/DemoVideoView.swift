@@ -182,10 +182,7 @@ final class DemoVideoView: ExpoView {
         outlines[key] = flat
       }
       flat.frame = bounds
-      let path = CGMutablePath()
-      path.addLines(between: pts)
-      path.closeSubpath()
-      flat.draw(path, color: color.cgColor, width: 2.5, fillOpacity: fill)
+      flat.draw(OutlineMath.curvePath(pts), color: color.cgColor, width: 2.5, fillOpacity: fill)
       flat.isHidden = false
       drawn.insert(key)
     }
