@@ -289,6 +289,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// gentle for a still thing).
     var gate: LiveTracker.Gate = .loose
     var smoothing: OutlineMath.Smoothing = .standard
+    /// A still thing: a cut that agrees with where it should be only confirms it.
+    var still = false
   }
 
   private func segmentLive(_ frame: ARFrame) {
@@ -321,14 +323,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let now = shape.placed(at: frame.timestamp)
       // A pinned thing SAM has lost (behind a hand, out of view) is only taken back where it
       // was and as it was: asked for as a still thing, strictly.
-      let asking = LiveTracker.asking(still: shape.misses >= 2 || shape.still)
+      // Seen from about where it was last cut, a still thing takes only a cut that matches it
+      // closely: one that's grown onto a neighbour is refused.
+      let still = shape.misses >= 2 || shape.still
+      let asking = LiveTracker.asking(still: still, turned: shape.turned(from: simd_make_float3(frame.camera.transform.columns.3)))
       // Up close only part of it is on the picture: SAM is asked about that part (and the rest
       // goes where that part goes: LiveTracker.follow), unless too little of it is left to say.
       guard let predicted = uprightPoints(now, camera: frame.camera, upright: upright),
             LiveTracker.visibleFraction(predicted) >= LiveTracker.minVisible,
             let p = LiveTracker.prompt(for: predicted, scale: upright, grow: asking.grow) else { return nil }
       return LivePrompt(key: key, point: p.point, box: p.box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
-                        follows: true, gate: asking.gate, smoothing: asking.smoothing)
+                        follows: true, gate: asking.gate, smoothing: asking.smoothing, still: still)
     }
     let guidePins = pinOrder.compactMap { pins[$0] }.filter { $0.parentId == Self.guideParent }
     if !guidePins.isEmpty {
@@ -400,33 +405,22 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           guard mask.score >= (p.predicted == nil ? 0.6 : 0.5), mask.polygon.count > 2 else { continue }
           // Evenly spaced (in pixels).
           let cut = OutlineMath.resample(mask.polygon, scale: upright)
-          let whole = p.predicted.map { LiveTracker.visibleFraction($0) >= LiveTracker.wholeVisible } ?? false
+          var ring = cut
           // Following a thing: a cut that doesn't fit where it should be is something else. Up
           // close the cut is only the part on the picture, and the whole outline goes where it went.
-          var ring: [CGPoint]? = cut
           if let predicted = p.predicted {
-            ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: p.gate)
-            if ring == nil { refused += 1 }
+            guard let taken = LiveTracker.follow(cut: cut, predicted: predicted, gate: p.gate) else {
+              refused += 1
+              continue
+            }
+            ring = taken
           }
-          // Refused as the outline, a cut can still plausibly be the thing, seen whole: it says
-          // where the thing is all the same. (Laid at the wrong depth, where a thing should be is
-          // off as soon as the phone moves, and the cut is refused for that; nothing would put
-          // the depth right.)
-          let plausible = ring != nil || (whole && p.predicted.map { LiveTracker.accepts(cut, predicted: $0, gate: .loose) } == true)
-          guard plausible else { continue }
+          // A still thing's cut that agrees with where it should be only says it's still there.
+          let agreed = p.still && p.predicted.map { LiveTracker.agrees(cut, predicted: $0) } == true
           // Onto the thing's plane in the world.
           let plane = camera.withPlane(through: p.anchor)
-          var world: [simd_float3]?
-          if let ring {
-            let laid = ring.compactMap { plane.onPlane($0) }
-            if laid.count == ring.count { world = laid }
-          }
-          var look: [simd_float3]?
-          if whole {
-            let laid = cut.compactMap { plane.onPlane($0) }
-            if laid.count == cut.count { look = laid }
-          }
-          guard world != nil || look != nil else { continue }
+          let world = ring.compactMap { plane.onPlane($0) }
+          guard world.count == ring.count else { continue }
           // How far it really is, measured inside the cut: LiDAR's depth, else ARKit's points on it.
           var depth: (metres: Float, weight: Float)?
           if let d = measured?.inside(cut) {
@@ -434,7 +428,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           } else if let d = camera.medianDepth(of: points, inside: cut) {
             depth = (d, LiveShape.pointsWeight)
           }
-          found[p.key] = LiveCut(world: world, look: look, depth: depth)
+          found[p.key] = LiveCut(world: world, agreed: agreed, depth: depth)
         }
       } catch {
         failure = error.localizedDescription
@@ -494,13 +488,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     return OutlineMath.centre(shape.placed(at: t)) + offset
   }
 
-  /// One of SAM's cuts, laid in the world: the outline to take (nil when it didn't fit where the
-  /// thing should be), the cut itself when all of the thing was on it (a look at it from here:
-  /// LiveShape.sighted), and how far away it is as measured inside the cut (and how much to go
-  /// by that), if anything did.
+  /// One of SAM's cuts, laid in the world: whether it only agrees with where a still thing is
+  /// drawn (it's then only confirmed: LiveShape.confirmed), and how far away the thing is as
+  /// measured inside it (and how much to go by that), if anything did.
   private struct LiveCut {
-    let world: [simd_float3]?
-    let look: [simd_float3]?
+    let world: [simd_float3]
+    let agreed: Bool
     let depth: (metres: Float, weight: Float)?
   }
 
@@ -509,22 +502,22 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// the depth the outline already had, a guess to start with); asked-for ones it didn't find, or
   /// whose cut didn't fit, count a miss (two in a row and they go).
   private func takeLive(_ found: [String: LiveCut], asked: [LivePrompt], at t: CFTimeInterval, seenBy camera: FrozenCamera) {
-    /// What a cut says about how far its thing is.
-    func locate(_ shape: inout LiveShape, by cut: LiveCut) {
-      if let look = cut.look { shape.sighted(look, from: camera.position) }
-      if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
-    }
     for prompt in asked {
       let key = prompt.key
-      let cut = found[key]
-      if let cut, let world = cut.world {
+      if let cut = found[key] {
+        let world = cut.world
         // A pinned thing is blended back however long it was lost: its cut was asked for where
         // it should be, and had to fit it there.
         if var shape = liveShapes[key], shape.pinned || t - shape.seen < 2 {
-          // While the phone itself moves fast, where the cut landed says little about the
-          // thing's own speed.
-          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast)
-          locate(&shape, by: cut)
+          if cut.agreed {
+            // A still thing just where it's drawn: ARKit holds it there, dead still.
+            shape.confirmed(at: t)
+          } else {
+            // While the phone itself moves fast, where the cut landed says little about the
+            // thing's own speed.
+            shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: camera.position)
+          }
+          if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
           liveShapes[key] = shape
         } else {
           // New, or not seen for a while: start over.
@@ -544,7 +537,6 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       } else if var shape = liveShapes[key] {
         shape.misses += 1
         shape.velocity *= 0.5
-        if let cut { locate(&shape, by: cut) }
         liveShapes[key] = shape
       }
     }
@@ -558,7 +550,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// moves its own width between cuts (a bolt on a belt) is lost (tools/track measures both).
   private func flowLive(_ frame: ARFrame) {
     guard liveSegments, sam != nil, !flowBusy, frame.timestamp - lastFlowTime >= 1.0 / 30,
-          liveShapes.values.contains(where: { $0.follows }) else { return }
+          liveShapes.values.contains(where: { $0.follows && !$0.still }) else { return }
     flowBusy = true
     lastFlowTime = frame.timestamp
     let buffer = frame.capturedImage
@@ -592,7 +584,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// too and cancels out in the round trip; what's left is the thing's.
   private func carryLive(from a: LiveFlow.Frame, _ ca: FrozenCamera, at ta: CFTimeInterval,
                          to b: LiveFlow.Frame, _ cb: FrozenCamera, at tb: CFTimeInterval) {
-    for (key, var shape) in liveShapes where shape.follows && shape.misses < 2 {
+    // A still thing isn't carried: ARKit already holds it where it is, and all the flow could
+    // add is its own noise (tools/walk).
+    for (key, var shape) in liveShapes where shape.follows && shape.misses < 2 && !shape.still {
       if shape.carry(from: a, ca, at: ta, to: b, cb, at: tb) { liveShapes[key] = shape }
     }
   }

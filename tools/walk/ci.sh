@@ -5,7 +5,8 @@
 # repo root on a Mac, with the compiled SAM models in models-all/:
 #
 #   bash tools/walk/ci.sh            (ARKIT_SCENES="id id ..." to choose the scans,
-#                                     WALK_PICK=n how many of them to run in full)
+#                                     WALK_PICK=n how many of them to run in full,
+#                                     WALK_IDS="id id ..." to run these in full straight away)
 #
 # First every scan's poses, lenses and boxes alone (a few MB each) say which have the best walk
 # up close and back out; then the best WALK_PICK are fetched whole (1-2 GB each) and run.
@@ -46,25 +47,31 @@ fetch() {
   rm -rf "$d/$asset.tmp"
 }
 
-# Pass 1: which scans have a walk up close and back out.
+# A scan's poses, boxes and lenses: a few MB.
+small() {
+  local d="$1" id="$2"
+  mkdir -p "$d"
+  for f in lowres_wide.traj "${id}_3dod_annotation.json"; do
+    [ -s "$d/$f" ] || curl -fsSL --retry 2 --max-time 300 -o "$d/$f" "$BASE/$id/$f" || { echo "ARKitScenes $id: no $f"; return 1; }
+  done
+  fetch "$d" "$id" vga_wide_intrinsics
+}
+
+# Pass 1: which scans have a walk up close and back out (WALK_IDS: these, without asking).
 : > out/walk/picks.txt
+[ -n "${WALK_IDS:-}" ] && IDS=""
 for id in $IDS; do
   d="footage/arkit/$id"
-  mkdir -p "$d"
-  ok=1
-  for f in lowres_wide.traj "${id}_3dod_annotation.json"; do
-    [ -s "$d/$f" ] || curl -fsSL --retry 2 --max-time 300 -o "$d/$f" "$BASE/$id/$f" || { echo "ARKitScenes $id: no $f"; ok=0; break; }
-  done
-  [ "$ok" = 1 ] && fetch "$d" "$id" vga_wide_intrinsics || continue
+  small "$d" "$id" || continue
   ./walk "$d" out/walk "scene-$id" 240 select 2>&1 | grep '^PICK' | tee -a out/walk/picks.txt
 done
-BEST=$(sort -k3 -g -r out/walk/picks.txt | awk '$3 > 0 {print $2}' | sed 's/^scene-//' | head -n "$PICK")
+BEST="${WALK_IDS:-$(sort -k3 -g -r out/walk/picks.txt | awk '$3 > 0 {print $2}' | sed 's/^scene-//' | head -n "$PICK")}"
 echo "Running in full: $BEST"
 
 # Pass 2: the best, whole.
 for id in $BEST; do
   d="footage/arkit/$id"
-  fetch "$d" "$id" vga_wide || continue
+  small "$d" "$id" && fetch "$d" "$id" vga_wide || continue
   fetch "$d" "$id" lowres_depth
   echo "ARKitScenes $id: $(ls "$d/vga_wide" | wc -l) frames, $(ls "$d/vga_wide_intrinsics" 2>/dev/null | wc -l) lenses, $(ls "$d/lowres_depth" 2>/dev/null | wc -l) depth maps, $(du -sh "$d" | cut -f1)"
   LENSI_MODELS_DIR=models-all ./walk "$d" out/walk "scene-$id" 2>&1 | tee -a out/walk/summary.txt \

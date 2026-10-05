@@ -10,14 +10,17 @@
 // landing two frames after the frame it was asked about, the flow off while the camera moves
 // fast, as on the phone:
 //
-//   arkit@true  cut once at its true depth, then ARKit alone
-//   arkit@far   cut once 40% too far (a raycast that hit the wall behind), then ARKit alone
-//   app@true    the app before its depth was put right, pinned at the true depth
-//   app@far     the same, pinned 40% too far
-//   app@near    the same, pinned 30% too near (ARKit's points on something in front)
-//   fix@far     the app now, pinned 40% too far: its depth put right by its looks (LiveShape.sighted)
-//   fix@near    ...pinned 30% too near
-//   lidar@far   ...and by LiDAR inside each cut, as on a Pro iPhone (LiveShape.setDepth)
+//   arkit@true   cut once at its true depth, then ARKit alone
+//   arkit@far    cut once 40% too far (a raycast that hit the wall behind), then ARKit alone
+//   app@true     the app before, pinned at the true depth
+//   app@far      the same, pinned 40% too far
+//   lidar@far    ...its depth put right by LiDAR inside each cut, as on a Pro iPhone
+//   band@true    a still thing's cut that agrees with where it's drawn only confirms it
+//   noflow@true  a still thing isn't carried by the flow (ARKit holds it)
+//   calm@true    the app now: both, and a still thing seen from about where it was last cut
+//                takes only a cut that matches it closely (LiveTracker.asking(still:turned:))
+//   calm@far     the same, pinned 40% too far
+//   calml@far    ...and LiDAR
 //
 // Each frame is scored against SAM asked with the thing's hand-drawn 3D box seen from that
 // frame's pose (J, and how often it's below 0.5: lost), for how much of the outline is on the
@@ -526,9 +529,8 @@ struct Cut {
   let camera: FrozenCamera
   /// The outline to take; nil when SAM found nothing that fits where the thing should be.
   let world: [simd_float3]?
-  /// The cut laid in the world when all of the thing was on the picture: a look at it, even when
-  /// it was refused as the outline but is plausibly it (`Run.looks`).
-  let look: [simd_float3]?
+  /// A still thing's cut that agrees with where it should be: it's only confirmed (`Run.band`).
+  let agreed: Bool
   let depth: Float?
   let smoothing: OutlineMath.Smoothing
 }
@@ -540,13 +542,13 @@ final class Run {
   let start: Float
   /// Cut once, then ARKit alone: no SAM after, no flow.
   let once: Bool
-  /// Its depth put right by its looks (LiveShape.sighted), and by LiDAR inside each cut.
-  let sights: Bool
+  /// Its depth put right by LiDAR inside each cut (LiveShape.setDepth).
   let lidar: Bool
-  /// A whole cut refused as the outline but plausibly the thing (the loose gate) still counts as
-  /// a look, and LiDAR's depth inside it: a wrong depth puts where the thing should be off, the
-  /// strict gate refuses the cut for it, and nothing could put the depth right.
-  let looks: Bool
+  /// A still thing's cut that agrees with where it should be is only confirmed, not blended in
+  /// (LiveTracker.agrees, LiveShape.confirmed).
+  let band: Bool
+  /// A still thing isn't carried by the flow between cuts (ARKit holds it).
+  let noflow: Bool
   /// A still thing seen from about where it was last cut is asked about with the tight gate
   /// (LiveTracker.asking(still:turned:)).
   let tight: Bool
@@ -557,16 +559,16 @@ final class Run {
   var onBox: [Double] = []
   var middles: [CGPoint?] = []
   var depthRatio: [Double] = []
-  var cuts = 0, refused = 0, carried = 0, measured = 0
+  var cuts = 0, refused = 0, carried = 0, measured = 0, agreed = 0
 
-  init(_ label: String, start: Float, once: Bool = false, sights: Bool = false, lidar: Bool = false, looks: Bool = false,
+  init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, band: Bool = false, noflow: Bool = false,
        tight: Bool = false) {
     self.label = label
     self.start = start
     self.once = once
-    self.sights = sights
     self.lidar = lidar
-    self.looks = looks
+    self.band = band
+    self.noflow = noflow
     self.tight = tight
   }
 }
@@ -576,16 +578,12 @@ let runs = [
   Run("arkit@far", start: 1.4, once: true),
   Run("app@true", start: 1),
   Run("app@far", start: 1.4),
-  Run("app@near", start: 0.7),
-  Run("fix@true", start: 1, sights: true),
-  Run("fix@far", start: 1.4, sights: true),
-  Run("fix@near", start: 0.7, sights: true),
-  Run("look@far", start: 1.4, sights: true, looks: true),
-  Run("look@near", start: 0.7, sights: true, looks: true),
-  Run("lidar@far", start: 1.4, sights: true, lidar: true, looks: true),
-  Run("tight@true", start: 1, sights: true, looks: true, tight: true),
-  Run("tight@far", start: 1.4, sights: true, looks: true, tight: true),
-  Run("tlidar@far", start: 1.4, sights: true, lidar: true, looks: true, tight: true),
+  Run("lidar@far", start: 1.4, lidar: true),
+  Run("band@true", start: 1, band: true),
+  Run("noflow@true", start: 1, noflow: true),
+  Run("calm@true", start: 1, band: true, noflow: true, tight: true),
+  Run("calm@far", start: 1.4, band: true, noflow: true, tight: true),
+  Run("calml@far", start: 1.4, lidar: true, band: true, noflow: true, tight: true),
 ]
 /// SAM asked every 4th frame (7.5 times a second; LensiARView asks as often as the phone keeps
 /// up, at least 80 ms apart), its answer landing two frames (66 ms) after the frame it was asked about.
@@ -648,7 +646,7 @@ for (k, f) in window.enumerated() {
 
   for run in runs {
     // Between cuts, its own pixels (LensiARView.flowLive), not while the phone moves fast.
-    if !run.once, !fast, var shape = run.shape, shape.misses < 2, let previous, let flowFrame {
+    if !run.once, !fast, var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still), let previous, let flowFrame {
       if shape.carry(from: previous.frame, previous.camera, at: previous.t, to: flowFrame, camera, at: t) { run.carried += 1 }
       run.shape = shape
     }
@@ -657,13 +655,15 @@ for (k, f) in window.enumerated() {
     if let cut = run.pending, cut.due <= k {
       run.pending = nil
       if var shape = run.shape {
-        if let world = cut.world {
+        if cut.agreed {
+          shape.confirmed(at: cut.t)
+          run.agreed += 1
+        } else if let world = cut.world {
           shape.take(world, at: cut.t, how: cut.smoothing, measure: !fast, seenFrom: cut.camera.position)
         } else {
           shape.misses += 1
           shape.velocity *= 0.5
         }
-        if run.sights, let look = cut.look { shape.sighted(look, from: cut.camera.position) }
         if let depth = cut.depth {
           shape.setDepth(depth, seenBy: cut.camera, weight: LiveShape.lidarWeight)
           run.measured += 1
@@ -700,28 +700,21 @@ for (k, f) in window.enumerated() {
         let m = try sam.segment(id: "frame", points: [prompt.point], labels: [1], box: prompt.box, prior: predicted)
         run.cuts += 1
         var world: [simd_float3]?
-        var look: [simd_float3]?
+        var agreed = false
         var depth: Float?
         if m.score >= 0.5, m.polygon.count > 2 {
           let cut = OutlineMath.resample(m.polygon, scale: size)
-          let whole = LiveTracker.visibleFraction(predicted) >= LiveTracker.wholeVisible
-          let plane = camera.withPlane(through: OutlineMath.centre(now))
-          let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate)
-          if ring == nil { run.refused += 1 }
-          if let ring {
+          if let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate) {
+            agreed = run.band && still && LiveTracker.agrees(cut, predicted: predicted)
+            let plane = camera.withPlane(through: OutlineMath.centre(now))
             let laid = ring.compactMap { plane.onPlane($0) }
             if laid.count == ring.count { world = laid }
-          }
-          // What the cut says about where the thing is: taken, or plausibly it (`Run.looks`).
-          if ring != nil || (run.looks && whole && LiveTracker.accepts(cut, predicted: predicted, gate: .loose)) {
-            if whole {
-              let laid = cut.compactMap { plane.onPlane($0) }
-              if laid.count == cut.count { look = laid }
-            }
             if run.lidar, let lidarMap { depth = LiveShape.depthInside(cut, depth: { lidarMap.at(upright: $0) }) }
+          } else {
+            run.refused += 1
           }
         }
-        run.pending = Cut(due: k + latency, t: t, camera: camera, world: world, look: look,
+        run.pending = Cut(due: k + latency, t: t, camera: camera, world: world, agreed: agreed,
                           depth: depth, smoothing: asking.smoothing)
       }
     }
@@ -756,11 +749,11 @@ for run in runs {
   let depthOff = mean(run.depthRatio.map { abs(log($0)) })
   let lastDepth = run.depthRatio.last ?? -1
   let slipped = slip(run.middles, against: boxMiddles)
-  print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  depth off %.0f%% (ends x%.2f)  (%ld cuts, %ld refused, %ld carried, %ld measured)",
-               run.label.padding(toLength: 10, withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
-               slipped, jerk(run.middles), (exp(depthOff) - 1) * 100, lastDepth, run.cuts, run.refused, run.carried, run.measured))
+  print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  depth off %.0f%% (ends x%.2f)  (%ld cuts, %ld refused, %ld agreed, %ld carried, %ld measured)",
+               run.label.padding(toLength: 11, withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
+               slipped, jerk(run.middles), (exp(depthOff) - 1) * 100, lastDepth, run.cuts, run.refused, run.agreed, run.carried, run.measured))
   runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
-                  "depthOff": depthOff, "lastDepth": lastDepth, "cuts": run.cuts, "refused": run.refused, "carried": run.carried,
+                  "depthOff": depthOff, "lastDepth": lastDepth, "cuts": run.cuts, "refused": run.refused, "agreed": run.agreed, "carried": run.carried,
                   "measured": run.measured, "jPerFrame": run.j, "depthPerFrame": run.depthRatio,
                   "outlines": run.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } }])
 }

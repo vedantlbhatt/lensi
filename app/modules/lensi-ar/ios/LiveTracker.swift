@@ -140,6 +140,16 @@ enum LiveTracker {
   /// is asked about with the tight gate (`Gate.tight`).
   static let tightTurn: Float = 0.15
 
+  /// A cut of a still thing that overlaps where it should be at least this much (on the
+  /// picture) only says it's still there (LiveShape.confirmed).
+  static let calmAgree: CGFloat = 0.85
+
+  /// Whether a cut of a still thing agrees with where it should be (`calmAgree`).
+  static func agrees(_ cut: [CGPoint], predicted: [CGPoint]) -> Bool {
+    let visible = clipped(predicted)
+    return visible.count >= 3 && cut.count >= 3 && iou(cut, visible) >= calmAgree
+  }
+
   /// How to ask about a thing (`asking(still:)`), with the tight gate for a still one seen from
   /// about where it was last cut (`turned`: radians since; nil when unknown).
   static func asking(still: Bool, turned: Float?) -> (grow: CGFloat, gate: Gate, smoothing: OutlineMath.Smoothing) {
