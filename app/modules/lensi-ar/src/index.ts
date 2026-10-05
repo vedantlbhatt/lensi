@@ -6,7 +6,7 @@ import type { DemoVideoProps, LensiAREvents, LensiARModuleShape, LensiARViewProp
 
 export * from './types';
 export type { DemoScene, VideoThing, VideoTracks } from './demo';
-export { DEMO_SCENES, sceneForUri } from './demo';
+export { DEMO_SCENES, onSceneTracks, sceneForUri, sceneTracks, setSceneTracks } from './demo';
 
 declare class LensiARNative extends NativeModule<LensiAREvents> implements LensiARModuleShape {
   isSupported: boolean;

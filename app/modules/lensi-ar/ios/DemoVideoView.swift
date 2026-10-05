@@ -159,6 +159,8 @@ final class DemoVideoView: ExpoView {
     guard f >= thing.start else { return nil }
     let at = (f - thing.start) * points * 2
     guard at + points * 2 <= thing.words.count else { return nil }
+    // All zeros: not in view at that frame (EdgeTAMVideo's tracks).
+    guard thing.words[at..<(at + points * 2)].contains(where: { $0 != 0 }) else { return nil }
     let w = bounds.width, h = bounds.height
     return (0..<points).map { k in
       CGPoint(x: CGFloat(thing.words[at + 2 * k]) / 65535 * w, y: CGFloat(thing.words[at + 2 * k + 1]) / 65535 * h)

@@ -8,7 +8,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DEMO_SCENES, isVirtual, LensiAR, setDemoTalk, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
+import { DEMO_SCENES, isVirtual, LensiAR, setDemoTalk, setSceneTracks, type DemoScene, type TrackingEvent } from '../../modules/lensi-ar/src';
 import { BrainChip } from '../components/camera/BrainChip';
 import { CameraBlocked } from '../components/camera/CameraBlocked';
 import { CameraSurface, type CameraHandle } from '../components/camera/CameraSurface';
@@ -380,8 +380,10 @@ export default function Camera() {
   }, [params.demo, params.file, params.lens, params.ask, params.memories, params.export, params.brain, params.tap, params.moment, params.guide, params.talk]);
 
   // Scripted: the app's EdgeTAM on a demo clip (?edgetam=shaker), with the models it ships, pinned
-  // on the clip's tracked thing as it is in the first frame. What it found is left in Documents
-  // (lensi-edgetam.json), where CI collects it: the models load and follow from the app's bundle.
+  // on the clip's tracked thing as it is in the first frame and followed through every frame, as
+  // the phone follows a pinned thing. The virtual camera then shows what it found in place of the
+  // bundled tracks, and it's left in Documents for CI: lensi-edgetam.json, and the clip drawn with
+  // it as the phone draws it (lensi-edgetam.mp4, written by the app).
   useEffect(() => {
     if (!params.edgetam || Platform.OS === 'web') return;
     const scene = DEMO_SCENES.find((s) => s.key === params.edgetam);
@@ -397,7 +399,9 @@ export default function Camera() {
       try {
         const asset = Asset.fromModule(source);
         await asset.downloadAsync();
-        const run = await LensiAR.trackVideo(asset.localUri ?? asset.uri, box, 3);
+        const film = new File(Paths.document, 'lensi-edgetam.mp4');
+        const run = await LensiAR.trackVideo(asset.localUri ?? asset.uri, box, 1, film.uri, pen);
+        setSceneTracks(scene.key, run.tracks);
         new File(Paths.document, 'lensi-edgetam.json').write(JSON.stringify(run));
         console.log(`[lensi] EdgeTAM followed it in ${run.seen} of ${run.count} frames, ${Math.round(run.medianMs)} ms a frame`);
         if (alive) toast(`EdgeTAM followed it in ${run.seen} of ${run.count} frames`);
@@ -408,6 +412,7 @@ export default function Camera() {
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.edgetam]);
 
   // Scripted strip and dial (CI and the web demo film them): ?zoom=2.7 turns the dial there

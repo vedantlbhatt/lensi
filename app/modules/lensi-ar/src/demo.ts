@@ -279,3 +279,27 @@ export function sceneForUri(uri: string): DemoScene | null {
   const u = uri.toLowerCase();
   return DEMO_SCENES.find((s) => u.includes(`/${s.key}`) || u.includes(`${s.key}.`)) ?? null;
 }
+
+// A clip's tracks replaced while the app runs: the app's own EdgeTAM run on a demo clip
+// (`edgetam=`) shows what it found in place of the bundled tracks.
+const liveTracks = new Map<string, VideoTracks>();
+const trackListeners = new Set<() => void>();
+
+/** Shows `tracks` on scene `key` from now on (until the app restarts). */
+export function setSceneTracks(key: string, tracks: VideoTracks) {
+  liveTracks.set(key, tracks);
+  trackListeners.forEach((l) => l());
+}
+
+/** A video scene's tracks: the app's own run's, once there is one, else the bundled ones. */
+export function sceneTracks(scene: DemoScene): VideoTracks | null {
+  return liveTracks.get(scene.key) ?? scene.video?.tracks ?? null;
+}
+
+/** Calls `listener` whenever a scene's tracks are replaced; returns the unsubscribe. */
+export function onSceneTracks(listener: () => void): () => void {
+  trackListeners.add(listener);
+  return () => {
+    trackListeners.delete(listener);
+  };
+}

@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import Animated, {
@@ -16,7 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { Asset } from 'expo-asset';
-import { DEMO_SCENES, DemoVideoView, setDemoQuestion, type DemoScene, type VideoTracks, type ZoomRange } from '../../../modules/lensi-ar/src';
+import { DEMO_SCENES, DemoVideoView, onSceneTracks, sceneTracks, setDemoQuestion, type DemoScene, type VideoTracks, type ZoomRange } from '../../../modules/lensi-ar/src';
 import { boxToView, centroid, fitRect, pointInPolygon, polygonIoU, toView, type Fit } from '../../lib/geometry';
 import type { GuidePart } from '../../lib/guide';
 import type { Pt } from '../../lib/types';
@@ -56,6 +56,10 @@ export function outlineAt(tracks: VideoTracks, i: number, f: number): Pt[] | nul
   const n = tracks.points;
   const at = (f - th.start) * n * 2;
   if (at + n * 2 > words.length) return null;
+  // All zeros: not in view at that frame (the app's own EdgeTAM run marks those so).
+  let any = false;
+  for (let k = at; k < at + n * 2 && !any; k++) any = words[k] !== 0;
+  if (!any) return null;
   const pts: Pt[] = [];
   for (let k = 0; k < n; k++) pts.push({ x: words[at + 2 * k] / 65535, y: words[at + 2 * k + 1] / 65535 });
   return pts;
@@ -166,7 +170,10 @@ export const VirtualCamera = forwardRef<
   }, [onZoomRange]);
   const scene = DEMO_SCENES[index];
   const video = scene.video;
-  const tracks = video?.tracks ?? null;
+  // The bundled tracks, or the app's own EdgeTAM run's once it has one (`edgetam=`).
+  const [, tracksChanged] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => onSceneTracks(tracksChanged), []);
+  const tracks = video ? sceneTracks(scene) : null;
   // Which frame of a video scene is showing.
   const [frame, setFrame] = useState(0);
   const frameRef = useRef(0);

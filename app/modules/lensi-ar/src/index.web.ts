@@ -3,7 +3,7 @@
 // and screenshotted in a browser.
 import type { ComponentType } from 'react';
 
-import { DEMO_SCENES, sceneForUri, type DemoScene } from './demo';
+import { DEMO_SCENES, onSceneTracks, sceneForUri, sceneTracks, setSceneTracks, type DemoScene } from './demo';
 import type {
   Analysis,
   DemoVideoProps,
@@ -22,7 +22,7 @@ export * from './types';
 export type { DemoScene, VideoThing, VideoTracks } from './demo';
 /** No native player on the web: the virtual camera draws its footage with expo-video and SVG. */
 export const DemoVideoView: ComponentType<DemoVideoProps> | null = null;
-export { DEMO_SCENES, sceneForUri };
+export { DEMO_SCENES, onSceneTracks, sceneForUri, sceneTracks, setSceneTracks };
 
 type Listener<K extends keyof LensiAREvents> = LensiAREvents[K];
 const listeners: { [K in keyof LensiAREvents]: Set<Listener<K>> } = {

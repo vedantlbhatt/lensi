@@ -1,6 +1,8 @@
 import type { Ref } from 'react';
 import type { ViewProps } from 'react-native';
 
+import type { VideoTracks } from './demo';
+
 export type NPt = { x: number; y: number };
 /** Normalized rect, 0…1 in the upright image, top-left origin. */
 export type NBox = { x: number; y: number; w: number; h: number };
@@ -180,12 +182,22 @@ export type LensiARModuleShape = {
   /**
    * The app's EdgeTAM tracker on a video file with the models it ships: pinned with `box`
    * (x0, y0, x1, y1, fractions of the picture) on the first frame, followed through every
-   * `every`-th frame after.
+   * `every`-th frame after. With `render` (a file path or URI), the clip is written there again
+   * with what it followed drawn on every frame in `color`, as the phone draws a pinned thing.
    */
-  trackVideo(uri: string, box: [number, number, number, number], every: number): Promise<TrackRun>;
+  trackVideo(
+    uri: string,
+    box: [number, number, number, number],
+    every: number,
+    render: string | null,
+    color: string | null,
+  ): Promise<TrackRun>;
 };
 
-/** What `trackVideo` found: each frame it looked at, and how long that took. */
+/**
+ * What `trackVideo` found: each frame it looked at and how long that took, and what it drew in
+ * every frame of the clip as the virtual camera's tracks (all zeros where it saw nothing).
+ */
 export type TrackRun = {
   frames: { frame: number; score: number; area: number; ms: number; outline: number[] }[];
   seen: number;
@@ -193,6 +205,9 @@ export type TrackRun = {
   every: number;
   medianMs: number;
   loadMs: number;
+  tracks: VideoTracks;
+  /** Where the drawn clip was written, with `render`. */
+  video?: string;
 };
 
 /** A pinned thing on the virtual camera's footage: which tracked thing, in what colour, named what. */
