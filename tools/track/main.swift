@@ -29,7 +29,8 @@
 //              its own) rather than moved whole; livewhole and livebendwhole taking each answer as
 //              it is rather than gliding into it; liveshift bent between answers but each late
 //              answer only moved on by how far the outline's middle has (LiveShape.take at 1x)
-//              (all from the same EdgeTAM looks)
+//              (all from the same EdgeTAM looks); livequick livebend on a phone that runs EdgeTAM
+//              in 35 ms and so looks at every frame (its own tracker)
 //   1x-*       the app's own 1x path at that timing: LiveShape (take, carry, draw) with the
 //              camera held still, so the flow carries all the picture's motion: 1x-whole moved
 //              whole between cuts (the app before bending), 1x-bend bent but a late cut only moved
@@ -584,6 +585,8 @@ final class EdgeLiveRunner: Runner {
   /// since its frame, then glided into what's shown (as LiveShape.take does at 1x), rather than
   /// bent there frame by frame like the outline.
   let shifts: Bool
+  /// The least time between looks (the app's: 50 ms, up to 20 a second).
+  let gap: Double
   private var flows: [Int: LiveFlow.Frame] = [:]
   private var pending: (frame: Int, ready: Double, cut: EdgeTAMTracker.Cut)?
   private var lastStart = -Double.infinity
@@ -591,8 +594,9 @@ final class EdgeLiveRunner: Runner {
   private var storedFrame = 0
 
   init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: LiveFlow.Bending? = nil, glides: Bool = true,
-       shifts: Bool = false) {
+       shifts: Bool = false, gap: Double = 0.05) {
     self.run = run
+    self.gap = gap
     self.latency = latency
     self.fps = fps
     self.bends = bends
@@ -652,7 +656,7 @@ final class EdgeLiveRunner: Runner {
         outline = stored
       }
       lastStart = t
-    } else if pending == nil, t - lastStart > 0.05, let picture = edgeFrame {
+    } else if pending == nil, t - lastStart > gap, let picture = edgeFrame {
       let cut = try run.cut(f, picture, box: seedBox)
       cuts += 1
       pending = (frame: f, ready: t + latency, cut: cut)
@@ -787,8 +791,12 @@ let runners = [
          bySpeed: true),
 ] + (edgeModels.flatMap { models -> [Runner]? in
   guard let a = try? EdgeTAMTracker(models: models), let b = try? EdgeTAMTracker(models: models),
-        let c = try? EdgeTAMTracker(models: models), let d = try? EdgeTAMTracker(models: models) else { return nil }
+        let c = try? EdgeTAMTracker(models: models), let d = try? EdgeTAMTracker(models: models),
+        let e = try? EdgeTAMTracker(models: models) else { return nil }
   let live = EdgeLiveRun(c)
+  // A phone that runs EdgeTAM in 35 ms, looking at every frame (its own tracker: looking more often
+  // changes what EdgeTAM remembers, which mustn't change the others' looks).
+  let quick = EdgeLiveRun(e)
   // LiveFlow.bend's settings tried next to its standard ones, from the same EdgeTAM looks.
   func bending(_ change: (inout LiveFlow.Bending) -> Void) -> LiveFlow.Bending {
     var how = LiveFlow.Bending.standard
@@ -808,6 +816,7 @@ let runners = [
     EdgeLiveRunner("livewhole", latency: 0.06, fps: fps, flow: flow, run: live, glides: false),
     EdgeLiveRunner("livebendwhole", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard, glides: false),
     EdgeLiveRunner("liveshift", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard, shifts: true),
+    EdgeLiveRunner("livequick", latency: 0.035, fps: fps, flow: flow, run: quick, bends: .standard, gap: 0.03),
     LiveShapeRunner("1x-whole", latency: 0.06, fps: fps, flow: flow, run: live, bends: false, forwardsBent: false),
     LiveShapeRunner("1x-bend", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: false),
     LiveShapeRunner("1x-bendfwd", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true),
