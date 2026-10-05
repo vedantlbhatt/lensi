@@ -30,6 +30,10 @@
 //              it is rather than gliding into it; liveshift bent between answers but each late
 //              answer only moved on by how far the outline's middle has (LiveShape.take at 1x)
 //              (all from the same EdgeTAM looks)
+//   1x-*       the app's own 1x path at that timing: LiveShape (take, carry, draw) with the
+//              camera held still, so the flow carries all the picture's motion: 1x-whole moved
+//              whole between cuts (the app before bending), 1x-bend bent but a late cut only moved
+//              on by how far the middle went, 1x-bendfwd a late cut bent along as the outline was
 //   (all only with the EdgeTAM models in LENSI_MODELS_DIR)
 //
 // With hand-drawn masks for every frame (DAVIS), each frame is scored: J (IoU with the mask),
@@ -653,6 +657,94 @@ final class EdgeLiveRunner: Runner {
   }
 }
 
+/// The app's 1x path (LensiARView.followEdge, flowLive, layoutLive) on the footage, LiveShape
+/// itself: EdgeTAM's answers at the phone's timing laid on a plane facing a camera that never
+/// moves (no ARKit here: all the picture's motion is the flow's to carry, as for a thing that
+/// moves) and taken in (LiveShape.take), the flow carrying it between (LiveShape.carry), and
+/// what's drawn eased onto it (LiveShape.draw).
+final class LiveShapeRunner: Runner {
+  let run: EdgeLiveRun
+  let latency: Double
+  let fps: Double
+  let bendsIt: Bool
+  let forwardsBent: Bool
+  private var camera: FrozenCamera?
+  private var shape: LiveShape?
+  private var flows: [Int: LiveFlow.Frame] = [:]
+  private var pending: (frame: Int, t: Double, ready: Double, cut: EdgeTAMTracker.Cut)?
+  private var lastStart = -Double.infinity
+
+  init(_ label: String, latency: Double, fps: Double, flow: PixelFlow, run: EdgeLiveRun, bends: Bool, forwardsBent: Bool) {
+    self.run = run
+    self.latency = latency
+    self.fps = fps
+    self.bendsIt = bends
+    self.forwardsBent = forwardsBent
+    super.init(label, tracking: true, smoothing: nil, every: 1, flow: flow, scaling: true)
+  }
+
+  override func step(_ f: Int, image: CGImage, sam: SAMSegmenter, scale: CGSize, seedBox: CGRect, seedPoint: CGPoint) throws -> [CGPoint]? {
+    let t = Double(f) / fps
+    if camera == nil {
+      // At the origin looking down -z, its upright picture the footage's frame (FrozenCamera's
+      // sensor is the upright picture turned: its width is the picture's height).
+      let w = Float(scale.height), h = Float(scale.width), focal = max(w, h)
+      camera = FrozenCamera(transform: matrix_identity_float4x4,
+                            intrinsics: simd_float3x3(simd_float3(focal, 0, 0), simd_float3(0, focal, 0), simd_float3(w / 2, h / 2, 1)),
+                            resolution: CGSize(width: CGFloat(w), height: CGFloat(h)))
+    }
+    guard let camera else { return nil }
+    if let current = flow?.current { flows[f] = current }
+    flows[f - 16] = nil
+    // Between cuts the flow carries it (LensiARView.carryLive); the camera never moves.
+    if var s = shape, let a = flows[f - 1], let b = flows[f] {
+      s.carry(from: a, camera, at: t - 1 / fps, to: b, camera, at: t)
+      shape = s
+    }
+    if let p = pending, p.ready <= t + 1e-9 {
+      pending = nil
+      if var s = shape {
+        if p.cut.visible {
+          let plane = camera.withPlane(through: OutlineMath.centre(s.world))
+          let laid = OutlineMath.resample(p.cut.outline, scale: scale).compactMap { plane.onPlane($0) }
+          if laid.count >= 3 { s.take(laid, at: p.t) }
+        } else {
+          s.misses += 1
+        }
+        shape = s
+      }
+    }
+    if f == 0, let picture = edgeFrame {
+      let cut = try run.cut(f, picture, box: seedBox)
+      cuts += 1
+      if cut.visible {
+        // Pinned a metre away: the camera never moves, so how far makes no difference.
+        let ring = OutlineMath.resample(cut.outline, scale: scale)
+        let (origin, dir) = camera.ray(LiveTracker.interiorPoint(ring, scale: scale))
+        let plane = camera.withPlane(through: origin + dir)
+        let laid = ring.compactMap { plane.onPlane($0) }
+        if laid.count == ring.count {
+          var s = LiveShape(world: laid, at: t, follows: true)
+          s.pinned = true
+          s.bends = bendsIt
+          s.forwardsBent = forwardsBent
+          shape = s
+        }
+      }
+      lastStart = t
+    } else if pending == nil, t - lastStart > 0.05, let picture = edgeFrame {
+      let cut = try run.cut(f, picture, box: seedBox)
+      cuts += 1
+      pending = (frame: f, t: t, ready: t + latency, cut: cut)
+      lastStart = t
+    }
+    guard var s = shape else { return nil }
+    let drawn = s.draw(at: t)
+    shape = s
+    return camera.upright(drawn)
+  }
+}
+
 let flow = PixelFlow()
 /// The footage's frame rate, for the runners that play it as the phone's camera.
 let fps = Double(ProcessInfo.processInfo.environment["TRACK_FPS"] ?? "") ?? 24
@@ -694,6 +786,9 @@ let runners = [
     EdgeLiveRunner("livewhole", latency: 0.06, fps: fps, flow: flow, run: live, glides: false),
     EdgeLiveRunner("livebendwhole", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard, glides: false),
     EdgeLiveRunner("liveshift", latency: 0.06, fps: fps, flow: flow, run: live, bends: .standard, shifts: true),
+    LiveShapeRunner("1x-whole", latency: 0.06, fps: fps, flow: flow, run: live, bends: false, forwardsBent: false),
+    LiveShapeRunner("1x-bend", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: false),
+    LiveShapeRunner("1x-bendfwd", latency: 0.06, fps: fps, flow: flow, run: live, bends: true, forwardsBent: true),
   ] + bendings.map { pair -> Runner in EdgeLiveRunner(pair.0, latency: 0.06, fps: fps, flow: flow, run: live, bends: pair.1) } + [
     EdgeLiveRunner("live100", latency: 0.1, fps: fps, flow: flow, run: EdgeLiveRun(d)),
   ]

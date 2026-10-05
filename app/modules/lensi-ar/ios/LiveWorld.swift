@@ -154,6 +154,12 @@ struct LiveShape {
   /// Between cuts the flow bends it with its thing (LiveFlow.bend); false: moves it whole
   /// (LiveFlow.carry), as before (tools/walk and tools/pin measure the two side by side).
   var bends = true
+  /// A cut that lands after the flow has moved on is brought along as the outline was, bent
+  /// with it (`carries`); false: only moved by how far its middle went (`moves`), as before.
+  var forwardsBent = true
+  /// What the flow did to it, frame by frame (capture times, the last second): its points before
+  /// each carry and after, so a late cut can be brought along the same way (`take`).
+  var carries: [(t: CFTimeInterval, from: [simd_float3], to: [simd_float3])] = []
   /// Still in the world, as last judged (`judge`): it starts still, counts as moving past
   /// LiveTracker.movingAbove and as still again under LiveTracker.stillBelow, so one noisy
   /// cut doesn't swap how it's asked about, blended and drawn.
@@ -221,8 +227,16 @@ struct LiveShape {
     var forwarded = fresh
     var at = t
     if seen > t {
-      let since = moves.filter { $0.t > t }.reduce(simd_float3.zero) { $0 + $1.by }
-      forwarded = fresh.map { $0 + since }
+      let after = carries.filter { $0.t > t }
+      if forwardsBent, !after.isEmpty {
+        // Bent along as the outline was: what's drawn now and the cut agree on the thing's shape
+        // as well as its place (at the phone's timing, tools/track's liveshift lost parkour from
+        // J 73% to 61% moving late answers only by how far the middle went).
+        forwarded = after.reduce(fresh) { LiveShape.warp($0, from: $1.from, to: $1.to) }
+      } else {
+        let since = moves.filter { $0.t > t }.reduce(simd_float3.zero) { $0 + $1.by }
+        forwarded = fresh.map { $0 + since }
+      }
       at = seen
     }
     let steadied = OutlineMath.steady(placed(at: at), forwarded, previous: lastChange, how)
@@ -416,6 +430,7 @@ struct LiveShape {
     if let d = drawn { drawn = d.map { origin + ($0 - origin) * f } }
     if let d = lastChange { lastChange = d.map { $0 * f } }
     moves = moves.map { (t: $0.t, by: $0.by * f) }
+    carries = carries.map { c in (t: c.t, from: c.from.map { origin + ($0 - origin) * f }, to: c.to.map { origin + ($0 - origin) * f }) }
     velocity *= f
   }
 
@@ -451,7 +466,37 @@ struct LiveShape {
     seen = tb
     moves.append((t: tb, by: by))
     moves.removeAll { tb - $0.t > 1 }
+    carries.append((t: tb, from: then, to: world))
+    carries.removeAll { tb - $0.t > 1 }
     return true
+  }
+
+  /// `points` moved as the outline `from` moved to `to` (the same points, in order): each by the
+  /// moves of the four of its points nearest it, weighted by nearness.
+  static func warp(_ points: [simd_float3], from: [simd_float3], to: [simd_float3]) -> [simd_float3] {
+    guard from.count == to.count, from.count >= 4 else { return points }
+    let deltas = zip(from, to).map { $1 - $0 }
+    return points.map { q in
+      var near: [(d: Float, i: Int)] = []
+      for (i, f) in from.enumerated() {
+        let d = simd_distance_squared(f, q)
+        if near.count < 4 {
+          near.append((d, i))
+          near.sort { $0.d < $1.d }
+        } else if d < near[3].d {
+          near[3] = (d, i)
+          near.sort { $0.d < $1.d }
+        }
+      }
+      var sum = simd_float3.zero
+      var weight: Float = 0
+      for n in near {
+        let w = 1 / max(n.d, 1e-10)
+        sum += deltas[n.i] * w
+        weight += w
+      }
+      return weight > 0 ? q + sum / weight : q
+    }
   }
 
   /// What to draw at `now`: eased onto where it is now rather than jumping when a cut lands;
