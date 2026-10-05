@@ -373,7 +373,13 @@ struct LiveShape {
     guard miss < LiveShape.sightMiss * range else { return false }
     let distance = simd_distance(crossing, origin)
     let now = simd_distance(OutlineMath.centre(world), origin)
-    if now > 0.05, abs(distance / now - 1) < LiveShape.depthAgrees { depthKnown = true }
+    guard now > 0.05 else { return false }
+    // Once they've agreed with where it is, they only move it again if they disagree by more: a
+    // big thing's middle on the picture is on its near face, so the lines cross a little in
+    // front of where it is, and following every crossing drew it slowly nearer (tools/walk).
+    let agrees = abs(distance / now - 1) < LiveShape.depthAgrees
+    if agrees, depthKnown { return false }
+    if agrees { depthKnown = true }
     setRange(distance, from: origin, weight: weight)
     return true
   }
