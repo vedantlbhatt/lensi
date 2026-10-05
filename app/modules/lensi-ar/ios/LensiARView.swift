@@ -350,7 +350,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     switch ProcessInfo.processInfo.thermalState {
     case .critical: gap = 0.6
     case .serious: gap = 0.25
-    default: gap = 0.08
+    // Only pinned things, followed by EdgeTAM (one encoder pass and a step each): up to 20 times
+    // a second, so what's drawn between its outlines (ARKit, the flow) has less to cover.
+    default: gap = edgeTAM != nil && !pins.values.contains(where: { $0.parentId == Self.guideParent }) ? 0.05 : 0.08
     }
     let pose = frame.camera.transform
     let moving = liveShapes.values.contains { simd_length($0.velocity) >= 0.02 }
