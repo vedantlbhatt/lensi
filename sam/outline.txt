@@ -1,0 +1,2 @@
+outline: line 5 px near, 5 px far; inside (r: 157, g: 129, b: 118), notch (r: 127, g: 127, b: 127), halo (r: 106, g: 106, b: 106)
+outline: ok (/Users/runner/work/lensi/lensi/out/outline/outline.png)

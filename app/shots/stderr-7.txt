@@ -1,0 +1,7 @@
+2026-10-06 14:29:45.715 Lensi[60133:152524] You've implemented -[<UIApplicationDelegate> application:performFetchWithCompletionHandler:], but you still need to add "fetch" to the list of your supported UIBackgroundModes in your Info.plist.
+2026-10-06 14:29:45.716 Lensi[60133:152524] You've implemented -[<UIApplicationDelegate> application:didReceiveRemoteNotification:fetchCompletionHandler:], but you still need to add "remote-notification" to the list of your supported UIBackgroundModes in your Info.plist.
+2026-10-06 14:29:45.716 Lensi[60133:152524] _setUpFeatureFlags called with release level 2
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+W1006 14:29:48.212149 1873866752 ReactInstance.cpp:267] ReactInstance: evaluateJavaScript() with JS bundle
+I1006 14:29:48.464094 1873866752 UIManagerBinding.cpp:143] instanceHandle is null, event of type topLayout will be dropped
+2026-10-06 14:29:52.766 Lensi[60133:152524] Warning: -[UITextInteractionAssistant selectionView] now returns nil with redesigned_text_cursor=on.

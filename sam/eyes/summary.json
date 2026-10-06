@@ -1,0 +1,167 @@
+[
+  {
+    "image" : "board",
+    "instances" : 0,
+    "labels" : "circuit board, machine",
+    "ms" : 2240,
+    "objects" : "",
+    "parts" : "",
+    "proposals" : "0.98 0.95 0.94 0.92 0.85 0.85 0.83 0.81",
+    "subject" : "none",
+    "text" : ""
+  },
+  {
+    "image" : "cars",
+    "instances" : 1,
+    "labels" : "outdoor, sky, machine",
+    "ms" : 1063,
+    "objects" : "car, truck, car",
+    "parts" : "sam:25 sam:25 sam:24",
+    "proposals" : "1.00 0.98 0.97 0.95 0.92 0.88 0.87 0.84",
+    "subject" : "64 pts",
+    "text" : ""
+  },
+  {
+    "image" : "fruits",
+    "instances" : 1,
+    "labels" : "food, fruit, citrus fruit",
+    "ms" : 873,
+    "objects" : "orange, orange",
+    "parts" : "sam:14 sam:65",
+    "proposals" : "1.00 0.99 0.99 0.98 0.97 0.96 0.91 0.82",
+    "subject" : "49 pts",
+    "text" : ""
+  },
+  {
+    "image" : "groceries",
+    "instances" : 1,
+    "labels" : "container, bag, luggage",
+    "ms" : 698,
+    "objects" : "",
+    "parts" : "",
+    "proposals" : "0.99 0.99 0.97 0.97 0.95 0.91 0.89 0.83",
+    "subject" : "51 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-bookresearch_segment-anything_main_notebooks_images_dog",
+    "instances" : 1,
+    "labels" : "animal, mammal, canine",
+    "ms" : 886,
+    "objects" : "dog, person, bowl",
+    "parts" : "sam:23 sam:29 sam:15",
+    "proposals" : "1.00 0.97 0.96 0.87 0.84",
+    "subject" : "48 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-facebookresearch_sam2_main_notebooks_images_cars",
+    "instances" : 1,
+    "labels" : "outdoor, sky, machine",
+    "ms" : 1100,
+    "objects" : "truck, car, truck",
+    "parts" : "sam:25 sam:39 sam:39",
+    "proposals" : "1.00 1.00 0.99 0.98 0.96 0.92 0.90 0.89",
+    "subject" : "110 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-okresearch_segment-anything_main_notebooks_images_truck",
+    "instances" : 1,
+    "labels" : "machine, wheel, tire",
+    "ms" : 936,
+    "objects" : "truck",
+    "parts" : "sam:29",
+    "proposals" : "1.01 0.99 0.98 0.96 0.95 0.93 0.90 0.81",
+    "subject" : "77 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-opencv_opencv_4.x_samples_data_board",
+    "instances" : 0,
+    "labels" : "circuit board, machine",
+    "ms" : 1019,
+    "objects" : "clock, clock",
+    "parts" : "sam:23 sam:18",
+    "proposals" : "0.96 0.92 0.91",
+    "subject" : "22 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-opencv_opencv_4.x_samples_data_imageTextN",
+    "instances" : 0,
+    "labels" : "document, printed page, screenshot",
+    "ms" : 1169,
+    "objects" : "",
+    "parts" : "",
+    "proposals" : "0.97 0.95 0.95 0.94 0.93 0.90 0.87 0.82",
+    "subject" : "none",
+    "text" : ""
+  },
+  {
+    "image" : "public-pjreddie_darknet_master_data_dog",
+    "instances" : 1,
+    "labels" : "machine, vehicle, bicycle",
+    "ms" : 886,
+    "objects" : "bicycle, dog, truck, car",
+    "parts" : "sam:48 sam:40 sam:35",
+    "proposals" : "0.99 0.95 0.95 0.94 0.89 0.88 0.83",
+    "subject" : "58 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-pjreddie_darknet_master_data_kite",
+    "instances" : 2,
+    "labels" : "recreation, sport, watersport",
+    "ms" : 978,
+    "objects" : "kite, kite, person, person, person, kite, person, kite, kite, kite, person, person, person, person",
+    "parts" : "sam:52 sam:17 sam:21",
+    "proposals" : "0.98 0.93 0.91 0.82",
+    "subject" : "25 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-search_segment-anything_main_notebooks_images_groceries",
+    "instances" : 1,
+    "labels" : "container, luggage, bag",
+    "ms" : 716,
+    "objects" : "car",
+    "parts" : "sam:14",
+    "proposals" : "0.97 0.97 0.97 0.96 0.95 0.94 0.92 0.91",
+    "subject" : "44 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-ultralytics_ultralytics_main_ultralytics_assets_bus",
+    "instances" : 1,
+    "labels" : "people, adult, structure",
+    "ms" : 776,
+    "objects" : "bus, person, person, person, person",
+    "parts" : "sam:15 sam:29 sam:20",
+    "proposals" : "0.99 0.99 0.97 0.97 0.97 0.96 0.92 0.84",
+    "subject" : "126 pts",
+    "text" : ""
+  },
+  {
+    "image" : "public-xing_master_core_src_test_resources_blackbox_qrcode-1_1",
+    "instances" : 1,
+    "labels" : "art, illustrations",
+    "ms" : 905,
+    "objects" : "",
+    "parts" : "",
+    "proposals" : "0.98 0.81",
+    "subject" : "103 pts",
+    "text" : ""
+  },
+  {
+    "image" : "truck",
+    "instances" : 1,
+    "labels" : "machine, wheel, tire",
+    "ms" : 912,
+    "objects" : "truck",
+    "parts" : "sam:24",
+    "proposals" : "1.00 0.99 0.97 0.93 0.87 0.85 0.83",
+    "subject" : "48 pts",
+    "text" : ""
+  }
+]

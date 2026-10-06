@@ -1,0 +1,50 @@
+14:25:54 launch #1 camera -> com.vedantbhatt.lensi: 50306
+14:26:09 alive after 01-camera (pid 50306)
+14:26:12 data container: /Users/runner/Library/Developer/CoreSimulator/Devices/D0C5663B-4C66-49A4-A739-BCB205C615B4/data/Containers/Data/Application/E9B8C181-9D73-420B-9DCF-A352C6F40DB7
+14:26:13 stock classroom  13M
+14:26:14 stock bottle-detection 496K
+14:26:14 stock worker-zone-detection  12M
+14:26:15 stock store-aisle-detection 8.8M
+14:26:18 launch #2 lensi:///?demo=cars&brain=vision -> com.vedantbhatt.lensi: 51172
+14:26:59 alive after 02-cars (pid 51172)
+14:27:09 launch #3 lensi:///?demo=cars&brain=vision&tap=0.3,0.33 -> com.vedantbhatt.lensi: 52982
+14:27:45 alive after 03-tap (pid 52982)
+14:27:49 launch #4 lensi:///?demo=board&lens=learn&brain=vision -> com.vedantbhatt.lensi: 54793
+14:28:15 alive after 04-board (pid 54793)
+14:28:28 launch #5 lensi:///?demo=truck&lens=guide&brain=vision&ask=How%20do%20I%20check%20the%20tyre%20pressure%3F -> com.vedantbhatt.lensi: 55791
+14:28:55 alive after 05-guide (pid 55791)
+14:28:59 launch #6 lensi:///?file=classroom.mp4&lens=learn&brain=vision&ask=How%20many%20people%20are%20there%3F -> com.vedantbhatt.lensi: 58021
+14:29:38 alive after 06-stock-classroom (pid 58021)
+14:29:43 launch #7 lensi:///?file=bottle-detection.mp4&lens=identify&brain=vision&moment=0 -> com.vedantbhatt.lensi: 60133
+14:30:21 alive after 07-stock-bottle-detection (pid 60133)
+14:30:25 launch #8 lensi:///?file=worker-zone-detection.mp4&lens=safe&brain=vision&moment=2 -> com.vedantbhatt.lensi: 61685
+14:31:02 alive after 08-stock-worker-zone-detection (pid 61685)
+14:31:10 launch #9 lensi:///?file=store-aisle-detection.mp4&lens=shop&brain=vision&moment=2 -> com.vedantbhatt.lensi: 62278
+14:31:48 alive after 09-stock-store-aisle-detection (pid 62278)
+14:31:53 launch #10 lensi:///?scene=truck&guide=How%20do%20I%20check%20the%20tyre%20pressure%3F -> com.vedantbhatt.lensi: 64159
+14:32:36 alive after 10-live-guide (pid 64159)
+14:32:41 launch #11 lensi:///?scene=cars&scrub=0.05,0.35,0.6 -> com.vedantbhatt.lensi: 66229
+14:32:59 alive after 10c-slide-to-pin (pid 66229)
+14:33:03 launch #12 lensi:///?scene=aisle&scrub=0.05,0.6,0.88 -> com.vedantbhatt.lensi: 67174
+14:33:42 alive after 10f-slide-to-pin-video (pid 67174)
+14:33:55 launch #13 lensi:///?scene=shaker&scrub=0.3,0.5 -> com.vedantbhatt.lensi: 68777
+14:34:33 alive after 10g-slide-to-pin-shaker (pid 68777)
+14:34:36 launch #14 lensi:///?scene=shaker&edgetam=shaker&scrub=0.3,0.5 -> com.vedantbhatt.lensi: 70579
+14:42:41 EdgeTAM in the app: waited 484 s
+14:43:11 alive after 10h-edgetam-in-app (pid 70579)
+14:43:11 EdgeTAM in the app: followed in 267 of 267 frames (every 0), median 1627 ms a frame, models loaded in 2100 ms
+14:43:17 launch #15 lensi:///?scene=truck&zoom=2.7 -> com.vedantbhatt.lensi: 82516
+14:43:31 alive after 10d-zoom-dial (pid 82516)
+14:43:35 launch #16 lensi:///?scene=cars&ota=1 -> com.vedantbhatt.lensi: 83351
+14:44:24 alive after 10e-over-the-air (pid 83351)
+14:44:30 launch #17 lensi:///?scene=cars -> com.vedantbhatt.lensi: 85379
+14:44:43 alive after 10e2-over-the-air-relaunch (pid 85379)
+14:44:53 over the air, cold start: 2026-10-06 14:44:35.103 Df Lensi[85379:34e4f] (Foundation) [lensi] over the air: starting from update 08c609c275a1593d8c61c06e511012d11978a7e2
+14:45:11 mock server: {"ok":true,"provider":"mock","model":"mock"}
+14:45:19 launch #18 lensi:///?scene=truck&brain=cloud&guide=How%20do%20I%20check%20the%20tyre%20pressure%3F -> com.vedantbhatt.lensi: 87059
+14:46:20 alive after 10b-live-guide-server (pid 87059)
+14:46:27 launch #19 lensi:///?memories=1 -> com.vedantbhatt.lensi: 89286
+14:46:45 alive after 11-memories (pid 89286)
+14:46:47 launch #20 lensi:///?demo=cars&export=1&brain=auto -> com.vedantbhatt.lensi: 90072
+14:47:39 alive after export (pid 90072)
+14:47:41 share images: 1

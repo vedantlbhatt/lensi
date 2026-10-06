@@ -1,0 +1,15 @@
+loaded models in 0.9s (compute units CPU_ONLY)
+
+bus: encoder 211 ms; embedding probes max|diff| 0.0066 (reference |max| 0.297)
+  ok   person left                    mask 2: IoU64 1.0000 (all [1.0, 1.0, 1.0, 1.0]), max|d score| 0.0024, decoder 14 ms
+  ok   person middle                  mask 3: IoU64 1.0000 (all [1.0, 1.0, 0.982, 1.0]), max|d score| 0.0015, decoder 12 ms
+  ok   bus box                        mask 0: IoU64 0.9978 (all [0.998, 0.998, 1.0, 0.997]), max|d score| 0.0019, decoder 13 ms
+  ok   bus: two points                mask 0: IoU64 0.9978 (all [0.998, 0.933, 0.976, 0.997]), max|d score| 0.0075, decoder 12 ms
+
+truck: encoder 203 ms; embedding probes max|diff| 0.0060 (reference |max| 0.334)
+  ok   window                         mask 1: IoU64 0.9655 (all [1.0, 0.966, 1.0, 1.0]), max|d score| 0.0012, decoder 12 ms
+  ok   door                           mask 2: IoU64 1.0000 (all [1.0, 1.0, 1.0, 1.0]), max|d score| 0.0029, decoder 12 ms
+  ok   wheel box                      mask 0: IoU64 1.0000 (all [1.0, 1.0, 1.0, 0.982]), max|d score| 0.0007, decoder 11 ms
+  ok   tyre: box + bg point on hub    mask 0: IoU64 1.0000 (all [1.0, 1.0, 1.0, 1.0]), max|d score| 0.0025, decoder 11 ms
+
+all fixtures passed

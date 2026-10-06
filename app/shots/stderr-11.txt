@@ -1,0 +1,5 @@
+2026-10-06 14:32:46.333 Lensi[66229:169478] You've implemented -[<UIApplicationDelegate> application:performFetchWithCompletionHandler:], but you still need to add "fetch" to the list of your supported UIBackgroundModes in your Info.plist.
+2026-10-06 14:32:46.333 Lensi[66229:169478] You've implemented -[<UIApplicationDelegate> application:didReceiveRemoteNotification:fetchCompletionHandler:], but you still need to add "remote-notification" to the list of your supported UIBackgroundModes in your Info.plist.
+2026-10-06 14:32:46.334 Lensi[66229:169478] _setUpFeatureFlags called with release level 2
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+W1006 14:32:50.400171 1811771392 ReactInstance.cpp:267] ReactInstance: evaluateJavaScript() with JS bundle

@@ -1,0 +1,7 @@
+2026-10-06 14:45:22.859 Lensi[87059:221024] You've implemented -[<UIApplicationDelegate> application:performFetchWithCompletionHandler:], but you still need to add "fetch" to the list of your supported UIBackgroundModes in your Info.plist.
+2026-10-06 14:45:22.859 Lensi[87059:221024] You've implemented -[<UIApplicationDelegate> application:didReceiveRemoteNotification:fetchCompletionHandler:], but you still need to add "remote-notification" to the list of your supported UIBackgroundModes in your Info.plist.
+2026-10-06 14:45:22.861 Lensi[87059:221024] _setUpFeatureFlags called with release level 2
+2026-10-06 14:45:22.940 Lensi[87059:221024] [lensi] over the air: starting from update 08c609c275a1593d8c61c06e511012d11978a7e2
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+W1006 14:45:26.676028 1845374976 ReactInstance.cpp:267] ReactInstance: evaluateJavaScript() with JS bundle
+I1006 14:45:30.199930 1845374976 UIManagerBinding.cpp:143] instanceHandle is null, event of type topMomentumScrollEnd will be dropped

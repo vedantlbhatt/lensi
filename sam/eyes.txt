@@ -1,0 +1,26 @@
+IOServiceMatchingfailed for: AppleM2ScalerParavirtDriver
+SAM models: loaded
+["labels": "circuit board, machine", "parts": "", "objects": "", "text": "", "proposals": "0.98 0.95 0.94 0.92 0.85 0.85 0.83 0.81", "image": "board", "ms": 2240, "subject": "none", "instances": 0]
+["subject": "64 pts", "labels": "outdoor, sky, machine", "instances": 1, "text": "", "objects": "car, truck, car", "parts": "sam:25 sam:25 sam:24", "proposals": "1.00 0.98 0.97 0.95 0.92 0.88 0.87 0.84", "image": "cars", "ms": 1063]
+["text": "", "ms": 873, "subject": "49 pts", "proposals": "1.00 0.99 0.99 0.98 0.97 0.96 0.91 0.82", "instances": 1, "image": "fruits", "objects": "orange, orange", "labels": "food, fruit, citrus fruit", "parts": "sam:14 sam:65"]
+["text": "", "subject": "51 pts", "ms": 698, "objects": "", "labels": "container, bag, luggage", "parts": "", "image": "groceries", "proposals": "0.99 0.99 0.97 0.97 0.95 0.91 0.89 0.83", "instances": 1]
+["image": "public-bookresearch_segment-anything_main_notebooks_images_dog", "subject": "48 pts", "instances": 1, "labels": "animal, mammal, canine", "proposals": "1.00 0.97 0.96 0.87 0.84", "ms": 886, "objects": "dog, person, bowl", "text": "", "parts": "sam:23 sam:29 sam:15"]
+["labels": "outdoor, sky, machine", "image": "public-facebookresearch_sam2_main_notebooks_images_cars", "parts": "sam:25 sam:39 sam:39", "subject": "110 pts", "proposals": "1.00 1.00 0.99 0.98 0.96 0.92 0.90 0.89", "objects": "truck, car, truck", "ms": 1100, "instances": 1, "text": ""]
+["subject": "77 pts", "text": "", "parts": "sam:29", "image": "public-okresearch_segment-anything_main_notebooks_images_truck", "ms": 936, "instances": 1, "proposals": "1.01 0.99 0.98 0.96 0.95 0.93 0.90 0.81", "labels": "machine, wheel, tire", "objects": "truck"]
+["image": "public-opencv_opencv_4.x_samples_data_board", "proposals": "0.96 0.92 0.91", "labels": "circuit board, machine", "subject": "22 pts", "text": "", "objects": "clock, clock", "parts": "sam:23 sam:18", "ms": 1019, "instances": 0]
+["image": "public-opencv_opencv_4.x_samples_data_imageTextN", "objects": "", "labels": "document, printed page, screenshot", "instances": 0, "parts": "", "subject": "none", "proposals": "0.97 0.95 0.95 0.94 0.93 0.90 0.87 0.82", "text": "", "ms": 1169]
+["subject": "58 pts", "ms": 886, "objects": "bicycle, dog, truck, car", "image": "public-pjreddie_darknet_master_data_dog", "labels": "machine, vehicle, bicycle", "parts": "sam:48 sam:40 sam:35", "instances": 1, "proposals": "0.99 0.95 0.95 0.94 0.89 0.88 0.83", "text": ""]
+["proposals": "0.98 0.93 0.91 0.82", "subject": "25 pts", "instances": 2, "objects": "kite, kite, person, person, person, kite, person, kite, kite, kite, person, person, person, person", "labels": "recreation, sport, watersport", "ms": 978, "text": "", "parts": "sam:52 sam:17 sam:21", "image": "public-pjreddie_darknet_master_data_kite"]
+["ms": 716, "text": "", "proposals": "0.97 0.97 0.97 0.96 0.95 0.94 0.92 0.91", "objects": "car", "labels": "container, luggage, bag", "subject": "44 pts", "image": "public-search_segment-anything_main_notebooks_images_groceries", "parts": "sam:14", "instances": 1]
+["parts": "sam:15 sam:29 sam:20", "image": "public-ultralytics_ultralytics_main_ultralytics_assets_bus", "instances": 1, "labels": "people, adult, structure", "subject": "126 pts", "objects": "bus, person, person, person, person", "text": "", "ms": 776, "proposals": "0.99 0.99 0.97 0.97 0.97 0.96 0.92 0.84"]
+["ms": 905, "objects": "", "text": "", "proposals": "0.98 0.81", "image": "public-xing_master_core_src_test_resources_blackbox_qrcode-1_1", "instances": 1, "labels": "art, illustrations", "parts": "", "subject": "103 pts"]
+["parts": "sam:24", "ms": 912, "image": "truck", "proposals": "1.00 0.99 0.97 0.93 0.87 0.85 0.83", "labels": "machine, wheel, tire", "subject": "48 pts", "objects": "truck", "instances": 1, "text": ""]
+live path 420f: mean IoU 0.982, worst 0.909 over 15 prompts; encode 182 ms (photo path 176 ms)
+live path bgra: mean IoU 0.982, worst 0.909 over 15 prompts; encode 214 ms (photo path 176 ms)
+outline math: ok
+tracker: ok
+shape: ok
+depth: ok
+flow: public-okresearch_segment-anything_main_notebooks_images_truck.jpg moved -9, 5 px is carried -9.00, 5.00 px (area x1.000) in 1.7 ms
+flow: public-okresearch_segment-anything_main_notebooks_images_truck.jpg moved 17, -11 px is carried 17.00, -11.00 px (area x1.000) in 1.7 ms
+camera: ok (cast and seen again within 0.0008 px)
