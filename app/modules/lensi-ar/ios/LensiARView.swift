@@ -774,8 +774,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// Those it can't bring on stay as they were.
   private func bringOn(_ found: [String: LiveCut], asked: [LivePrompt], from buffer: CVPixelBuffer, at t: CFTimeInterval) -> [String: LiveCut] {
     guard found.values.contains(where: { $0.ring != nil }) else { return found }
-    let since = flowQueue.sync { flowRecent.filter { $0.t > t + 1e-4 } }
-    guard let last = since.last, let start = Self.flowFrame(buffer, context: bringContext) else { return found }
+    // The frames since, and the flow's own copy of the frame looked at if it made one.
+    let (since, own) = flowQueue.sync { (flowRecent.filter { $0.t > t + 1e-4 }, flowRecent.first { abs($0.t - t) < 1e-4 }?.frame) }
+    guard let last = since.last, let start = own ?? Self.flowFrame(buffer, context: bringContext) else { return found }
     var out = found
     for (key, cut) in found {
       guard let ring = cut.ring, let anchor = asked.first(where: { $0.key == key })?.anchor else { continue }
