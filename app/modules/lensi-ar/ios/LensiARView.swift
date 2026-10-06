@@ -922,7 +922,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         continue
       }
       // Turned to face the phone where it is now, as the thing's silhouette does (LiveShape.faces).
-      shape.face(simd_make_float3(eye.transform.columns.3))
+      shape.face(eye.position)
       let drawn = shape.draw(at: now)
       liveShapes[key] = shape
       guard let box = screenBounds(drawn, toCamera: eye.toCamera) else {
