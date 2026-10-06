@@ -95,10 +95,15 @@ enum LiveTracker {
     let side = max(scale.width, scale.height)
     let gap = { (a: CGPoint, b: CGPoint) in hypot((a.x - b.x) * scale.width, (a.y - b.y) * scale.height) / side }
     // Nearest first: the cut reaches the edge where `whole` leaves the picture, and leaves it where
-    // `whole` comes back (both run the same way round).
+    // `whole` comes back (both run the same way round). Only along the same edges: off a corner, a cut
+    // along one edge and `whole` out past the other don't meet, and joined they'd draw a line along
+    // the picture's edge.
+    let sides = edgeRuns.map { r in Set((r.0...r.1).map { side(c($0)) }) }
     var pairs: [(cost: CGFloat, e: Int, o: Int)] = []
     for (e, r) in edgeRuns.enumerated() {
-      for (o, x) in out.enumerated() { pairs.append((gap(c(r.0), x.leaves) + gap(c(r.1), x.returns), e, o)) }
+      for (o, x) in out.enumerated() where sides[e].contains(side(x.leaves)) && sides[e].contains(side(x.returns)) {
+        pairs.append((gap(c(r.0), x.leaves) + gap(c(r.1), x.returns), e, o))
+      }
     }
     var matched: [Int: Int] = [:]
     var used = Set<Int>()
@@ -174,13 +179,19 @@ enum LiveTracker {
     return CGPoint(x: p.x + dx * t, y: p.y + dy * t)
   }
 
+  /// Which of the picture's edges a point is nearest: 0 the top, 1 the right, 2 the bottom, 3 the left.
+  private static func side(_ p: CGPoint) -> Int {
+    let x = min(max(p.x, 0), 1), y = min(max(p.y, 0), 1)
+    let nearest = [y, 1 - x, 1 - y, x]
+    return nearest.firstIndex(of: nearest.min()!)!
+  }
+
   /// The picture's corners passed going from `p` to `q` (both on its edge) the shorter way round.
   private static func border(from p: CGPoint, to q: CGPoint) -> [CGPoint] {
     // How far round the edge: 0 at the top left, 1 at the top right, 2 bottom right, 3 bottom left.
     func around(_ p: CGPoint) -> CGFloat {
       let x = min(max(p.x, 0), 1), y = min(max(p.y, 0), 1)
-      let nearest = [y, 1 - x, 1 - y, x]
-      switch nearest.firstIndex(of: nearest.min()!)! {
+      switch side(p) {
       case 0: return x
       case 1: return 1 + y
       case 2: return 2 + (1 - x)
