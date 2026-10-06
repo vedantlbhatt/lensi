@@ -203,12 +203,14 @@ The app's 0.5x on an iPhone 17 swaps cameras in an instant: the same thing is su
 
 Up close the thing runs off the picture, which on these walk-arounds is 1573 of 1800 frames, and each of EdgeTAM's cuts of the part on it used to move and scale the whole outline, which kept the shape it had when the thing was last seen whole: going round it, the outline stayed that old shape, skewed, until the phone stopped and the thing was seen whole again (`scene-44358435-splice.mp4`: a cabinet's outline turns into a wedge as the phone comes close). Now the part on the picture is EdgeTAM's own cut, and only what's off it is the whole outline moved (`LiveTracker.spliced`: each stretch of the cut along the picture's edge gives way to the stretch of the whole outline that goes out past it there). While the phone goes round a still thing (over 0.3 rad/s or 10 cm/s) its cuts are blended in lightly, as its outline really changes with the view then, and held down hard once the phone stops. In one run, with one EdgeTAM for every variant:
 
-| 1x, pinned 40% too far | J | lost | slip |
-|---|---|---|---|
-| before | 79.4% | 2.8% | 2.9 px |
-| EdgeTAM's own cut on the picture (`edgesp@far`) | 82.1% | 2.9% | 3.3 px |
-| and blended lightly while the phone moves (the app) | 83.1% | 2.9% | 3.3 px |
-| 0.5x's `FlatFollower` on the same frames, for scale | 84.4% | 2.6% | 4.2 px |
+| 1x, pinned 40% too far | J | lost | slip | lurch |
+|---|---|---|---|---|
+| before | 79.4% | 2.9% | 2.6 px | 2.5 px |
+| EdgeTAM's own cut on the picture (`edgesp@far`) | 82.1% | 2.9% | 3.3 px | 4.1 px |
+| and blended lightly while the phone moves (the app) | 83.1% | 3.0% | 3.6 px | 4.4 px |
+| 0.5x's `FlatFollower` on the same frames, for scale | 84.4% | 2.7% | 4.5 px | 6.8 px |
+
+(Slip and lurch go by the whole outline's middle, which up close is partly off the picture: on what's on the picture alone, slip went from 2.9 to 3.3 px.)
 
 The splice was better on seven walk-arounds and the same on one (the cabinet went from 68.9%, lost in 19% of frames, to 82.8%, lost in 2%); a washer fell from 79.8% to 73.6%, where EdgeTAM itself cut only a sliver of it (0.5x is lost there too). Blending lightly while moving was better than the splice alone on all nine, and on a stretch going round a table wholly in view (`WALK_MODE=orbit`) took J from 71.2% to 75.3%. Bringing each answer on to the newest frame by the flow before laying it (`edgenow@far`, `LensiARView.bringsForward`) helped going round the table (75.8%) but not on the walk-arounds (79.0%), and stays off; so does turning the outline to face the phone as it goes round (`LiveShape.faces`: on the walk-arounds 74.5% against 78.0%, a sink up close 75.9% to 50.8%).
 
