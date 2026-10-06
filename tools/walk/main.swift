@@ -49,7 +49,8 @@
 //   edgefc@far   edge@far with the outline turned to face the camera as it goes round (LiveShape.faces)
 //                rather than left a flat card laid where it was cut, which foreshortens and skews seen
 //                from further round; edgefs@far that and a still thing's cuts blended as a moving
-//                one's; edgefc@true at its true depth; appfc@far SAM's guide parts turned so
+//                one's; edgefc@true at its true depth; appfc@far SAM's guide parts turned so;
+//                edgefp@far edgefc@far with each cut laid square to the line of sight
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -616,6 +617,9 @@ final class Run {
   let stillEase: Float?
   /// Its outline turns to face the camera (LiveShape.faces) rather than staying a card laid where it was cut.
   let faces: Bool
+  /// EdgeTAM's cuts laid square to the line of sight (FrozenCamera.withSightPlane), as a facing
+  /// outline stands, rather than square to where the camera points.
+  let sightPlane: Bool
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var tracker: EdgeTAMTracker?
@@ -631,9 +635,10 @@ final class Run {
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
-       faces: Bool = false) {
+       faces: Bool = false, sightPlane: Bool = false) {
     self.label = label
     self.faces = faces
+    self.sightPlane = sightPlane
     self.whole = whole
     self.skipBlur = skipBlur
     self.guided = guided
@@ -678,6 +683,7 @@ let runs = [
   Run("edgefs@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .standard, faces: true),
   Run("edgefc@true", start: 1, noflow: true, sight: true, edge: true, faces: true),
   Run("appfc@far", start: 1.4, faces: true),
+  Run("edgefp@far", start: 1.4, noflow: true, sight: true, edge: true, faces: true, sightPlane: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   // Settled: bent rather than moved whole (edgew), blurred cuts left out (edgeb), the flow guided by
   // the poses (edgeg). Their switches stay for another look.
@@ -969,7 +975,7 @@ for (k, f) in window.enumerated() {
             }
           }
           if taken {
-            let plane = camera.withPlane(through: OutlineMath.centre(now))
+            let plane = run.sightPlane ? camera.withSightPlane(through: OutlineMath.centre(now)) : camera.withPlane(through: OutlineMath.centre(now))
             let laid = ring.compactMap { plane.onPlane($0) }
             if laid.count == ring.count { world = laid }
             if run.lidar, let lidarMap { depth = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) }
