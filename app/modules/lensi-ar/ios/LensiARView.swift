@@ -1201,7 +1201,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// glided into what was shown on this frame and brought on to the newest (FlatFollower), for
   /// drawing (`layoutWide`).
   private func wideFrame(_ buffer: CVPixelBuffer, at t: CFTimeInterval) {
-    guard wideMode, liveSegments, !samBusy, !scrubBusy, let edge = edgeTAM, t - lastWideTime > 0.05 else { return }
+    // Up to 20 looks a second; fewer once the phone runs hot, as at 1x (`segmentLive`).
+    let gap: CFTimeInterval
+    switch ProcessInfo.processInfo.thermalState {
+    case .critical: gap = 0.6
+    case .serious: gap = 0.25
+    default: gap = 0.05
+    }
+    guard wideMode, liveSegments, !samBusy, !scrubBusy, let edge = edgeTAM, t - lastWideTime > gap else { return }
     let held = pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) }
     guard !held.isEmpty else { return }
     samBusy = true

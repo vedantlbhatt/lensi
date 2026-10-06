@@ -860,14 +860,21 @@ final class FlatRun {
   let follower = FlatFollower()
   /// Its frames go to the follower (the flow can bend it).
   let flow: Bool
+  /// EdgeTAM looks at every frame and answers a frame later (flat-every), rather than every other
+  /// frame two frames later.
+  let everyFrame: Bool
+  /// The answer on its way: about frame `t`, landing at frame `due`.
+  var pending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
+  var cuts = 0
   var shown: [[CGPoint]] = []
   var j: [Double] = []
   var onBox: [Double] = []
   var middles: [CGPoint?] = []
 
-  init(_ label: String, flow: Bool, gyro: Bool, fast: Bool = false, guided: Bool = false) {
+  init(_ label: String, flow: Bool, gyro: Bool, fast: Bool = false, guided: Bool = false, everyFrame: Bool = false) {
     self.label = label
     self.flow = flow
+    self.everyFrame = everyFrame
     follower.guided = guided
     if gyro {
       follower.turn = { points, a, b in
@@ -890,6 +897,8 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
   FlatRun("flat-none", flow: false, gyro: false),
   FlatRun("flat-gyro", flow: false, gyro: true),
   FlatRun("flat-flow", flow: true, gyro: true),
+  // EdgeTAM looking at every frame, answering a frame later.
+  FlatRun("flat-every", flow: true, gyro: true, everyFrame: true),
   // Settled, no different from flat-flow in two runs: the gyro while turning fast (flat-fast), the
   // gyro telling the flow where to look (flat-guide).
 ]
@@ -898,9 +907,7 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
 var edgeTracker: EdgeTAMTracker?
 /// The same, looking at every frame (`Run.everyFrame`).
 var edgeTrackerEvery: EdgeTAMTracker?
-let edgeEveryFrame = runs.contains { $0.everyFrame }
-var flatPending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
-var flatCuts = 0
+let edgeEveryFrame = runs.contains { $0.everyFrame } || flatRuns.contains { $0.everyFrame }
 
 var reference: [[CGPoint]] = []
 var boxMiddles: [CGPoint?] = []
@@ -1217,19 +1224,24 @@ for (k, f) in window.enumerated() {
   if !flatRuns.isEmpty {
     flatCameras[t] = camera
     flatCameras = flatCameras.filter { t - $0.key < 3 }
-    for run in flatRuns { run.follower.add(run.flow ? flowFrame : nil, at: t) }
-    if let p = flatPending, p.due <= k {
-      flatPending = nil
-      let ring: [CGPoint]? = p.cut.visible ? OutlineMath.resample(p.cut.outline, scale: size) : nil
-      for run in flatRuns { run.follower.answer(["": ring], at: p.t, size: size) }
+    for run in flatRuns {
+      run.follower.add(run.flow ? flowFrame : nil, at: t)
+      if let p = run.pending, p.due <= k {
+        run.pending = nil
+        let ring: [CGPoint]? = p.cut.visible ? OutlineMath.resample(p.cut.outline, scale: size) : nil
+        run.follower.answer(["": ring], at: p.t, size: size)
+      }
     }
     if k == 0 {
       // Pinned from the strip: its cut is there at once, and EdgeTAM starts from its box.
       if edgeTracker != nil { for run in flatRuns { run.follower.place("", truth, at: t) } }
-    } else if flatPending == nil, let cut = edgeCut {
-      flatCuts += 1
-      flatPending = (due: k + latency, t: t, cut: cut)
-      for run in flatRuns { run.follower.looking(at: t) }
+    } else {
+      for run in flatRuns where run.pending == nil {
+        guard let cut = run.everyFrame ? edgeCutEvery : edgeCut else { continue }
+        run.cuts += 1
+        run.pending = (due: k + (run.everyFrame ? 1 : latency), t: t, cut: cut)
+        run.follower.looking(at: t)
+      }
     }
     for run in flatRuns {
       let outline = run.follower.things[""]?.shown ?? []
@@ -1265,9 +1277,9 @@ for run in flatRuns {
   let slipped = slip(run.middles, against: boxMiddles)
   print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  (%ld cuts, flat)",
                run.label.padding(toLength: max(12, run.label.count), withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
-               slipped, jerk(run.middles), flatCuts))
+               slipped, jerk(run.middles), run.cuts))
   runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
-                  "cuts": flatCuts, "flat": true, "jPerFrame": run.j,
+                  "cuts": run.cuts, "flat": true, "jPerFrame": run.j,
                   "outlines": run.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } }])
 }
 let summary: [String: Any] = [
