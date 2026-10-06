@@ -50,6 +50,14 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// Only touched on `samQueue`: the camera's encoder for EdgeTAM, and each pinned thing's tracker.
   private var edgeEncoder: EdgeTAMTracker.Encoder?
   private var edgeTrackers: [String: EdgeTAMTracker] = [:]
+  /// Only touched on `samQueue`: each pinned thing's EdgeTAM cuts refused in a row up close for not
+  /// fitting where it should be (`rescues`).
+  private var edgeRefusals: [String: Int] = [:]
+  /// Up close, after three of EdgeTAM's cuts of a thing refused in a row for not fitting where it
+  /// should be, the next is taken however it fits: EdgeTAM follows the thing from its memory of it,
+  /// and three refusals in a row say it's where it should be that's gone stale (tools/walk's
+  /// edgespr@far: a sink up close was otherwise lost for good once its outline slid off it).
+  static let rescues = false
   private var edgeLogTime: CFTimeInterval = 0
   /// The last EdgeTAM step's milliseconds (written on `samQueue`, read once its answer lands).
   private var edgeStepMs: [String: Double] = [:]
@@ -710,7 +718,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // that doesn't fit where the thing should be isn't taken (ARKit holds it meanwhile): laid
         // as the whole thing, or carried far by it, it threw the whole outline about a close-up
         // sink and washer (tools/walk).
-        guard let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit, scale: upright) else { continue }
+        let gate = Self.rescues && edgeRefusals[p.key, default: 0] >= 3 ? LiveTracker.Gate.any : p.gate
+        guard let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: p.scaleLimit, scale: upright) else {
+          edgeRefusals[p.key, default: 0] += 1
+          continue
+        }
+        edgeRefusals[p.key] = 0
         ring = followed
       }
       let plane = camera.withPlane(through: anchor)

@@ -59,6 +59,9 @@
 //   edgenow@far  edge@far with each cut brought on from its frame to the one it lands on by the
 //                picture's own pixels and laid from where the phone is then (as 0.5x brings
 //                EdgeTAM's answers), rather than laid from where the phone was; edgespn@far spliced too
+//   edgespr@*    edgesp@* and, after three of EdgeTAM's cuts refused in a row up close (not fitting
+//                where the thing should be), the next taken however it fits; edgeall@far spliced,
+//                brought on and blended lightly while the phone moves; edgefc@far turned to face
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -674,6 +677,11 @@ final class Run {
   /// at 0.5x) and laid from where the phone is now, rather than laid from where it was then: at a
   /// depth that's off, what was seen then lands off its thing now by the phone's step meanwhile.
   let bringsForward: Bool
+  /// Up close, after three of EdgeTAM's cuts in a row refused for not fitting where the thing should
+  /// be, the next is taken however it fits: EdgeTAM follows the thing from its memory of it, and
+  /// three refusals in a row say where it should be is what's gone stale (edgespr@far).
+  let rescues: Bool
+  var refusedInARow = 0
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var shape: LiveShape?
@@ -689,9 +697,10 @@ final class Run {
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
        faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false,
-       bringsForward: Bool = false) {
+       bringsForward: Bool = false, rescues: Bool = false) {
     self.label = label
     self.bringsForward = bringsForward
+    self.rescues = rescues
     self.lightWhileMoving = lightWhileMoving
     self.faces = faces
     self.sightPlane = sightPlane
@@ -735,6 +744,14 @@ let runs = [
   // Each cut brought on to the frame it lands on by the flow and laid from there; and that spliced.
   Run("edgenow@far", start: 1.4, noflow: true, sight: true, edge: true, bringsForward: true),
   Run("edgespn@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, bringsForward: true),
+  // Spliced, and after three refusals in a row the next cut taken however it fits.
+  Run("edgespr@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, rescues: true),
+  Run("edgespr@true", start: 1, noflow: true, sight: true, edge: true, splice: true, rescues: true),
+  // All three: spliced, brought on, and blended lightly while the phone moves.
+  Run("edgeall@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true),
+  // The outline turned to face the camera (LiveShape.faces): worse on the walks up close, but going
+  // round a thing wholly in view (WALK_MODE=orbit) is where it should help, if anywhere.
+  Run("edgefc@far", start: 1.4, noflow: true, sight: true, edge: true, faces: true),
   // A still thing's cuts blended in lighter (with the app's 50 ms ease).
   Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
@@ -1056,11 +1073,14 @@ for (k, f) in window.enumerated() {
         } else {
           if edgeOf(seen), let predicted = predictedNow, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
             let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
-            if let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose, scaleLimit: limit, splice: run.splice, scale: size) {
+            let gate: LiveTracker.Gate = run.rescues && run.refusedInARow >= 3 ? .any : .loose
+            if let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: limit, splice: run.splice, scale: size) {
               ring = followed
+              run.refusedInARow = 0
             } else {
               taken = false
               run.refused += 1
+              run.refusedInARow += 1
             }
           }
           if taken {
