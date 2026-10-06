@@ -12,6 +12,8 @@ on:
 permissions:
   contents: write
 
+# A newer push cancels the run in progress, and the steps after a failed one still run (but not
+# after a cancel: with always() they did, and a cancelled run held the runner until its timeout).
 concurrency:
   group: track-lab-${{ github.ref }}
   cancel-in-progress: true
@@ -55,7 +57,7 @@ jobs:
           WALK_IDS: 42446522 44358435 47895556 47331322 42898497 42897538 47332911 42898826 47334234 47895534
         run: bash tools/walk/ci.sh
       - name: Push the walk-arounds to ci-track-lab
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -68,14 +70,14 @@ jobs:
           git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "Walk-arounds for $SHA"
           git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-track-lab
       - name: ARKit pinning on real ARKit recordings
-        if: ${{ always() && !contains(github.event.head_commit.message, '[track only]') }}
+        if: ${{ !cancelled() && !contains(github.event.head_commit.message, '[track only]') }}
         run: bash tools/pin/ci.sh
       # [walk only] leaves the footage out: the walk-arounds and ARKit recordings in about an hour.
       - name: Live SAM on real footage
-        if: ${{ always() && !contains(github.event.head_commit.message, '[walk only]') }}
+        if: ${{ !cancelled() && !contains(github.event.head_commit.message, '[walk only]') }}
         run: bash tools/track/ci.sh lensi@4
       - name: Push results to ci-track-lab
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}

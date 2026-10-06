@@ -544,7 +544,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           // Following a thing: a cut that doesn't fit where it should be is something else. Up
           // close the cut is only the part on the picture, and the whole outline goes where it went.
           if let predicted = p.predicted {
-            guard let taken = LiveTracker.follow(cut: cut, predicted: predicted, gate: p.gate) else {
+            guard let taken = LiveTracker.follow(cut: cut, predicted: predicted, gate: p.gate, scale: upright) else {
               refused += 1
               continue
             }
@@ -669,7 +669,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // Up close, the whole outline as it should be, moved onto the part of it on the picture
         // however far that is from where it should be (that's what's stale).
         if !whole, let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
-           let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: p.scaleLimit) {
+           let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: p.scaleLimit, scale: upright) {
           ring = moved
         }
         // Where it's measured to be (LiDAR, ARKit's points on it), else as far off as it was along
@@ -690,7 +690,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // that doesn't fit where the thing should be isn't taken (ARKit holds it meanwhile): laid
         // as the whole thing, or carried far by it, it threw the whole outline about a close-up
         // sink and washer (tools/walk).
-        guard let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit) else { continue }
+        guard let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: p.gate, scaleLimit: p.scaleLimit, scale: upright) else { continue }
         ring = followed
       }
       let plane = camera.withPlane(through: anchor)
