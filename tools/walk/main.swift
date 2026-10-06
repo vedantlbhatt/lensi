@@ -51,6 +51,11 @@
 //                from further round; edgefs@far that and a still thing's cuts blended as a moving
 //                one's; edgefc@true at its true depth; appfc@far SAM's guide parts turned so;
 //                edgefp@far edgefc@far with each cut laid square to the line of sight (all settled: worse)
+//   now@*        the app now: edge@* spliced up close (edgesp), blended lightly while the phone moves
+//                (edgespm), carried by the flow while it walks round (edgespc) and EdgeTAM looking at
+//                every frame (edgefast); nowbf@far that with each answer brought on to the newest frame
+//                (edgenow), nowsa@far spliced only where EdgeTAM's cut covers 60% of where the thing
+//                should be (edgespa). The runs below led there, measured one change at a time:
 //   edgesp@*     edge@* with, up close, the part on the picture EdgeTAM's own cut and only what's off
 //                it the whole outline moved (LiveTracker.spliced), rather than the whole outline moved
 //                onto the part on the picture, keeping the shape it had when last seen whole;
@@ -758,39 +763,30 @@ let runs = [
   Run("steady@true", start: 1, noflow: true, tight: true),
   Run("steady@far", start: 1.4, noflow: true, tight: true),
 ] + (EdgeTAMTracker.Models.shared == nil ? [] : [
+  // The app before (edge@*), and now (now@*): up close the part on the picture is EdgeTAM's own cut
+  // (LiveTracker.spliced), a still thing's cuts are blended lightly while the phone moves, the flow
+  // carries outlines while it walks round (not while it turns fast), and EdgeTAM looks at every frame
+  // (as the phone does while it moves, up to 30 times a second).
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
-  // Up close, the part on the picture EdgeTAM's own cut (LiveTracker.spliced); at its true depth;
-  // and that with a still thing's cuts blended in lighter.
+  Run("now@true", start: 1, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true,
+      flowWhileWalking: true),
+  Run("now@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true,
+      flowWhileWalking: true),
+  // The steps on the way: spliced (edgesp@far), and blended lightly while the phone moves (edgespm@far).
   Run("edgesp@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true),
-  Run("edgesp@true", start: 1, noflow: true, sight: true, edge: true, splice: true),
-  Run("edgespl@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light, splice: true),
   Run("edgespm@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true),
-  // Each cut brought on to the frame it lands on by the flow and laid from there; and that spliced.
-  Run("edgenow@far", start: 1.4, noflow: true, sight: true, edge: true, bringsForward: true),
-  Run("edgespn@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, bringsForward: true),
-  // Spliced, and after three refusals in a row the next cut taken however it fits.
-  Run("edgespr@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, rescues: true),
-  Run("edgespr@true", start: 1, noflow: true, sight: true, edge: true, splice: true, rescues: true),
-  // The app now, carried by the flow while the phone walks round too (not while it turns fast); and
-  // carried throughout, the flow starting where ARKit says the outline went (LiveShape.guided).
-  Run("edgespc@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, flowWhileWalking: true),
-  Run("edgespg@far", start: 1.4, noflow: true, sight: true, edge: true, guided: true, splice: true, lightWhileMoving: true),
-  // The app now, spliced only where EdgeTAM's cut covers at least 60% of where the thing should be.
-  Run("edgespa@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, spliceShare: 0.6),
-  // The app now (spliced, lightly while the phone moves) with EdgeTAM looking at every frame.
-  Run("edgefast@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true),
-  // Spliced, and while the phone moves blended in more lightly still (.minimal), or not at all.
-  Run("edgespx@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, movingSmoothing: .minimal),
-  Run("edgespz@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true,
-      movingSmoothing: OutlineMath.Smoothing(quiet: 0, keepQuiet: 0, small: 0, keepSmall: 0, still: 0, followStill: 1, followMoving: 1)),
-  // All three: spliced, brought on, and blended lightly while the phone moves.
-  Run("edgeall@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true),
-  // The outline turned to face the camera (LiveShape.faces): worse on the walks up close, but going
-  // round a thing wholly in view (WALK_MODE=orbit) is where it should help, if anywhere.
-  Run("edgefc@far", start: 1.4, noflow: true, sight: true, edge: true, faces: true),
-  // A still thing's cuts blended in lighter (with the app's 50 ms ease).
-  Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
+  // Now, with each answer brought on to the newest frame by the flow (LensiARView.bringsForward).
+  Run("nowbf@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true,
+      everyFrame: true, flowWhileWalking: true),
+  // Now, spliced only where EdgeTAM's cut covers at least 60% of where the thing should be.
+  Run("nowsa@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true,
+      flowWhileWalking: true, spliceShare: 0.6),
+  // Settled in one run: after three refusals in a row the next cut taken however it fits (edgespr@far,
+  // rescues: true) changed nothing spliced, which refuses none; blended more lightly still while the
+  // phone moves (edgespx@far, movingSmoothing: .minimal) or not at all (edgespz@far) added 0.1-0.2
+  // points on the walk-arounds; the flow carrying throughout, guided by the poses (edgespg@far),
+  // was flowWhileWalking's equal; facing again (edgefc@far) 77.1% against edge@far's 76.0%.
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   // Settled, worse on the walks: the outline turned to face the camera as it goes round
   // (edgefc@far, faces: true; at the far depth the sink up close fell from J 75.9% to 50.8%), and
@@ -1257,7 +1253,7 @@ for run in runs {
   let lastDepth = run.depthRatio.last ?? -1
   let slipped = slip(run.middles, against: boxMiddles)
   print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  depth off %.0f%% (ends x%.2f)  (%ld cuts, %ld refused, %ld carried, %ld measured, %ld laid afresh)",
-               run.label.padding(toLength: 11, withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
+               run.label.padding(toLength: max(12, run.label.count), withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
                slipped, jerk(run.middles), (exp(depthOff) - 1) * 100, lastDepth, run.cuts, run.refused, run.carried, run.measured, run.replaced))
   runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
                   "depthOff": depthOff, "lastDepth": lastDepth, "cuts": run.cuts, "refused": run.refused, "carried": run.carried,
@@ -1268,7 +1264,7 @@ for run in flatRuns {
   let lost = run.j.isEmpty ? -1 : Double(run.j.filter { $0 < 0.5 }.count) / Double(run.j.count)
   let slipped = slip(run.middles, against: boxMiddles)
   print(String(format: "  %@ J %.1f%%  lost %.0f%%  on the box %.1f%%  slip %.1f px  lurch %.1f px  (%ld cuts, flat)",
-               run.label.padding(toLength: 11, withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
+               run.label.padding(toLength: max(12, run.label.count), withPad: " ", startingAt: 0), mean(run.j) * 100, lost * 100, mean(run.onBox) * 100,
                slipped, jerk(run.middles), flatCuts))
   runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
                   "cuts": flatCuts, "flat": true, "jPerFrame": run.j,

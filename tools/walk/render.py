@@ -47,6 +47,8 @@ CAPTIONS = {
     "edgefc@far": "EdgeTAM, the outline turned to face the camera, pinned 40% too far",
     "edgesp@far": "EdgeTAM, on the picture its own cut, pinned 40% too far",
     "flat-flow": "EdgeTAM on the picture alone, bent by its pixels (0.5x)",
+    "now@far": "Now, pinned 40% too far",
+    "now@true": "Now, pinned at the right depth",
 }
 
 PAIRS = [
@@ -62,6 +64,7 @@ PAIRS = [
     ("face", "edge@far", "edgefc@far"),
     ("splice", "edge@far", "edgesp@far"),
     ("flat", "edge@far", "flat-flow"),
+    ("now", "edge@far", "now@far"),
 ]
 
 
@@ -99,7 +102,7 @@ def main():
     h, w = first.shape[:2]
     fps = 30
     s = 2
-    app = os.environ.get("WALK_APP", "edge@far" if "edge@far" in runs else "steady@true")
+    app = os.environ.get("WALK_APP", next((l for l in ("now@far", "edge@far", "steady@true") if l in runs), "steady@true"))
     single = writer(os.path.join(out_dir, f"{name}.mp4"), w * s, h * s, fps)
     pairs = [(top, bottom, writer(os.path.join(out_dir, f"{name}-{tag}.mp4"), w, h * 2, fps))
              for tag, top, bottom in PAIRS if top in runs and bottom in runs]

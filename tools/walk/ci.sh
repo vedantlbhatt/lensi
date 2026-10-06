@@ -62,13 +62,14 @@ small() {
 # in view (WALK_IDS, WALK_ORBIT_IDS: these, without asking).
 : > out/walk/picks.txt
 : > out/walk/orbit-picks.txt
-[ -n "${WALK_IDS:-}" ] && IDS=""
-for id in $IDS; do
-  d="footage/arkit/$id"
-  small "$d" "$id" || continue
-  ./walk "$d" out/walk "scene-$id" 240 select 2>&1 | grep '^PICK' | tee -a out/walk/picks.txt
-  WALK_MODE=orbit ./walk "$d" out/walk "orbit-$id" 180 select 2>&1 | grep '^PICK' | tee -a out/walk/orbit-picks.txt
-done
+if [ -z "${WALK_IDS:-}" ] || [ -z "${WALK_ORBIT_IDS:-}" ]; then
+  for id in $IDS; do
+    d="footage/arkit/$id"
+    small "$d" "$id" || continue
+    [ -z "${WALK_IDS:-}" ] && ./walk "$d" out/walk "scene-$id" 240 select 2>&1 | grep '^PICK' | tee -a out/walk/picks.txt
+    [ -z "${WALK_ORBIT_IDS:-}" ] && WALK_MODE=orbit ./walk "$d" out/walk "orbit-$id" 180 select 2>&1 | grep '^PICK' | tee -a out/walk/orbit-picks.txt
+  done
+fi
 BEST="${WALK_IDS:-$(sort -k3 -g -r out/walk/picks.txt | awk '$3 > 0 {print $2}' | sed 's/^scene-//' | head -n "$PICK")}"
 ORBITS="${WALK_ORBIT_IDS:-$(sort -k3 -g -r out/walk/orbit-picks.txt | awk '$3 > 0 {print $2}' | sed 's/^orbit-//' | head -n "${WALK_ORBIT_PICK:-6}")}"
 echo "Walking in full: $BEST"
