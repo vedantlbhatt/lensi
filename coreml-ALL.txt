@@ -1,0 +1,31 @@
+EdgeTAMEncoder: loaded in 0.3 s
+EdgeTAMPrompt: loaded in 0.3 s
+EdgeTAMTrack: loaded in 0.4 s
+EdgeTAMMemory: loaded in 0.2 s
+frame 0: IoU with the reference 0.9993, object score 34.19, area 0.0316
+frame 25: IoU with the reference 0.9970, object score 9.66, area 0.0519
+frame 50: IoU with the reference 0.9984, object score 9.72, area 0.0719
+frame 75: IoU with the reference 0.9987, object score 9.07, area 0.0352
+frame 100: IoU with the reference 0.9940, object score 8.71, area 0.0615
+frame 125: IoU with the reference 0.9964, object score 9.00, area 0.0638
+frame 150: IoU with the reference 0.9992, object score 9.54, area 0.0742
+frame 175: IoU with the reference 0.9992, object score 10.41, area 0.2016
+frame 200: IoU with the reference 0.9991, object score 9.01, area 0.2909
+frame 225: IoU with the reference 0.9970, object score 6.96, area 0.0985
+frame 250: IoU with the reference 0.9990, object score 8.96, area 0.0728
+frame 275: IoU with the reference 0.9989, object score 9.12, area 0.0753
+frame 300: IoU with the reference 0.9992, object score 9.26, area 0.1562
+frame 325: IoU with the reference 0.9894, object score 8.59, area 0.0300
+frame 350: IoU with the reference 0.9920, object score 8.30, area 0.0222
+frame 375: IoU with the reference 0.9913, object score 9.01, area 0.0485
+frame 400: IoU with the reference 0.9995, object score 9.48, area 0.2136
+frame 425: IoU with the reference 0.9996, object score 9.29, area 0.2096
+frame 450: IoU with the reference 0.9988, object score 6.83, area 0.0131
+frame 475: IoU with the reference 0.9975, object score 8.90, area 0.0031
+frame 500: IoU with the reference 0.9985, object score 8.74, area 0.0088
+frame 525: IoU with the reference 0.9883, object score 10.98, area 0.0367
+Core ML (ComputeUnit.ALL): 533 frames, mean IoU 0.9969, worst 0.9528 (frame 478), 0 under 0.9, 0 under 0.5
+  encoder: median 75.7 ms over 533 runs
+  prompt: median 45.2 ms over 1 runs
+  track: median 197.6 ms over 532 runs
+  memory: median 23.1 ms over 533 runs

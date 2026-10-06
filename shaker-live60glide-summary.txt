@@ -1,0 +1,2 @@
+shaker-live60glide: 533 frames, 540x960
+  live: IoU with the reference mean 0.9577, median 0.9641, worst 0.7890 (frame 412), under 0.9: 17, under 0.7: 0, under 0.5: 0; shake mean 3.17 px, 95th percentile 11.75 px, worst 25.66 px; wobble mean 2.95 px, 95th percentile 10.82 px

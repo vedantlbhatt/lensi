@@ -1,0 +1,2 @@
+models loaded in 0.2 s
+live at 60 ms: 266 looks over 17.8 s (15.0 a second), each answer 60 ms after its frame

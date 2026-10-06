@@ -1,0 +1,2 @@
+shaker-live60-sigma-1: 533 frames, 540x960
+  live: IoU with the reference mean 0.9628, median 0.9689, worst 0.7882 (frame 203), under 0.9: 20, under 0.7: 0, under 0.5: 0; shake mean 3.42 px, 95th percentile 11.97 px, worst 25.34 px; wobble mean 3.50 px, 95th percentile 12.23 px

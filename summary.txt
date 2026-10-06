@@ -1,0 +1,53 @@
+shaker: 533 frames, 540x960
+  outline: IoU with the reference mean 0.9820, median 0.9867, worst 0.9355 (frame 471), under 0.9: 0, under 0.7: 0, under 0.5: 0; shake mean 2.53 px, 95th percentile 6.59 px, worst 43.07 px; wobble mean 2.69 px, 95th percentile 9.24 px
+  shown: IoU with the reference mean 0.9742, median 0.9785, worst 0.9347 (frame 478), under 0.9: 0, under 0.7: 0, under 0.5: 0; shake mean 2.42 px, 95th percentile 5.48 px, worst 40.24 px; wobble mean 2.38 px, 95th percentile 6.83 px
+  median ms a frame: draw 6.8, encoder 98.1, memory 25.2, outline 1.2, prompt 27.2, total 373.8, track 241.9
+models loaded in 0.2 s
+live at 60 ms: 266 looks over 17.8 s (15.0 a second), each answer 60 ms after its frame
+shaker-live60: 533 frames, 540x960
+  live: IoU with the reference mean 0.9630, median 0.9693, worst 0.7826 (frame 203), under 0.9: 20, under 0.7: 0, under 0.5: 0; shake mean 3.15 px, 95th percentile 11.61 px, worst 26.00 px; wobble mean 3.04 px, 95th percentile 11.46 px
+models loaded in 0.1 s
+live at 100 ms: 177 looks over 17.8 s (10.0 a second), each answer 100 ms after its frame
+shaker-live100: 533 frames, 540x960
+  live: IoU with the reference mean 0.9541, median 0.9627, worst 0.7108 (frame 205), under 0.9: 37, under 0.7: 0, under 0.5: 0; shake mean 3.24 px, 95th percentile 13.11 px, worst 41.74 px; wobble mean 3.21 px, 95th percentile 12.97 px
+live at 30 ms: 266 looks over 17.8 s (15.0 a second), each answer 30 ms after its frame
+shaker-live30gap50: 533 frames, 540x960
+  live: IoU with the reference mean 0.9693, median 0.9729, worst 0.8500 (frame 202), under 0.9: 6, under 0.7: 0, under 0.5: 0; shake mean 2.95 px, 95th percentile 10.69 px, worst 21.34 px; wobble mean 2.78 px, 95th percentile 10.91 px
+live at 30 ms: 532 looks over 17.8 s (29.9 a second), each answer 30 ms after its frame
+shaker-live30gap30: 533 frames, 540x960
+  live: IoU with the reference mean 0.9726, median 0.9761, worst 0.8505 (frame 202), under 0.9: 3, under 0.7: 0, under 0.5: 0; shake mean 2.73 px, 95th percentile 7.96 px, worst 39.02 px; wobble mean 2.81 px, 95th percentile 9.63 px
+live at 60 ms: 266 looks over 17.8 s (15.0 a second), each answer 60 ms after its frame
+shaker-live60whole: 533 frames, 540x960
+  live: IoU with the reference mean 0.9310, median 0.9395, worst 0.7590 (frame 213), under 0.9: 105, under 0.7: 0, under 0.5: 0; shake mean 3.82 px, 95th percentile 12.26 px, worst 26.76 px; wobble mean 2.82 px, 95th percentile 12.01 px
+shaker-live60before: 533 frames, 540x960
+  live: IoU with the reference mean 0.9544, median 0.9636, worst 0.6976 (frame 193), under 0.9: 32, under 0.7: 1, under 0.5: 0; shake mean 3.38 px, 95th percentile 13.86 px, worst 46.07 px; wobble mean 2.35 px, 95th percentile 8.00 px
+shaker-live60glide: 533 frames, 540x960
+  live: IoU with the reference mean 0.9577, median 0.9641, worst 0.7890 (frame 412), under 0.9: 17, under 0.7: 0, under 0.5: 0; shake mean 3.17 px, 95th percentile 11.75 px, worst 25.66 px; wobble mean 2.95 px, 95th percentile 10.82 px
+shaker-live60-inset-2: 533 frames, 540x960
+  live: IoU with the reference mean 0.9623, median 0.9688, worst 0.7828 (frame 203), under 0.9: 20, under 0.7: 0, under 0.5: 0; shake mean 3.19 px, 95th percentile 11.31 px, worst 27.17 px; wobble mean 2.99 px, 95th percentile 11.44 px
+shaker-live60-inset-5: 533 frames, 540x960
+  live: IoU with the reference mean 0.9624, median 0.9690, worst 0.7826 (frame 203), under 0.9: 19, under 0.7: 0, under 0.5: 0; shake mean 3.14 px, 95th percentile 11.95 px, worst 26.77 px; wobble mean 3.02 px, 95th percentile 11.24 px
+shaker-live60-most-0-4: 533 frames, 540x960
+  live: IoU with the reference mean 0.9632, median 0.9694, worst 0.7845 (frame 203), under 0.9: 18, under 0.7: 0, under 0.5: 0; shake mean 3.18 px, 95th percentile 11.63 px, worst 26.52 px; wobble mean 3.04 px, 95th percentile 12.29 px
+shaker-live60-sigma-1: 533 frames, 540x960
+  live: IoU with the reference mean 0.9628, median 0.9689, worst 0.7882 (frame 203), under 0.9: 20, under 0.7: 0, under 0.5: 0; shake mean 3.42 px, 95th percentile 11.97 px, worst 25.34 px; wobble mean 3.50 px, 95th percentile 12.23 px
+shaker-live60-sigma-4: 533 frames, 540x960
+  live: IoU with the reference mean 0.9610, median 0.9667, worst 0.7992 (frame 203), under 0.9: 22, under 0.7: 0, under 0.5: 0; shake mean 3.12 px, 95th percentile 11.64 px, worst 25.24 px; wobble mean 2.90 px, 95th percentile 11.65 px
+shaker-live60-home-2: 533 frames, 540x960
+  live: IoU with the reference mean 0.9624, median 0.9695, worst 0.7796 (frame 117), under 0.9: 22, under 0.7: 0, under 0.5: 0; shake mean 3.14 px, 95th percentile 11.76 px, worst 25.46 px; wobble mean 3.01 px, 95th percentile 11.24 px
+shaker-live60-seeded-1: 533 frames, 540x960
+  live: IoU with the reference mean 0.9627, median 0.9696, worst 0.7997 (frame 203), under 0.9: 20, under 0.7: 0, under 0.5: 0; shake mean 3.12 px, 95th percentile 11.85 px, worst 24.74 px; wobble mean 2.97 px, 95th percentile 11.98 px
+timing: every frame, mean 0.9763
+timing: a look every 2 frames, each answer 2 late; moved exactly as the bottle moved: mean 0.9507, worst 0.7628 (frame 310), under 0.9: 17
+timing: a look every 2 frames, each answer 2 late; not moved between answers: mean 0.7281, worst 0.2186 (frame 83), under 0.9: 500
+timing: a look every 3 frames, each answer 3 late; moved exactly as the bottle moved: mean 0.9417, worst 0.7594 (frame 310), under 0.9: 40
+timing: a look every 3 frames, each answer 3 late; not moved between answers: mean 0.6213, worst 0.0526 (frame 83), under 0.9: 522
+EdgeTAMEncoder: loaded in 0.3 s
+EdgeTAMPrompt: loaded in 0.3 s
+EdgeTAMTrack: loaded in 0.4 s
+EdgeTAMMemory: loaded in 0.2 s
+Core ML (ComputeUnit.ALL): 533 frames, mean IoU 0.9969, worst 0.9528 (frame 478), 0 under 0.9, 0 under 0.5
+  encoder: median 75.7 ms over 533 runs
+  prompt: median 45.2 ms over 1 runs
+  track: median 197.6 ms over 532 runs
+  memory: median 23.1 ms over 533 runs

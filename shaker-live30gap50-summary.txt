@@ -1,0 +1,2 @@
+shaker-live30gap50: 533 frames, 540x960
+  live: IoU with the reference mean 0.9693, median 0.9729, worst 0.8500 (frame 202), under 0.9: 6, under 0.7: 0, under 0.5: 0; shake mean 2.95 px, 95th percentile 10.69 px, worst 21.34 px; wobble mean 2.78 px, 95th percentile 10.91 px

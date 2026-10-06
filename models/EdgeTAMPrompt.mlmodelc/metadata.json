@@ -1,0 +1,156 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "EdgeTAMPrompt",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 256 × 256)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 256, 256]",
+        "name" : "masks",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1, 1]",
+        "name" : "ious",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 256)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 256]",
+        "name" : "pointers",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1, 1]",
+        "name" : "score",
+        "type" : "MultiArray"
+      }
+    ],
+    "storagePrecision" : "Float16",
+    "modelParameters" : [
+
+    ],
+    "author" : "EdgeTAM (Meta, Apache 2.0), split for Lensi: tools\/edgetam",
+    "specificationVersion" : 8,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios17.realDiv" : 2,
+      "Stack" : 2,
+      "Ios17.greaterEqual" : 1,
+      "Ios17.greater" : 4,
+      "Tile" : 1,
+      "Ios17.sub" : 4,
+      "Ios16.reduceSum" : 2,
+      "Ios17.gatherNd" : 5,
+      "Ios17.sliceByIndex" : 14,
+      "Ios17.concat" : 4,
+      "Ios17.pow" : 1,
+      "Ios17.sqrt" : 1,
+      "Ios17.convTranspose" : 2,
+      "Ios17.expandDims" : 9,
+      "Ios17.batchNorm" : 1,
+      "Ios17.mul" : 15,
+      "Ios17.transpose" : 30,
+      "Ios17.matmul" : 15,
+      "Ios17.scatter" : 2,
+      "Ios16.sigmoid" : 1,
+      "Ios17.scatterNd" : 4,
+      "Ios17.reshape" : 43,
+      "Ios16.gelu" : 2,
+      "Ios17.cast" : 4,
+      "Ios17.sin" : 1,
+      "Ios17.linear" : 54,
+      "Ios17.reduceArgmax" : 1,
+      "Ios16.reduceMean" : 2,
+      "Select" : 3,
+      "Ios16.relu" : 16,
+      "Ios16.softmax" : 7,
+      "Ios17.add" : 26,
+      "Ios17.cos" : 1,
+      "Ios17.layerNorm" : 9
+    },
+    "computePrecision" : "Mixed (Float16, Int32, UInt16)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "14.0",
+      "tvOS" : "17.0",
+      "visionOS" : "1.0",
+      "watchOS" : "10.0",
+      "iOS" : "17.0",
+      "macCatalyst" : "17.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 256 × 64 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 256, 64, 64]",
+        "name" : "features",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 32 × 256 × 256)",
+        "shortDescription" : "",
+        "shape" : "[1, 32, 256, 256]",
+        "name" : "high0",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 64 × 128 × 128)",
+        "shortDescription" : "",
+        "shape" : "[1, 64, 128, 128]",
+        "name" : "high1",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 4)",
+        "shortDescription" : "",
+        "shape" : "[1, 4]",
+        "name" : "box",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-10-06",
+      "com.github.apple.coremltools.source" : "torch==2.7.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "EdgeTAMPrompt",
+    "method" : "predict"
+  }
+]

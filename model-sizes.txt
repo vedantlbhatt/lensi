@@ -1,0 +1,4 @@
+9.6M	out/edgetam/models/EdgeTAMEncoder.mlmodelc
+4.3M	out/edgetam/models/EdgeTAMMemory.mlmodelc
+ 13M	out/edgetam/models/EdgeTAMPrompt.mlmodelc
+ 24M	out/edgetam/models/EdgeTAMTrack.mlmodelc

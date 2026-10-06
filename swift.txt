@@ -1,0 +1,24 @@
+models loaded in 0.8 s
+frame 0: score 34.22, IoU estimate 0.985, area 0.0316, 240 outline points, 350 ms
+frame 25: score 9.75, IoU estimate 0.973, area 0.0517, 302 outline points, 327 ms
+frame 50: score 9.69, IoU estimate 0.973, area 0.0718, 340 outline points, 402 ms
+frame 75: score 9.19, IoU estimate 0.982, area 0.0354, 236 outline points, 327 ms
+frame 100: score 8.77, IoU estimate 0.978, area 0.0611, 312 outline points, 326 ms
+frame 125: score 9.30, IoU estimate 0.983, area 0.0637, 316 outline points, 358 ms
+frame 150: score 9.86, IoU estimate 0.985, area 0.0741, 348 outline points, 285 ms
+frame 175: score 10.59, IoU estimate 0.983, area 0.2015, 576 outline points, 358 ms
+frame 200: score 9.18, IoU estimate 0.961, area 0.2908, 658 outline points, 284 ms
+frame 225: score 7.04, IoU estimate 0.958, area 0.0982, 412 outline points, 359 ms
+frame 250: score 9.06, IoU estimate 0.982, area 0.0727, 338 outline points, 410 ms
+frame 275: score 9.06, IoU estimate 0.981, area 0.0752, 344 outline points, 438 ms
+frame 300: score 9.34, IoU estimate 0.987, area 0.1561, 516 outline points, 482 ms
+frame 325: score 8.63, IoU estimate 0.982, area 0.0301, 212 outline points, 625 ms
+frame 350: score 8.12, IoU estimate 0.980, area 0.0222, 186 outline points, 475 ms
+frame 375: score 9.11, IoU estimate 0.984, area 0.0483, 274 outline points, 459 ms
+frame 400: score 9.82, IoU estimate 0.988, area 0.2134, 610 outline points, 461 ms
+frame 425: score 9.27, IoU estimate 0.987, area 0.2093, 558 outline points, 380 ms
+frame 450: score 6.79, IoU estimate 0.971, area 0.0131, 136 outline points, 366 ms
+frame 475: score 8.92, IoU estimate 0.947, area 0.0031, 74 outline points, 306 ms
+frame 500: score 8.58, IoU estimate 0.960, area 0.0088, 126 outline points, 411 ms
+frame 525: score 11.05, IoU estimate 0.979, area 0.0365, 242 outline points, 337 ms
+533 frames; median per frame: draw 6.8 ms, encoder 98.1 ms, memory 25.2 ms, outline 1.2 ms, prompt 27.2 ms, total 373.8 ms, track 241.9 ms

@@ -1,0 +1,4 @@
+shaker: 533 frames, 540x960
+  outline: IoU with the reference mean 0.9820, median 0.9867, worst 0.9355 (frame 471), under 0.9: 0, under 0.7: 0, under 0.5: 0; shake mean 2.53 px, 95th percentile 6.59 px, worst 43.07 px; wobble mean 2.69 px, 95th percentile 9.24 px
+  shown: IoU with the reference mean 0.9742, median 0.9785, worst 0.9347 (frame 478), under 0.9: 0, under 0.7: 0, under 0.5: 0; shake mean 2.42 px, 95th percentile 5.48 px, worst 40.24 px; wobble mean 2.38 px, 95th percentile 6.83 px
+  median ms a frame: draw 6.8, encoder 98.1, memory 25.2, outline 1.2, prompt 27.2, total 373.8, track 241.9

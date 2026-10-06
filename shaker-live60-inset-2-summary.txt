@@ -1,0 +1,2 @@
+shaker-live60-inset-2: 533 frames, 540x960
+  live: IoU with the reference mean 0.9623, median 0.9688, worst 0.7828 (frame 203), under 0.9: 20, under 0.7: 0, under 0.5: 0; shake mean 3.19 px, 95th percentile 11.31 px, worst 27.17 px; wobble mean 2.99 px, 95th percentile 11.44 px

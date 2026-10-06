@@ -1,0 +1,2 @@
+models loaded in 0.1 s
+live at 100 ms: 177 looks over 17.8 s (10.0 a second), each answer 100 ms after its frame
