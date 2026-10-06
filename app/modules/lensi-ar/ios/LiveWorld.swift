@@ -182,6 +182,9 @@ struct LiveShape {
   var guided = false
   /// What's drawn eases onto where it is (`draw`); false: drawn where it is (tools/track's 1x-noease).
   var eases = true
+  /// How long (seconds) what's drawn of a still thing takes to ease onto where it is (`easeStill`;
+  /// tools/walk tries quicker).
+  var stillEase: Float = LiveShape.easeStill
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
@@ -531,7 +534,7 @@ struct LiveShape {
       let v = !still && lead > 0 && simd_length(velocity) >= 0.02 ? velocity : .zero
       let carried = last.map { $0 + v * dt }
       if simd_distance(OutlineMath.centre(carried), OutlineMath.centre(target)) < OutlineMath.spread(target) {
-        let k = 1 - exp(-dt / (still ? LiveShape.easeStill : LiveShape.ease))
+        let k = 1 - exp(-dt / (still ? stillEase : LiveShape.ease))
         let lined = OutlineMath.align(target, to: carried).points
         shown = zip(carried, lined).map { $0 + ($1 - $0) * k }
       }

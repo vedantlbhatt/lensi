@@ -40,6 +40,10 @@
 //                for a still thing whose depth is known (ARKit holds it)
 //   edgeg@far    edge@far, the flow starting where the poses say the outline went (LiveShape.guided),
 //                and carrying it while the phone moves fast too
+//   edge2@far    edge@far again, unchanged: how far two identical runs drift apart
+//   edgestd@far, edgelt@far  a still thing's cuts blended in as a moving one's (.standard) or lighter
+//                (.light) rather than OutlineMath.Smoothing.still; edgeqk@far what's drawn of a still
+//                thing eased in 50 ms rather than 150 (LiveShape.stillEase); edgelq@far both
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -600,6 +604,10 @@ final class Run {
   /// The flow starts looking where ARKit's poses say the outline went (LiveShape.guided), and so
   /// keeps carrying it while the phone moves fast.
   let guided: Bool
+  /// How a still thing's cuts are blended in, rather than LiveTracker.asking's (OutlineMath.Smoothing.still).
+  let stillSmoothing: OutlineMath.Smoothing?
+  /// How long what's drawn of a still thing eases onto where it is (LiveShape.stillEase), rather than 0.15 s.
+  let stillEase: Float?
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var tracker: EdgeTAMTracker?
@@ -614,11 +622,13 @@ final class Run {
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
-       skipBlur: Bool = false, guided: Bool = false) {
+       skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil) {
     self.label = label
     self.whole = whole
     self.skipBlur = skipBlur
     self.guided = guided
+    self.stillSmoothing = stillSmoothing
+    self.stillEase = stillEase
     self.start = start
     self.once = once
     self.lidar = lidar
@@ -649,10 +659,16 @@ let runs = [
 ] + (EdgeTAMTracker.Models.shared == nil ? [] : [
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
-  Run("edgew@far", start: 1.4, noflow: true, sight: true, edge: true, whole: true),
-  Run("edgeb@far", start: 1.4, noflow: true, sight: true, edge: true, skipBlur: true),
-  Run("edgeg@far", start: 1.4, noflow: true, sight: true, edge: true, guided: true),
+  // edge@far again, unchanged: how far two identical runs drift apart within one run.
+  Run("edge2@far", start: 1.4, noflow: true, sight: true, edge: true),
+  // A still thing's cuts blended in as a moving one's are, or lighter, and what's drawn eased quicker.
+  Run("edgestd@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .standard),
+  Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
+  Run("edgeqk@far", start: 1.4, noflow: true, sight: true, edge: true, stillEase: 0.05),
+  Run("edgelq@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light, stillEase: 0.05),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
+  // Settled: bent rather than moved whole (edgew), blurred cuts left out (edgeb), the flow guided by
+  // the poses (edgeg). Their switches stay for another look.
   Run("shift@true", start: 1, noflow: true, sight: true, edge: true, shift: true),
   Run("shiftn@true", start: 1, noflow: true, sight: true, edge: true, shift: true, replace: false),
 ])
@@ -750,8 +766,8 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
   FlatRun("flat-none", flow: false, gyro: false),
   FlatRun("flat-gyro", flow: false, gyro: true),
   FlatRun("flat-flow", flow: true, gyro: true),
-  FlatRun("flat-fast", flow: true, gyro: true, fast: true),
-  FlatRun("flat-guide", flow: true, gyro: true, guided: true),
+  // Settled, no different from flat-flow in two runs: the gyro while turning fast (flat-fast), the
+  // gyro telling the flow where to look (flat-guide).
 ]
 var flatTracker: EdgeTAMTracker?
 var flatPending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
@@ -836,6 +852,7 @@ for (k, f) in window.enumerated() {
           shape = LiveShape(world: world, at: cut.t, follows: true)
           shape.bends = !run.whole
           shape.guided = run.guided
+          if let e = run.stillEase { shape.stillEase = e }
           shape.pinned = true
           shape.depthKnown = cut.depth != nil
         } else if skip {
@@ -873,6 +890,7 @@ for (k, f) in window.enumerated() {
       var shape = LiveShape(world: laid, at: t, follows: true)
       shape.bends = !run.whole
       shape.guided = run.guided
+      if let e = run.stillEase { shape.stillEase = e }
       shape.pinned = true
       // Pinned at its true depth: as the app pins where LiDAR or ARKit's points put it.
       shape.depthKnown = run.start == 1
@@ -948,7 +966,8 @@ for (k, f) in window.enumerated() {
         }
       }
       let asking = LiveTracker.asking(still: shape.still)
-      var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: asking.smoothing)
+      let smoothing = shape.still ? run.stillSmoothing ?? asking.smoothing : asking.smoothing
+      var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: smoothing)
       pending.middle = middle
       pending.replace = replace
       pending.blurred = fast
