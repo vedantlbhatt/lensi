@@ -400,6 +400,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     // a second, so what's drawn between its outlines (ARKit, the flow) has less to cover.
     default: gap = edgeTAM != nil && !pins.values.contains(where: { $0.parentId == Self.guideParent }) ? 0.05 : 0.08
     }
+    // A pinned thing that moves: as often as the phone keeps up, up to 30 a second. Played as a
+    // phone that answers in 35 ms and so looks at every frame, the eight DAVIS clips went from J
+    // 78.4% to 84.8%, a kicked ball from 60.4% to 77.3% (tools/track's livequick). A still one has
+    // ARKit, and the phone keeps cooler.
+    if gap == 0.05, liveShapes.values.contains(where: { $0.pinned && !$0.still }) { gap = 1.0 / 30 }
     let pose = frame.camera.transform
     let moving = liveShapes.values.contains { simd_length($0.velocity) >= 0.02 }
     if gap < 0.25, !moving, let last = lastSamPose {
