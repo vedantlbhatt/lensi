@@ -56,6 +56,9 @@
 //                onto the part on the picture, keeping the shape it had when last seen whole;
 //                edgespl@far that and a still thing's cuts blended in lighter; edgespm@far lighter
 //                only while the phone moves (more than 0.3 rad/s or 0.1 m/s)
+//   edgenow@far  edge@far with each cut brought on from its frame to the one it lands on by the
+//                picture's own pixels and laid from where the phone is then (as 0.5x brings
+//                EdgeTAM's answers), rather than laid from where the phone was; edgespn@far spliced too
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -578,6 +581,9 @@ struct Cut {
   var replace = false
   /// Made from a frame taken while the phone moved fast (a blur).
   var blurred = false
+  /// The outline it laid, upright as of `t` (EdgeTAM's, not laid afresh): what's brought on to the
+  /// frame it lands on (`Run.bringsForward`).
+  var ring: [CGPoint]? = nil
 }
 
 final class Run {
@@ -631,6 +637,11 @@ final class Run {
   /// A still thing's cuts blended in lightly (OutlineMath.Smoothing.light) while the phone moves
   /// round it, when its outline really changes as the view does; as `stillSmoothing` otherwise.
   let lightWhileMoving: Bool
+  /// Each cut, as it lands, brought on from the frame it was made from to the newest by the
+  /// picture's own pixels (LiveFlow.bend, frame by frame, as FlatFollower brings EdgeTAM's answers
+  /// at 0.5x) and laid from where the phone is now, rather than laid from where it was then: at a
+  /// depth that's off, what was seen then lands off its thing now by the phone's step meanwhile.
+  let bringsForward: Bool
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var shape: LiveShape?
@@ -640,13 +651,15 @@ final class Run {
   var onBox: [Double] = []
   var middles: [CGPoint?] = []
   var depthRatio: [Double] = []
-  var cuts = 0, refused = 0, carried = 0, measured = 0, replaced = 0
+  var cuts = 0, refused = 0, carried = 0, measured = 0, replaced = 0, brought = 0
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
-       faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false) {
+       faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false,
+       bringsForward: Bool = false) {
     self.label = label
+    self.bringsForward = bringsForward
     self.lightWhileMoving = lightWhileMoving
     self.faces = faces
     self.sightPlane = sightPlane
@@ -687,6 +700,9 @@ let runs = [
   Run("edgesp@true", start: 1, noflow: true, sight: true, edge: true, splice: true),
   Run("edgespl@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light, splice: true),
   Run("edgespm@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true),
+  // Each cut brought on to the frame it lands on by the flow and laid from there; and that spliced.
+  Run("edgenow@far", start: 1.4, noflow: true, sight: true, edge: true, bringsForward: true),
+  Run("edgespn@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, bringsForward: true),
   // A still thing's cuts blended in lighter (with the app's 50 ms ease).
   Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
@@ -807,6 +823,8 @@ var frameNames: [String] = []
 var lidarCheck: [Double] = []
 var fastFrames = 0
 var previous: (frame: LiveFlow.Frame, camera: FrozenCamera, t: Double)?
+/// The last few frames as the flow sees them, oldest first (edgenow@far brings cuts on through them).
+var recentFlow: [(t: Double, frame: LiveFlow.Frame)] = []
 var lastPose: (transform: simd_float4x4, t: Double)?
 var phoneTurn: Float = 0, phoneMove: Float = 0
 var size = CGSize(width: 480, height: 640)
@@ -897,7 +915,30 @@ for (k, f) in window.enumerated() {
           shape.depthKnown = cut.depth != nil
         } else if skip {
         } else if let world = cut.world {
-          shape.take(world, at: cut.t, how: cut.smoothing, measure: !fast, seenFrom: cut.camera.position)
+          var laid = world
+          var at = cut.t
+          var from = cut.camera.position
+          if run.bringsForward, let ring = cut.ring, let flowFrame {
+            // Brought on to this frame, as 0.5x brings EdgeTAM's answers (FlatFollower.bring), and
+            // laid from where the phone is now, through where the thing is.
+            let frames = recentFlow.filter { $0.t >= cut.t - 1e-4 }.map { $0.frame } + [flowFrame]
+            var moved: [CGPoint]? = frames.count >= 2 ? ring : nil
+            for i in 1..<max(frames.count, 1) {
+              guard let m = moved else { break }
+              moved = LiveFlow.bend(m, from: frames[i - 1], to: frames[i])
+            }
+            if let moved {
+              let plane = camera.withPlane(through: OutlineMath.centre(shape.placed(at: t)))
+              let relaid = moved.compactMap { plane.onPlane($0) }
+              if relaid.count == moved.count {
+                laid = relaid
+                at = t
+                from = camera.position
+                run.brought += 1
+              }
+            }
+          }
+          shape.take(laid, at: at, how: cut.smoothing, measure: !fast, seenFrom: from)
         } else {
           shape.misses += 1
           shape.velocity *= 0.5
@@ -941,6 +982,7 @@ for (k, f) in window.enumerated() {
       // whole outline going where the part on the picture went.
       run.cuts += 1
       var world: [simd_float3]?
+      var laidRing: [CGPoint]?
       var depth: Float?
       var middle: CGPoint?
       var replace = false
@@ -992,7 +1034,10 @@ for (k, f) in window.enumerated() {
           if taken {
             let plane = run.sightPlane ? camera.withSightPlane(through: OutlineMath.centre(now)) : camera.withPlane(through: OutlineMath.centre(now))
             let laid = ring.compactMap { plane.onPlane($0) }
-            if laid.count == ring.count { world = laid }
+            if laid.count == ring.count {
+              world = laid
+              laidRing = ring
+            }
             if run.lidar, let lidarMap { depth = LiveShape.depthInside(seen, depth: { lidarMap.at(upright: $0) }) }
             if LiveShape.sightable(seen) {
               middle = CGPoint(x: seen.map(\.x).reduce(0, +) / CGFloat(seen.count), y: seen.map(\.y).reduce(0, +) / CGFloat(seen.count))
@@ -1008,6 +1053,7 @@ for (k, f) in window.enumerated() {
       pending.middle = middle
       pending.replace = replace
       pending.blurred = fast
+      pending.ring = laidRing
       run.pending = pending
     } else if !run.edge, !run.once, run.pending == nil, k % every == 0, let shape = run.shape {
       // SAM asked where it should be now (LensiARView.segmentLive's follow): up close, about the
@@ -1064,7 +1110,11 @@ for (k, f) in window.enumerated() {
       if ahead > 0 { run.depthRatio.append(Double(ahead / trueAhead)) }
     }
   }
-  if let flowFrame { previous = (frame: flowFrame, camera: camera, t: t) }
+  if let flowFrame {
+    previous = (frame: flowFrame, camera: camera, t: t)
+    recentFlow.append((t: t, frame: flowFrame))
+    if recentFlow.count > 6 { recentFlow.removeFirst() }
+  }
 
   // 0.5x (FlatFollower): the frame, then an answer that's due, then a look, as LensiARView has them.
   if !flatRuns.isEmpty {
@@ -1110,7 +1160,7 @@ for run in runs {
                slipped, jerk(run.middles), (exp(depthOff) - 1) * 100, lastDepth, run.cuts, run.refused, run.carried, run.measured, run.replaced))
   runsOut.append(["label": run.label, "J": mean(run.j), "lost": lost, "onBox": mean(run.onBox), "slip": slipped, "jerk": jerk(run.middles),
                   "depthOff": depthOff, "lastDepth": lastDepth, "cuts": run.cuts, "refused": run.refused, "carried": run.carried,
-                  "measured": run.measured, "jPerFrame": run.j, "depthPerFrame": run.depthRatio,
+                  "measured": run.measured, "brought": run.brought, "jPerFrame": run.j, "depthPerFrame": run.depthRatio,
                   "outlines": run.shown.map { $0.flatMap { [Double($0.x), Double($0.y)] } }])
 }
 for run in flatRuns {
@@ -1132,6 +1182,8 @@ let summary: [String: Any] = [
   "lidarRatio": lidarRatio, "truthJerk": jerk(boxMiddles), "width": Int(size.width), "height": Int(size.height),
   "upInImage": [Double(upInImage.x), Double(upInImage.y)],
   "reference": reference.map { $0.flatMap { [Double($0.x), Double($0.y)] } }, "runs": runsOut,
+  // The 3D box's middle in each frame (pixels; [] where it's behind the camera): what slip is measured against.
+  "boxMiddles": boxMiddles.map { $0.map { [Double($0.x), Double($0.y)] } ?? [] },
 ]
 let data = try JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys])
 try data.write(to: outDir.appendingPathComponent("\(name).json"))
