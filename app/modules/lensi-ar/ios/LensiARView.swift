@@ -74,6 +74,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private var phoneMove: Float = 0
   private var lastPhonePose: (transform: simd_float4x4, t: TimeInterval)?
   private var phoneFast: Bool { phoneTurn > LiveShape.fastTurn || phoneMove > LiveShape.fastMove }
+  /// The phone is going round (more than 0.3 radians or 10 cm a second).
+  private var phoneMoving: Bool { phoneTurn > 0.3 || phoneMove > 0.1 }
+  /// A still thing's cuts are blended in lightly (OutlineMath.Smoothing.light) while the phone moves
+  /// round it, as its outline really changes with the view then, and held down hard once it stops
+  /// (tools/walk's edgespm@far).
+  static let lightWhileMoving = false
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -85,6 +91,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// camera and capture time), and what makes the small copies.
   private var flowPrevious: (frame: LiveFlow.Frame, camera: FrozenCamera, t: CFTimeInterval)?
   private lazy var flowContext = CIContext(options: [.useSoftwareRenderer: false])
+  /// Only touched on `flowQueue`: the frames the flow saw in the last half second, oldest first,
+  /// that EdgeTAM's answers are brought on through (`bringsForward`).
+  private var flowRecent: [(t: CFTimeInterval, frame: LiveFlow.Frame, camera: FrozenCamera)] = []
+  /// Makes the flow's copy of the frame EdgeTAM looked at (on `samQueue`).
+  private lazy var bringContext = CIContext(options: [.useSoftwareRenderer: false])
+  /// EdgeTAM's answer about a frame lands 50-100 ms after it, when the phone has moved on: each is
+  /// brought on through the frames since by the picture's own pixels (LiveFlow.bend, as 0.5x brings
+  /// them on: FlatFollower) and laid from where the phone is then, rather than from where it was,
+  /// which at a depth that's only a guess lands off the thing by the phone's step in between.
+  /// tools/walk measures it (edgenow@far).
+  static let bringsForward = false
   /// Taps pin things in space only in live mode; otherwise a tap on the camera does nothing
   /// (things are picked and pinned on the strip: `scrubStart`).
   var livePins = false
@@ -483,8 +500,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // plausibly the same thing (the loose gate: on walk-arounds the strict one SAM's cuts use
         // refused EdgeTAM's good cuts and lost a TV in 65% of frames, against 33%; tools/walk).
         let asking = LiveTracker.asking(still: shape.still)
+        // While the phone goes round a still thing, its outline really changes as the view does.
+        let smoothing = shape.still && Self.lightWhileMoving && phoneMoving ? OutlineMath.Smoothing.light : asking.smoothing
         prompts.append(LivePrompt(key: key, point: nil, box: box, part: false, anchor: OutlineMath.centre(now), predicted: predicted,
-                                  follows: true, gate: .loose, smoothing: asking.smoothing, edge: true,
+                                  follows: true, gate: .loose, smoothing: smoothing, edge: true,
                                   scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4, returning: returning.contains(key)))
       }
       // Pinned at 0.5x: EdgeTAM is already following them; their first cut here lays them in the world.
@@ -530,6 +549,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           let followed = prompts.filter(\.edge)
           found = try self.followEdge(followed, models: edge, buffer: buffer, camera: camera, upright: upright,
                                       measured: measured, points: points)
+          if Self.bringsForward { found = self.bringOn(found, asked: followed, from: buffer, at: captured) }
         }
         for p in samPrompts {
           // Following a thing: of SAM's candidates, the one that overlaps where it should be wins,
@@ -702,9 +722,49 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       } else if let d = camera.medianDepth(of: points, inside: seen) {
         depth = (d, LiveShape.pointsWeight)
       }
-      found[p.key] = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(seen) ? Self.middle(seen) : nil, replace: astray)
+      var laid = LiveCut(world: world, depth: depth, middle: LiveShape.sightable(seen) ? Self.middle(seen) : nil, replace: astray)
+      if !astray, !p.unplaced { laid.ring = ring }
+      found[p.key] = laid
     }
     return found
+  }
+
+  /// Each of `found`'s outlines EdgeTAM cut from the frame in `buffer` (captured at `t`), brought on
+  /// through the frames the flow has seen since (on `samQueue`): bent with its thing frame by frame,
+  /// then laid from where the phone was on the last of them, through the thing (`asked`'s anchor).
+  /// Those it can't bring on stay as they were.
+  private func bringOn(_ found: [String: LiveCut], asked: [LivePrompt], from buffer: CVPixelBuffer, at t: CFTimeInterval) -> [String: LiveCut] {
+    guard found.values.contains(where: { $0.ring != nil }) else { return found }
+    let since = flowQueue.sync { flowRecent.filter { $0.t > t + 1e-4 } }
+    guard let last = since.last, let start = Self.flowFrame(buffer, context: bringContext) else { return found }
+    var out = found
+    for (key, cut) in found {
+      guard let ring = cut.ring, let anchor = asked.first(where: { $0.key == key })?.anchor else { continue }
+      var moved: [CGPoint]? = ring
+      var from = start
+      for f in since {
+        guard let m = moved else { break }
+        moved = LiveFlow.bend(m, from: from, to: f.frame)
+        from = f.frame
+      }
+      guard let moved else { continue }
+      let plane = last.camera.withPlane(through: anchor)
+      let world = moved.compactMap { plane.onPlane($0) }
+      guard world.count == moved.count else { continue }
+      var brought = cut
+      brought.world = world
+      brought.brought = (last.t, last.camera)
+      out[key] = brought
+    }
+    return out
+  }
+
+  /// A frame as LiveFlow sees it: upright, LiveFlow.width across.
+  private static func flowFrame(_ buffer: CVPixelBuffer, context: CIContext) -> LiveFlow.Frame? {
+    let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    let scale = CGFloat(LiveFlow.width) / upright.extent.width
+    let small = upright.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    return context.createCGImage(small, from: small.extent).flatMap { LiveFlow.frame($0) }
   }
 
   /// The middle of an outline's points (evenly spaced: OutlineMath.resample).
@@ -751,7 +811,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// One of SAM's cuts, laid in the world, and how far away its thing is as measured inside it
   /// (and how much to go by that), if anything did.
   private struct LiveCut {
-    let world: [simd_float3]
+    var world: [simd_float3]
     let depth: (metres: Float, weight: Float)?
     /// The middle of a cut of the whole thing (none of it off the picture), upright: its line of
     /// sight says how far it is once the phone has moved (LiveShape.sight).
@@ -759,6 +819,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     /// Laid afresh rather than blended in: EdgeTAM saw the whole thing nowhere near where it
     /// should be (followEdge).
     var replace = false
+    /// The outline it laid, upright on the frame it was cut from (EdgeTAM's, blended in): what's
+    /// brought on to a later frame (`bringsForward`).
+    var ring: [CGPoint]? = nil
+    /// Brought on to the frame captured at `t`, and laid from `camera` there.
+    var brought: (t: CFTimeInterval, camera: FrozenCamera)? = nil
   }
 
   /// SAM's answers for one frame (captured at `t`, by `camera`): found shapes are blended into
@@ -786,7 +851,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           // it should be, and had to fit it there.
           // While the phone itself moves fast, where the cut landed says little about the
           // thing's own speed.
-          shape.take(world, at: t, how: prompt.smoothing, measure: !phoneFast, seenFrom: camera.position)
+          shape.take(world, at: cut.brought?.t ?? t, how: prompt.smoothing, measure: !phoneFast,
+                     seenFrom: (cut.brought?.camera ?? camera).position)
           if let depth = cut.depth { shape.setDepth(depth.metres, seenBy: camera, weight: depth.weight) }
           // Without LiDAR, where its lines of sight cross says how far it is (a black bottle has
           // no ARKit points on it).
@@ -845,7 +911,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// moves its own width between cuts (a bolt on a belt) is lost (tools/track measures both).
   private func flowLive(_ frame: ARFrame) {
     guard liveSegments, sam != nil, !flowBusy, frame.timestamp - lastFlowTime >= 1.0 / 30,
-          liveShapes.values.contains(where: { $0.follows && !Self.heldByARKit($0) }) else { return }
+          liveShapes.values.contains(where: { $0.follows && !Self.heldByARKit($0) })
+            || (Self.bringsForward && edgeTAM != nil && liveShapes.values.contains(where: { $0.pinned })) else { return }
     flowBusy = true
     lastFlowTime = frame.timestamp
     let buffer = frame.capturedImage
@@ -861,6 +928,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       let now = self.flowContext.createCGImage(small, from: small.extent).flatMap { LiveFlow.frame($0) }
       let previous = self.flowPrevious
       self.flowPrevious = now.map { (frame: $0, camera: camera, t: t) }
+      if Self.bringsForward, let now {
+        self.flowRecent.append((t: t, frame: now, camera: camera))
+        self.flowRecent.removeAll { t - $0.t > 0.5 }
+      }
       let ms = (CACurrentMediaTime() - started) * 1000
       DispatchQueue.main.async {
         self.flowBusy = false
