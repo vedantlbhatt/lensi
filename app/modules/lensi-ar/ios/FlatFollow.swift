@@ -29,8 +29,10 @@ final class FlatFollower {
   /// Bent with its thing (LiveFlow.bend); false: moved whole (LiveFlow.carry).
   var bends = true
   var bending: LiveFlow.Bending = .standard
-  /// Each answer glided into what was shown on its frame (OutlineMath.glide); false: taken as it is.
-  var glides = true
+  /// Each answer glided into what was shown on its frame (OutlineMath.glide); false (the app): taken
+  /// as it is. On the bottle, with `pinsEdges`, taken as it is was IoU 0.963 against 0.957, and no
+  /// wobblier (3.07 px against 3.08).
+  var glides = false
   /// Upright points seen at one capture time, moved to where they'd be seen at a later one by how
   /// the phone turned meanwhile (UltraWideCamera.warp). Nil: there's no gyro, and where the flow
   /// can't say, an outline stays where it is.
@@ -43,8 +45,10 @@ final class FlatFollower {
   var guided = false
   /// A thing that runs off the picture is outlined only up to its edge; moved with the thing, that
   /// side would come away from the edge and leave the rest of it outside the outline. Its points
-  /// on the picture's edge stay on it, sliding along it with the thing (`pinned`).
-  var pinsEdges = false
+  /// on the picture's edge stay on it, sliding along it with the thing (`pinned`). On the bottle's
+  /// close-up its outline was 71% to 93% of the bottle's area without; overall IoU 0.954 -> 0.957,
+  /// worst frame 0.69 -> 0.77, frames under 0.9 33 -> 25, shake 3.5 -> 3.2 px.
+  var pinsEdges = true
   /// How near the picture's edge (0…1) a point counts as on it.
   static let edge: CGFloat = 0.006
 

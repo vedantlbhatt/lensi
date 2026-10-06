@@ -16,8 +16,9 @@
 // start it, each answer ready that many milliseconds after its frame and drawn from the first
 // frame after that, and the outline moved between answers. Writes each frame's "live" outline.
 // Between answers the outline is bent with the thing (LiveFlow.bend, FlatFollower: as the app follows
-// a pinned thing at 0.5x); EDGETRACK_BEND=0 moves it whole instead (LiveFlow.carry); EDGETRACK_GLIDE=0
-// takes each answer as it is rather than gliding into it.
+// a pinned thing at 0.5x); EDGETRACK_BEND=0 moves it whole instead (LiveFlow.carry); EDGETRACK_GLIDE=1
+// glides each answer into what was shown rather than taking it as it is (as the app does);
+// EDGETRACK_EDGE_PIN=0 lets a thing that runs off the picture come away from its edge.
 import CoreImage
 import Foundation
 import ImageIO
@@ -69,7 +70,7 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool, bending: Live
   follower.bends = bends
   follower.glides = glides
   follower.bending = bending
-  follower.pinsEdges = ProcessInfo.processInfo.environment["EDGETRACK_EDGE_PIN"] == "1"
+  follower.pinsEdges = ProcessInfo.processInfo.environment["EDGETRACK_EDGE_PIN"] != "0"
   var out: [[String: Any]] = []
   var pending: Pending?
   var lastStart = -Double.infinity
@@ -135,7 +136,7 @@ if let ms = Double(ProcessInfo.processInfo.environment["EDGETRACK_LIVE_MS"] ?? "
   if let v = Float(env["EDGETRACK_BEND_SIGMA"] ?? "") { bending.sigma = v }
   if let v = Float(env["EDGETRACK_BEND_HOME"] ?? "") { bending.home = v }
   if env["EDGETRACK_BEND_SEEDED"] == "1" { bending.seeded = true }
-  let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] != "0", glides: env["EDGETRACK_GLIDE"] != "0", bending: bending)
+  let result = try live(latency: ms / 1000, fps: fps, bends: env["EDGETRACK_BEND"] != "0", glides: env["EDGETRACK_GLIDE"] == "1", bending: bending)
   try JSONSerialization.data(withJSONObject: result).write(to: URL(fileURLWithPath: outPath))
   exit(0)
 }

@@ -71,14 +71,12 @@ done
 # The outline moved whole between answers (LiveFlow.carry, the app before LiveFlow.bend).
 EDGETRACK_LIVE_MS=60 EDGETRACK_BEND=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60whole.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60whole.json" "$OUT" shaker-live60whole live 2>&1 | tee -a "$OUT/summary.txt"
-# Each answer taken as it is rather than glided into what was shown (on DAVIS that's a little better).
-EDGETRACK_LIVE_MS=60 EDGETRACK_GLIDE=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60noglide.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
-REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60noglide.json" "$OUT" shaker-live60noglide live 2>&1 | tee -a "$OUT/summary.txt"
-# A thing that runs off the picture keeps its outline on the picture's edge (FlatFollower.pinsEdges).
-EDGETRACK_LIVE_MS=60 EDGETRACK_EDGE_PIN=1 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60pin.json" "$BOX" >/dev/null 2>&1
-REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60pin.json" "$OUT" shaker-live60pin live 2>&1 | tee -a "$OUT/summary.txt"
-EDGETRACK_LIVE_MS=60 EDGETRACK_EDGE_PIN=1 EDGETRACK_GLIDE=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60pinnoglide.json" "$BOX" >/dev/null 2>&1
-REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60pinnoglide.json" "$OUT" shaker-live60pinnoglide live 2>&1 | tee -a "$OUT/summary.txt"
+# The app before: each answer glided into what was shown, and a thing that runs off the picture
+# let come away from its edge (FlatFollower.glides, pinsEdges); and gliding alone.
+EDGETRACK_LIVE_MS=60 EDGETRACK_GLIDE=1 EDGETRACK_EDGE_PIN=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60before.json" "$BOX" >/dev/null 2>&1
+REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60before.json" "$OUT" shaker-live60before live 2>&1 | tee -a "$OUT/summary.txt"
+EDGETRACK_LIVE_MS=60 EDGETRACK_GLIDE=1 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60glide.json" "$BOX" >/dev/null 2>&1
+REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60glide.json" "$OUT" shaker-live60glide live 2>&1 | tee -a "$OUT/summary.txt"
 # LiveFlow.bend's settings tried on the bottle (tools/track tries the same on DAVIS, bend-*).
 for v in INSET=2 INSET=5 MOST=0.4 SIGMA=1 SIGMA=4 HOME=2 SEEDED=1; do
   name="live60-$(echo "$v" | tr 'A-Z=.' 'a-z--')"
