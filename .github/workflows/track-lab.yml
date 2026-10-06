@@ -70,8 +70,9 @@ jobs:
       - name: ARKit pinning on real ARKit recordings
         if: ${{ always() && !contains(github.event.head_commit.message, '[track only]') }}
         run: bash tools/pin/ci.sh
+      # [walk only] leaves the footage out: the walk-arounds and ARKit recordings in about an hour.
       - name: Live SAM on real footage
-        if: always()
+        if: ${{ always() && !contains(github.event.head_commit.message, '[walk only]') }}
         run: bash tools/track/ci.sh lensi@4
       - name: Push results to ci-track-lab
         if: always()
