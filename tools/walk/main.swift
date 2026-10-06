@@ -43,7 +43,8 @@
 //   edge2@far    edge@far again, unchanged: how far two identical runs drift apart
 //   edgestd@far, edgelt@far  a still thing's cuts blended in as a moving one's (.standard) or lighter
 //                (.light) rather than OutlineMath.Smoothing.still; edgeqk@far what's drawn of a still
-//                thing eased in 50 ms rather than 150 (LiveShape.stillEase); edgelq@far both
+//                thing eased in 50 ms rather than 150 (LiveShape.stillEase); edgelq@far both;
+//                edgesh@far where it is followed as steadily as now, its shape taken quickly
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -666,6 +667,10 @@ let runs = [
   Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
   Run("edgeqk@far", start: 1.4, noflow: true, sight: true, edge: true, stillEase: 0.05),
   Run("edgelq@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light, stillEase: 0.05),
+  // Where it is as steady as now (OutlineMath.Smoothing.still's follow), its shape taken quickly.
+  Run("edgesh@far", start: 1.4, noflow: true, sight: true, edge: true,
+      stillSmoothing: OutlineMath.Smoothing(quiet: 0.15, keepQuiet: 0.3, small: 0.3, keepSmall: 0.15, still: 0.1, followStill: 0.35,
+                                            followMoving: 0.8)),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   // Settled: bent rather than moved whole (edgew), blurred cuts left out (edgeb), the flow guided by
   // the poses (edgeg). Their switches stay for another look.
