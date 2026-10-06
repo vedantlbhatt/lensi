@@ -100,6 +100,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// moves (up to 30 times a second, `segmentLive`), as its outline changes with the view then.
   /// tools/walk's edgefast@far measures looking at every frame.
   static let looksWhileMoving = false
+  /// The flow carries outlines while the phone walks round a thing too (over LiveShape.fastMove),
+  /// and stops only while it turns fast (a blur): held by ARKit at a depth that's only a guess, an
+  /// outline slides off its thing as the phone walks round it (tools/walk's edgespc@far).
+  static let flowWhileWalking = false
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -969,7 +973,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         self.flowMs = self.flowMs == 0 ? ms : self.flowMs * 0.8 + ms * 0.2
         // Not while the phone itself moves fast: the picture is a blur, and what moved in it is
         // mostly the phone, which ARKit has already taken care of.
-        guard let now, let previous, t - previous.t < 0.25, self.liveSegments, !self.phoneFast else { return }
+        // (With `flowWhileWalking`, only while it turns fast: walking round a thing isn't a blur.)
+        let blur = Self.flowWhileWalking ? self.phoneTurn > LiveShape.fastTurn : self.phoneFast
+        guard let now, let previous, t - previous.t < 0.25, self.liveSegments, !blur else { return }
         self.carryLive(from: previous.frame, previous.camera, at: previous.t, to: now, camera, at: t)
       }
     }
