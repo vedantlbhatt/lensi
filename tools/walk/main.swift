@@ -61,7 +61,10 @@
 //                EdgeTAM's answers), rather than laid from where the phone was; edgespn@far spliced too
 //   edgespr@*    edgesp@* and, after three of EdgeTAM's cuts refused in a row up close (not fitting
 //                where the thing should be), the next taken however it fits; edgeall@far spliced,
-//                brought on and blended lightly while the phone moves; edgefc@far turned to face
+//                brought on and blended lightly while the phone moves; edgefc@far turned to face;
+//                edgespx@far spliced and, while the phone moves, blended in more lightly still
+//                (.minimal); edgespz@far not blended at all while it moves; edgefast@far the app now
+//                with EdgeTAM looking at every frame, answering a frame later
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -672,6 +675,12 @@ final class Run {
   /// A still thing's cuts blended in lightly (OutlineMath.Smoothing.light) while the phone moves
   /// round it, when its outline really changes as the view does; as `stillSmoothing` otherwise.
   let lightWhileMoving: Bool
+  /// How lightly, rather than OutlineMath.Smoothing.light (edgespx@far: .minimal; edgespz@far: not
+  /// blended at all, each cut taken as it is while the phone moves).
+  let movingSmoothing: OutlineMath.Smoothing?
+  /// EdgeTAM looks at every frame and answers one frame later (30 times a second, as the phone does
+  /// when it keeps up: LensiARView.segmentLive's gap), rather than every other frame two frames later.
+  let everyFrame: Bool
   /// Each cut, as it lands, brought on from the frame it was made from to the newest by the
   /// picture's own pixels (LiveFlow.bend, frame by frame, as FlatFollower brings EdgeTAM's answers
   /// at 0.5x) and laid from where the phone is now, rather than laid from where it was then: at a
@@ -697,8 +706,10 @@ final class Run {
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
        faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false,
-       bringsForward: Bool = false, rescues: Bool = false) {
+       bringsForward: Bool = false, rescues: Bool = false, movingSmoothing: OutlineMath.Smoothing? = nil, everyFrame: Bool = false) {
     self.label = label
+    self.everyFrame = everyFrame
+    self.movingSmoothing = movingSmoothing
     self.bringsForward = bringsForward
     self.rescues = rescues
     self.lightWhileMoving = lightWhileMoving
@@ -747,6 +758,12 @@ let runs = [
   // Spliced, and after three refusals in a row the next cut taken however it fits.
   Run("edgespr@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, rescues: true),
   Run("edgespr@true", start: 1, noflow: true, sight: true, edge: true, splice: true, rescues: true),
+  // The app now (spliced, lightly while the phone moves) with EdgeTAM looking at every frame.
+  Run("edgefast@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true),
+  // Spliced, and while the phone moves blended in more lightly still (.minimal), or not at all.
+  Run("edgespx@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, movingSmoothing: .minimal),
+  Run("edgespz@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true,
+      movingSmoothing: OutlineMath.Smoothing(quiet: 0, keepQuiet: 0, small: 0, keepSmall: 0, still: 0, followStill: 1, followMoving: 1)),
   // All three: spliced, brought on, and blended lightly while the phone moves.
   Run("edgeall@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true),
   // The outline turned to face the camera (LiveShape.faces): worse on the walks up close, but going
@@ -863,6 +880,9 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
 /// EdgeTAM, once for every run that follows with it (the edge runs and the flat ones): each run's own
 /// tracker would say the same, as it goes by its memory of the thing alone, started from the same box.
 var edgeTracker: EdgeTAMTracker?
+/// The same, looking at every frame (`Run.everyFrame`).
+var edgeTrackerEvery: EdgeTAMTracker?
+let edgeEveryFrame = runs.contains { $0.everyFrame }
 var flatPending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
 var flatCuts = 0
 
@@ -887,7 +907,7 @@ for (k, f) in window.enumerated() {
   try sam.prepare(image: image, id: "frame", force: true)
   let flowFrame = LiveFlow.frame(image)
   // EdgeTAM's encoder, once for every run that follows with it, on the frames it looks at.
-  let edgeFrame = (k == 0 || k % edgeEvery == 0) ? edgeEncoder.flatMap { try? $0.encode(CIImage(cgImage: image)) } : nil
+  let edgeFrame = (k == 0 || k % edgeEvery == 0 || edgeEveryFrame) ? edgeEncoder.flatMap { try? $0.encode(CIImage(cgImage: image)) } : nil
 
   // How fast the phone itself turns and moves (LensiARView.trackPhone).
   if let last = lastPose {
@@ -927,12 +947,19 @@ for (k, f) in window.enumerated() {
   // EdgeTAM's answer about this frame (every other frame): started from the pinned cut's box
   // (LensiARView.followEdge's first step), then from its memory of the thing.
   var edgeCut: EdgeTAMTracker.Cut?
+  var edgeCutEvery: EdgeTAMTracker.Cut?
   if k == 0, let edgeFrame, let models = EdgeTAMTracker.Models.shared, truth.count > 2 {
     let tracker = try EdgeTAMTracker(models: models)
     _ = try tracker.start(edgeFrame, box: LiveTracker.bounds(truth))
     edgeTracker = tracker
-  } else if k > 0, k % edgeEvery == 0, let tracker = edgeTracker, let edgeFrame {
-    edgeCut = try tracker.step(edgeFrame)
+    if edgeEveryFrame {
+      let every = try EdgeTAMTracker(models: models)
+      _ = try every.start(edgeFrame, box: LiveTracker.bounds(truth))
+      edgeTrackerEvery = every
+    }
+  } else if k > 0 {
+    if k % edgeEvery == 0, let tracker = edgeTracker, let edgeFrame { edgeCut = try tracker.step(edgeFrame) }
+    if let tracker = edgeTrackerEvery, let edgeFrame { edgeCutEvery = try tracker.step(edgeFrame) }
   }
 
   let shiftFrom = window.count / 2
@@ -1026,7 +1053,7 @@ for (k, f) in window.enumerated() {
       // Pinned at its true depth: as the app pins where LiDAR or ARKit's points put it.
       shape.depthKnown = run.start == 1
       run.shape = shape
-    } else if run.edge, run.pending == nil, let cut = edgeCut, let shape = run.shape {
+    } else if run.edge, run.pending == nil, let cut = run.everyFrame ? edgeCutEvery : edgeCut, let shape = run.shape {
       // EdgeTAM's step (LensiARView.followEdge): what it finds is laid in the world, up close the
       // whole outline going where the part on the picture went.
       run.cuts += 1
@@ -1100,8 +1127,8 @@ for (k, f) in window.enumerated() {
       let asking = LiveTracker.asking(still: shape.still)
       // While the phone moves round a still thing its outline really changes (edgespm@far).
       let phoneMoving = phoneTurn > 0.3 || phoneMove > 0.1
-      let smoothing = shape.still ? (run.lightWhileMoving && phoneMoving ? OutlineMath.Smoothing.light : run.stillSmoothing ?? asking.smoothing) : asking.smoothing
-      var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: smoothing)
+      let smoothing = shape.still ? (run.lightWhileMoving && phoneMoving ? run.movingSmoothing ?? OutlineMath.Smoothing.light : run.stillSmoothing ?? asking.smoothing) : asking.smoothing
+      var pending = Cut(due: k + (run.everyFrame ? 1 : latency), t: t, camera: camera, world: world, depth: depth, smoothing: smoothing)
       pending.middle = middle
       pending.replace = replace
       pending.blurred = fast
