@@ -50,7 +50,12 @@
 //                rather than left a flat card laid where it was cut, which foreshortens and skews seen
 //                from further round; edgefs@far that and a still thing's cuts blended as a moving
 //                one's; edgefc@true at its true depth; appfc@far SAM's guide parts turned so;
-//                edgefp@far edgefc@far with each cut laid square to the line of sight
+//                edgefp@far edgefc@far with each cut laid square to the line of sight (all settled: worse)
+//   edgesp@*     edge@* with, up close, the part on the picture EdgeTAM's own cut and only what's off
+//                it the whole outline moved (LiveTracker.spliced), rather than the whole outline moved
+//                onto the part on the picture, keeping the shape it had when last seen whole;
+//                edgespl@far that and a still thing's cuts blended in lighter; edgespm@far lighter
+//                only while the phone moves (more than 0.3 rad/s or 0.1 m/s)
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -620,9 +625,14 @@ final class Run {
   /// EdgeTAM's cuts laid square to the line of sight (FrozenCamera.withSightPlane), as a facing
   /// outline stands, rather than square to where the camera points.
   let sightPlane: Bool
+  /// Up close, the part on the picture is EdgeTAM's cut itself and only what's off it the whole
+  /// outline moved (LiveTracker.spliced), rather than the whole outline moved throughout.
+  let splice: Bool
+  /// A still thing's cuts blended in lightly (OutlineMath.Smoothing.light) while the phone moves
+  /// round it, when its outline really changes as the view does; as `stillSmoothing` otherwise.
+  let lightWhileMoving: Bool
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
-  var tracker: EdgeTAMTracker?
   var shape: LiveShape?
   var pending: Cut?
   var shown: [[CGPoint]] = []
@@ -635,10 +645,12 @@ final class Run {
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
-       faces: Bool = false, sightPlane: Bool = false) {
+       faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false) {
     self.label = label
+    self.lightWhileMoving = lightWhileMoving
     self.faces = faces
     self.sightPlane = sightPlane
+    self.splice = splice
     self.whole = whole
     self.skipBlur = skipBlur
     self.guided = guided
@@ -657,34 +669,30 @@ final class Run {
   }
 }
 
+// SAM's runs (the guide's parts) are settled; the ones left are the reference points. Their switches
+// stay: whole@far (whole: true), lidar@far (lidar: true), steadyl@far, clamp@true and clampl@far
+// (clamp: true), sight@far and sight@near (sight: true, start 0.7), app@true.
 let runs = [
   Run("arkit@true", start: 1, once: true),
   Run("arkit@far", start: 1.4, once: true),
-  Run("app@true", start: 1),
   Run("app@far", start: 1.4),
-  Run("whole@far", start: 1.4, whole: true),
-  Run("lidar@far", start: 1.4, lidar: true),
   Run("steady@true", start: 1, noflow: true, tight: true),
   Run("steady@far", start: 1.4, noflow: true, tight: true),
-  Run("steadyl@far", start: 1.4, lidar: true, noflow: true, tight: true),
-  Run("clamp@true", start: 1, noflow: true, tight: true, clamp: true),
-  Run("clampl@far", start: 1.4, lidar: true, noflow: true, tight: true, clamp: true),
-  Run("sight@far", start: 1.4, noflow: true, tight: true, sight: true),
-  Run("sight@near", start: 0.7, noflow: true, tight: true, sight: true),
 ] + (EdgeTAMTracker.Models.shared == nil ? [] : [
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
-  // A still thing's cuts blended in lighter (with the app's 50 ms ease), and what's drawn eased over 150 ms as before.
+  // Up close, the part on the picture EdgeTAM's own cut (LiveTracker.spliced); at its true depth;
+  // and that with a still thing's cuts blended in lighter.
+  Run("edgesp@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true),
+  Run("edgesp@true", start: 1, noflow: true, sight: true, edge: true, splice: true),
+  Run("edgespl@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light, splice: true),
+  Run("edgespm@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true),
+  // A still thing's cuts blended in lighter (with the app's 50 ms ease).
   Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
-  Run("edgeold@far", start: 1.4, noflow: true, sight: true, edge: true, stillEase: 0.15),
-  // The outline turned to face the camera as it goes round (LiveShape.faces), and that with a still
-  // thing's cuts blended in as a moving one's; at its true depth; and SAM's guide parts so.
-  Run("edgefc@far", start: 1.4, noflow: true, sight: true, edge: true, faces: true),
-  Run("edgefs@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .standard, faces: true),
-  Run("edgefc@true", start: 1, noflow: true, sight: true, edge: true, faces: true),
-  Run("appfc@far", start: 1.4, faces: true),
-  Run("edgefp@far", start: 1.4, noflow: true, sight: true, edge: true, faces: true, sightPlane: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
+  // Settled, worse on the walks: the outline turned to face the camera as it goes round
+  // (edgefc@far, faces: true; at the far depth the sink up close fell from J 75.9% to 50.8%), and
+  // what's drawn of a still thing eased over 150 ms (edgeold@far, stillEase: 0.15).
   // Settled: bent rather than moved whole (edgew), blurred cuts left out (edgeb), the flow guided by
   // the poses (edgeg). Their switches stay for another look.
   Run("shift@true", start: 1, noflow: true, sight: true, edge: true, shift: true),
@@ -787,7 +795,9 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
   // Settled, no different from flat-flow in two runs: the gyro while turning fast (flat-fast), the
   // gyro telling the flow where to look (flat-guide).
 ]
-var flatTracker: EdgeTAMTracker?
+/// EdgeTAM, once for every run that follows with it (the edge runs and the flat ones): each run's own
+/// tracker would say the same, as it goes by its memory of the thing alone, started from the same box.
+var edgeTracker: EdgeTAMTracker?
 var flatPending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
 var flatCuts = 0
 
@@ -845,6 +855,17 @@ for (k, f) in window.enumerated() {
   if let lidarMap, !truth.isEmpty, trueAhead > 0.05,
      let d = LiveShape.depthInside(truth, depth: { lidarMap.at(upright: $0) }) {
     lidarCheck.append(Double(d / trueAhead))
+  }
+
+  // EdgeTAM's answer about this frame (every other frame): started from the pinned cut's box
+  // (LensiARView.followEdge's first step), then from its memory of the thing.
+  var edgeCut: EdgeTAMTracker.Cut?
+  if k == 0, let edgeFrame, let models = EdgeTAMTracker.Models.shared, truth.count > 2 {
+    let tracker = try EdgeTAMTracker(models: models)
+    _ = try tracker.start(edgeFrame, box: LiveTracker.bounds(truth))
+    edgeTracker = tracker
+  } else if k > 0, k % edgeEvery == 0, let tracker = edgeTracker, let edgeFrame {
+    edgeCut = try tracker.step(edgeFrame)
   }
 
   let shiftFrom = window.count / 2
@@ -915,16 +936,9 @@ for (k, f) in window.enumerated() {
       // Pinned at its true depth: as the app pins where LiDAR or ARKit's points put it.
       shape.depthKnown = run.start == 1
       run.shape = shape
-      // EdgeTAM started from the pinned cut's box (LensiARView.followEdge's first step).
-      if run.edge, let edgeFrame, let models = EdgeTAMTracker.Models.shared {
-        let tracker = try EdgeTAMTracker(models: models)
-        _ = try tracker.start(edgeFrame, box: LiveTracker.bounds(truth))
-        run.tracker = tracker
-      }
-    } else if run.edge, run.pending == nil, k % edgeEvery == 0, let shape = run.shape, let tracker = run.tracker, let edgeFrame {
+    } else if run.edge, run.pending == nil, let cut = edgeCut, let shape = run.shape {
       // EdgeTAM's step (LensiARView.followEdge): what it finds is laid in the world, up close the
       // whole outline going where the part on the picture went.
-      let cut = try tracker.step(edgeFrame)
       run.cuts += 1
       var world: [simd_float3]?
       var depth: Float?
@@ -948,7 +962,8 @@ for (k, f) in window.enumerated() {
           // Up close, the whole outline as it should be, moved onto the part on the picture however
           // far that is from where it should be (that's what's stale).
           if !whole, let predicted = predictedNow, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
-             let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4) {
+             let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: shape.still && shape.depthKnown ? 1.1 : 1.4,
+                                           splice: run.splice, scale: size) {
             ring = moved
           }
           let inside = CGPoint(x: ring.map(\.x).reduce(0, +) / CGFloat(ring.count), y: ring.map(\.y).reduce(0, +) / CGFloat(ring.count))
@@ -967,7 +982,7 @@ for (k, f) in window.enumerated() {
         } else {
           if edgeOf(seen), let predicted = predictedNow, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
             let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
-            if let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose, scaleLimit: limit) {
+            if let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: .loose, scaleLimit: limit, splice: run.splice, scale: size) {
               ring = followed
             } else {
               taken = false
@@ -986,7 +1001,9 @@ for (k, f) in window.enumerated() {
         }
       }
       let asking = LiveTracker.asking(still: shape.still)
-      let smoothing = shape.still ? run.stillSmoothing ?? asking.smoothing : asking.smoothing
+      // While the phone moves round a still thing its outline really changes (edgespm@far).
+      let phoneMoving = phoneTurn > 0.3 || phoneMove > 0.1
+      let smoothing = shape.still ? (run.lightWhileMoving && phoneMoving ? OutlineMath.Smoothing.light : run.stillSmoothing ?? asking.smoothing) : asking.smoothing
       var pending = Cut(due: k + latency, t: t, camera: camera, world: world, depth: depth, smoothing: smoothing)
       pending.middle = middle
       pending.replace = replace
@@ -1008,7 +1025,7 @@ for (k, f) in window.enumerated() {
         if m.score >= 0.5, m.polygon.count > 2 {
           let cut = OutlineMath.resample(m.polygon, scale: size)
           let limit: CGFloat = run.clamp && still && shape.depthKnown ? 1.1 : 1.4
-          if let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate, scaleLimit: limit) {
+          if let ring = LiveTracker.follow(cut: cut, predicted: predicted, gate: asking.gate, scaleLimit: limit, splice: run.splice, scale: size) {
             let plane = camera.withPlane(through: OutlineMath.centre(now))
             let laid = ring.compactMap { plane.onPlane($0) }
             if laid.count == ring.count { world = laid }
@@ -1061,14 +1078,8 @@ for (k, f) in window.enumerated() {
     }
     if k == 0 {
       // Pinned from the strip: its cut is there at once, and EdgeTAM starts from its box.
-      if let edgeFrame, let models = EdgeTAMTracker.Models.shared, truth.count > 2 {
-        let tracker = try EdgeTAMTracker(models: models)
-        _ = try tracker.start(edgeFrame, box: LiveTracker.bounds(truth))
-        flatTracker = tracker
-        for run in flatRuns { run.follower.place("", truth, at: t) }
-      }
-    } else if flatPending == nil, k % edgeEvery == 0, let tracker = flatTracker, let edgeFrame {
-      let cut = try tracker.step(edgeFrame)
+      if edgeTracker != nil { for run in flatRuns { run.follower.place("", truth, at: t) } }
+    } else if flatPending == nil, let cut = edgeCut {
       flatCuts += 1
       flatPending = (due: k + latency, t: t, cut: cut)
       for run in flatRuns { run.follower.looking(at: t) }

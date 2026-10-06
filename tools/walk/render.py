@@ -11,6 +11,9 @@ are drawn as the iPad recorded them, turned so the room's up is up. Writes, top 
   <name>-depth.mp4         ARKit alone at a depth 40% off / at the right depth: what a wrong
                            depth does by itself as the camera moves
   <name>-face.mp4          EdgeTAM's outline left a flat card / turned to face the camera
+  <name>-splice.mp4        up close, the whole outline moved onto EdgeTAM's cut / the cut itself on
+                           the picture (LiveTracker.spliced)
+  <name>-flat.mp4          the app at 1x / EdgeTAM on the picture alone, as at 0.5x
 and <name>.mp4, the app now, bigger.
 """
 import json
@@ -42,6 +45,8 @@ CAPTIONS = {
     "shift@true": "EdgeTAM, ARKit's world moved halfway (0.5x and back): laid afresh",
     "shiftn@true": "EdgeTAM, ARKit's world moved halfway (0.5x and back): as before",
     "edgefc@far": "EdgeTAM, the outline turned to face the camera, pinned 40% too far",
+    "edgesp@far": "EdgeTAM, on the picture its own cut, pinned 40% too far",
+    "flat-flow": "EdgeTAM on the picture alone, bent by its pixels (0.5x)",
 }
 
 PAIRS = [
@@ -55,6 +60,8 @@ PAIRS = [
     ("shift", "shiftn@true", "shift@true"),
     ("depth", "arkit@far", "arkit@true"),
     ("face", "edge@far", "edgefc@far"),
+    ("splice", "edge@far", "edgesp@far"),
+    ("flat", "edge@far", "flat-flow"),
 ]
 
 
@@ -92,7 +99,7 @@ def main():
     h, w = first.shape[:2]
     fps = 30
     s = 2
-    app = os.environ.get("WALK_APP", "steady@true")
+    app = os.environ.get("WALK_APP", "edge@far" if "edge@far" in runs else "steady@true")
     single = writer(os.path.join(out_dir, f"{name}.mp4"), w * s, h * s, fps)
     pairs = [(top, bottom, writer(os.path.join(out_dir, f"{name}-{tag}.mp4"), w, h * 2, fps))
              for tag, top, bottom in PAIRS if top in runs and bottom in runs]

@@ -238,6 +238,31 @@ func checkTracker() -> Bool {
   let want = [CGPoint(x: 0.38, y: 0.45), CGPoint(x: 0.62, y: 0.45), CGPoint(x: 0.62, y: 1.41), CGPoint(x: 0.38, y: 1.41)]
   expect(grown.map { zip($0, want).allSatisfy { abs($0.x - $1.x) < 1e-6 && abs($0.y - $1.y) < 1e-6 } } ?? false,
          "a step closer, the whole thing grows from its top: \(String(describing: grown))")
+  // Spliced: on the picture the cut's own shape (a point sticking out left that the whole outline
+  // doesn't have), off it the whole outline's (out to x 1.2).
+  let wholeOff = OutlineMath.resample(half)
+  let pointed = OutlineMath.resample([CGPoint(x: 0.8, y: 0.4), CGPoint(x: 1, y: 0.4), CGPoint(x: 1, y: 0.6), CGPoint(x: 0.8, y: 0.6), CGPoint(x: 0.7, y: 0.5)])
+  let joined = LiveTracker.spliced(pointed, onto: wholeOff)
+  let onPicture = LiveTracker.clipped(joined)
+  expect(joined.count == wholeOff.count, "spliced keeps the whole outline's count: \(joined.count)")
+  expect(abs(LiveTracker.area(onPicture) - LiveTracker.area(pointed)) < 0.002 && LiveTracker.iou(onPicture, pointed) > 0.95,
+         "on the picture the splice is the cut: \(LiveTracker.area(onPicture)) against \(LiveTracker.area(pointed))")
+  expect(abs(LiveTracker.area(joined) - LiveTracker.area(pointed) - 0.04) < 0.003,
+         "off the picture the whole outline's part: \(LiveTracker.area(joined) - LiveTracker.area(pointed)) against 0.04")
+  // The other way round, and through follow: the same.
+  let joinedBack = LiveTracker.spliced(pointed, onto: Array(wholeOff.reversed()))
+  expect(abs(LiveTracker.area(joinedBack) - LiveTracker.area(joined)) < 0.002, "the whole outline either way round")
+  let viaFollow = LiveTracker.follow(cut: pointed, predicted: wholeOff, gate: .loose, scaleLimit: 1, splice: true)
+  expect(viaFollow.map { LiveTracker.iou(LiveTracker.clipped($0), pointed) > 0.95 } ?? false, "follow splices when asked")
+  // A cut that doesn't reach the edge says the thing ends before it: the cut alone.
+  let short = OutlineMath.resample([CGPoint(x: 0.8, y: 0.4), CGPoint(x: 0.95, y: 0.4), CGPoint(x: 0.95, y: 0.6), CGPoint(x: 0.8, y: 0.6)])
+  expect(abs(LiveTracker.area(LiveTracker.spliced(short, onto: wholeOff)) - LiveTracker.area(short)) < 0.001, "a cut short of the edge stands alone")
+  // Off a corner: the whole outline past the right and the bottom, the cut along both.
+  let corner = OutlineMath.resample([CGPoint(x: 0.8, y: 0.8), CGPoint(x: 1.2, y: 0.8), CGPoint(x: 1.2, y: 1.2), CGPoint(x: 0.8, y: 1.2)])
+  let cornerCut = OutlineMath.resample([CGPoint(x: 0.85, y: 0.8), CGPoint(x: 1, y: 0.8), CGPoint(x: 1, y: 1), CGPoint(x: 0.8, y: 1), CGPoint(x: 0.8, y: 0.85)])
+  let cornered = LiveTracker.spliced(cornerCut, onto: corner)
+  expect(LiveTracker.iou(LiveTracker.clipped(cornered), cornerCut) > 0.95 && abs(LiveTracker.area(cornered) - (LiveTracker.area(cornerCut) + 0.12)) < 0.005,
+         "off a corner: \(LiveTracker.area(cornered)) against \(LiveTracker.area(cornerCut) + 0.12)")
   if failures.isEmpty {
     print("tracker: ok")
     return true

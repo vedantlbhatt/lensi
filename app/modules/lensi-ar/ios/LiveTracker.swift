@@ -50,13 +50,162 @@ enum LiveTracker {
   /// that's on the picture, and rather than shrinking the thing to what's in view, the whole
   /// prediction moves the way the cut's own edges moved (the ones not on the picture's edge).
   /// `scaleLimit`: how much bigger or smaller one cut can make it.
-  static func follow(cut: [CGPoint], predicted: [CGPoint], gate: Gate = .loose, scaleLimit: CGFloat = 1.4) -> [CGPoint]? {
+  /// `splice`: what's on the picture is the cut itself, and only what's off it is the moved
+  /// prediction (`spliced`); false, the moved prediction throughout, its shape as it was when it was
+  /// last seen whole. `scale`: the picture's size, for the splice's evenly spaced points.
+  static func follow(cut: [CGPoint], predicted: [CGPoint], gate: Gate = .loose, scaleLimit: CGFloat = 1.4,
+                     splice: Bool = LiveTracker.splices, scale: CGSize = CGSize(width: 1, height: 1)) -> [CGPoint]? {
     guard cut.count >= 3, predicted.count >= 3 else { return nil }
     let visible = clipped(predicted)
     guard visible.count >= 3, accepts(cut, predicted: visible, gate: gate) else { return nil }
     guard visibleFraction(predicted) < wholeVisible else { return cut }
     let fit = edgeFit(from: bounds(visible), to: bounds(cut), limit: scaleLimit)
-    return predicted.map { CGPoint(x: fit.to.x + ($0.x - fit.from.x) * fit.scale, y: fit.to.y + ($0.y - fit.from.y) * fit.scale) }
+    let moved = predicted.map { CGPoint(x: fit.to.x + ($0.x - fit.from.x) * fit.scale, y: fit.to.y + ($0.y - fit.from.y) * fit.scale) }
+    return splice ? spliced(cut, onto: moved, scale: scale) : moved
+  }
+
+  /// Whether `follow` splices a cut that's only part of its thing onto the rest of it (`spliced`).
+  static let splices = false
+
+  /// `cut`, the part of a thing on the picture (its points on the picture's edge where the thing
+  /// runs off it), joined to the part of `whole` (the whole outline, where it should be) that's off
+  /// the picture: on the picture it's the cut's own shape, and only past the edge is it as the thing
+  /// was last seen. Each stretch of the cut along the picture's edge gives way to the stretch of
+  /// `whole` that goes out past the edge near it, joined to the cut along the edge (the outline of
+  /// the two together); one with no such stretch near it stays on the edge, and a stretch of `whole`
+  /// out past an edge the cut doesn't reach is left off (the cut says it ends before it).
+  /// As many points as `whole`, evenly spaced in `scale`.
+  static func spliced(_ cut: [CGPoint], onto whole: [CGPoint], scale: CGSize = CGSize(width: 1, height: 1),
+                      margin: CGFloat = 0.006) -> [CGPoint] {
+    guard cut.count >= 3, whole.count >= 3 else { return cut }
+    let onEdge = { (p: CGPoint) in p.x < margin || p.x > 1 - margin || p.y < margin || p.y > 1 - margin }
+    let off = { (p: CGPoint) in p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1 }
+    // The same way round as the cut.
+    let outline = signedArea(cut).sign == signedArea(whole).sign ? whole : Array(whole.reversed())
+    guard let edges = runs(cut.map(onEdge)), !edges.runs.isEmpty, let offs = runs(outline.map(off)), !offs.runs.isEmpty else {
+      return OutlineMath.resample(cut, count: whole.count, scale: scale)
+    }
+    let (cs, edgeRuns) = edges
+    let (ws, offRuns) = offs
+    let n = cut.count, m = outline.count
+    let c = { (i: Int) in cut[(cs + i) % n] }
+    let w = { (j: Int) in outline[(ws + j + m) % m] }
+    // Where each stretch of `whole` leaves the picture and comes back on to it.
+    let out = offRuns.map { r in (run: r, leaves: leaving(w(r.0 - 1), w(r.0)), returns: leaving(w(r.1 + 1), w(r.1))) }
+    let side = max(scale.width, scale.height)
+    let gap = { (a: CGPoint, b: CGPoint) in hypot((a.x - b.x) * scale.width, (a.y - b.y) * scale.height) / side }
+    // Nearest first: the cut reaches the edge where `whole` leaves the picture, and leaves it where
+    // `whole` comes back (both run the same way round).
+    var pairs: [(cost: CGFloat, e: Int, o: Int)] = []
+    for (e, r) in edgeRuns.enumerated() {
+      for (o, x) in out.enumerated() { pairs.append((gap(c(r.0), x.leaves) + gap(c(r.1), x.returns), e, o)) }
+    }
+    var matched: [Int: Int] = [:]
+    var used = Set<Int>()
+    for p in pairs.sorted(by: { $0.cost < $1.cost }) where p.cost <= 0.5 && matched[p.e] == nil && !used.contains(p.o) {
+      matched[p.e] = p.o
+      used.insert(p.o)
+    }
+    var ring: [CGPoint] = []
+    var starts: [Int: Int] = [:]
+    for (e, r) in edgeRuns.enumerated() { starts[r.0] = e }
+    var i = 0
+    while i < n {
+      guard let e = starts[i] else {
+        ring.append(c(i))
+        i += 1
+        continue
+      }
+      let r = edgeRuns[e]
+      if let o = matched[e] {
+        let x = out[o]
+        ring.append(c(r.0))
+        ring += border(from: c(r.0), to: x.leaves)
+        ring.append(x.leaves)
+        for j in x.run.0...x.run.1 { ring.append(w(j)) }
+        ring.append(x.returns)
+        ring += border(from: x.returns, to: c(r.1))
+        ring.append(c(r.1))
+      } else {
+        for j in r.0...r.1 { ring.append(c(j)) }
+      }
+      i = r.1 + 1
+    }
+    return OutlineMath.resample(ring, count: whole.count, scale: scale)
+  }
+
+  /// Twice a ring's area, signed by which way round it runs.
+  static func signedArea(_ poly: [CGPoint]) -> CGFloat {
+    var s: CGFloat = 0
+    for i in 0..<poly.count {
+      let a = poly[i], b = poly[(i + 1) % poly.count]
+      s += a.x * b.y - b.x * a.y
+    }
+    return s
+  }
+
+  /// The longest stretches of true in a ring of flags, as first and last index counted from
+  /// `start` (a false one); nil when they're all true or all false.
+  private static func runs(_ flags: [Bool]) -> (start: Int, runs: [(Int, Int)])? {
+    guard let start = flags.firstIndex(of: false), flags.contains(true) else { return nil }
+    let n = flags.count
+    var out: [(Int, Int)] = []
+    var i = 0
+    while i < n {
+      if flags[(start + i) % n] {
+        let first = i
+        while i + 1 < n, flags[(start + i + 1) % n] { i += 1 }
+        out.append((first, i))
+      }
+      i += 1
+    }
+    return (start, out)
+  }
+
+  /// Where the segment from `p` (on the picture) to `q` (off it) leaves the picture.
+  private static func leaving(_ p: CGPoint, _ q: CGPoint) -> CGPoint {
+    var t: CGFloat = 1
+    let dx = q.x - p.x, dy = q.y - p.y
+    if q.x < 0, dx != 0 { t = min(t, -p.x / dx) }
+    if q.x > 1, dx != 0 { t = min(t, (1 - p.x) / dx) }
+    if q.y < 0, dy != 0 { t = min(t, -p.y / dy) }
+    if q.y > 1, dy != 0 { t = min(t, (1 - p.y) / dy) }
+    t = max(t, 0)
+    return CGPoint(x: p.x + dx * t, y: p.y + dy * t)
+  }
+
+  /// The picture's corners passed going from `p` to `q` (both on its edge) the shorter way round.
+  private static func border(from p: CGPoint, to q: CGPoint) -> [CGPoint] {
+    // How far round the edge: 0 at the top left, 1 at the top right, 2 bottom right, 3 bottom left.
+    func around(_ p: CGPoint) -> CGFloat {
+      let x = min(max(p.x, 0), 1), y = min(max(p.y, 0), 1)
+      let nearest = [y, 1 - x, 1 - y, x]
+      switch nearest.firstIndex(of: nearest.min()!)! {
+      case 0: return x
+      case 1: return 1 + y
+      case 2: return 2 + (1 - x)
+      default: return 3 + (1 - y)
+      }
+    }
+    let corners = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
+    let a = around(p), b = around(q)
+    let forward = (b - a).truncatingRemainder(dividingBy: 4) + ((b - a) < 0 ? 4 : 0)
+    var out: [CGPoint] = []
+    if forward <= 2 {
+      var k = Int(a.rounded(.down)) + 1
+      while CGFloat(k) - a < forward, out.count < 4 {
+        out.append(corners[k % 4])
+        k += 1
+      }
+    } else {
+      let back = 4 - forward
+      var k = Int(a.rounded(.up)) - 1
+      while a - CGFloat(k) < back, out.count < 4 {
+        out.append(corners[((k % 4) + 4) % 4])
+        k -= 1
+      }
+    }
+    return out
   }
 
   /// How a box moved and grew, from the sides of it that are really its own: a side on the
