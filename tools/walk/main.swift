@@ -64,7 +64,9 @@
 //                brought on and blended lightly while the phone moves; edgefc@far turned to face;
 //                edgespx@far spliced and, while the phone moves, blended in more lightly still
 //                (.minimal); edgespz@far not blended at all while it moves; edgefast@far the app now
-//                with EdgeTAM looking at every frame, answering a frame later
+//                with EdgeTAM looking at every frame, answering a frame later; edgespc@far the app now
+//                carried by the flow while the phone walks round (over LiveShape.fastMove) but doesn't
+//                turn fast; edgespg@far carried throughout, guided by ARKit's poses
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -681,6 +683,10 @@ final class Run {
   /// EdgeTAM looks at every frame and answers one frame later (30 times a second, as the phone does
   /// when it keeps up: LensiARView.segmentLive's gap), rather than every other frame two frames later.
   let everyFrame: Bool
+  /// Carried by the flow between cuts while the phone moves fast too, unless it turns fast (a blur):
+  /// walking round a thing at half a metre a second counts as fast, and held by ARKit at a depth
+  /// that's only a guess it slides off its thing then.
+  let flowWhileWalking: Bool
   /// Each cut, as it lands, brought on from the frame it was made from to the newest by the
   /// picture's own pixels (LiveFlow.bend, frame by frame, as FlatFollower brings EdgeTAM's answers
   /// at 0.5x) and laid from where the phone is now, rather than laid from where it was then: at a
@@ -706,8 +712,10 @@ final class Run {
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
        faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false,
-       bringsForward: Bool = false, rescues: Bool = false, movingSmoothing: OutlineMath.Smoothing? = nil, everyFrame: Bool = false) {
+       bringsForward: Bool = false, rescues: Bool = false, movingSmoothing: OutlineMath.Smoothing? = nil, everyFrame: Bool = false,
+       flowWhileWalking: Bool = false) {
     self.label = label
+    self.flowWhileWalking = flowWhileWalking
     self.everyFrame = everyFrame
     self.movingSmoothing = movingSmoothing
     self.bringsForward = bringsForward
@@ -758,6 +766,10 @@ let runs = [
   // Spliced, and after three refusals in a row the next cut taken however it fits.
   Run("edgespr@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, rescues: true),
   Run("edgespr@true", start: 1, noflow: true, sight: true, edge: true, splice: true, rescues: true),
+  // The app now, carried by the flow while the phone walks round too (not while it turns fast); and
+  // carried throughout, the flow starting where ARKit says the outline went (LiveShape.guided).
+  Run("edgespc@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, flowWhileWalking: true),
+  Run("edgespg@far", start: 1.4, noflow: true, sight: true, edge: true, guided: true, splice: true, lightWhileMoving: true),
   // The app now (spliced, lightly while the phone moves) with EdgeTAM looking at every frame.
   Run("edgefast@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true),
   // Spliced, and while the phone moves blended in more lightly still (.minimal), or not at all.
@@ -969,7 +981,7 @@ for (k, f) in window.enumerated() {
     let camera = run.shift && k >= shiftFrom ? trueCamera.shifted(worldShift) : trueCamera
     if run.shift, k == shiftFrom { run.returning = true }
     // Between cuts, its own pixels (LensiARView.flowLive), not while the phone moves fast.
-    if !run.once, !run.shift, !fast || run.guided, var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still && shape.depthKnown), let previous, let flowFrame {
+    if !run.once, !run.shift, !fast || run.guided || (run.flowWhileWalking && phoneTurn <= LiveShape.fastTurn), var shape = run.shape, shape.misses < 2, !(run.noflow && shape.still && shape.depthKnown), let previous, let flowFrame {
       if shape.carry(from: previous.frame, previous.camera, at: previous.t, to: flowFrame, camera, at: t) { run.carried += 1 }
       run.shape = shape
     }
