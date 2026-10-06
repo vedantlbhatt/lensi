@@ -116,6 +116,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// than 50: nine walk-arounds J 84.4% -> 84.8% (better on seven, worse on none), going round a
   /// table 81.3% -> 82.5%, for slip 3.2 -> 3.5 px (tools/walk's nowe@far).
   static let easeWhileMoving = true
+  /// At 0.5x, while the phone is held still (the gyro under 0.3 radians a second), each EdgeTAM answer
+  /// is glided into what's shown (FlatFollower.glides) rather than taken as it is (tools/walk's
+  /// flat-glide).
+  static let wideGlidesWhileStill = false
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -1255,8 +1259,11 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         var answers: [String: [CGPoint]?] = [:]
         for key in asked { answers.updateValue(found[key].map { OutlineMath.resample($0, scale: size) }, forKey: key) }
         let keep = Set(self.pinOrder.filter { self.liveShapes[$0]?.pinned == true || self.flatPins.contains($0) })
+        // Held still, each answer is glided into what's shown (`wideGlidesWhileStill`).
+        let glides = Self.wideGlidesWhileStill && (self.wide?.turnRate ?? 0) < 0.3
         self.wideFlowQueue.async { [weak self] in
           follower.keep(keep)
+          follower.glides = glides
           follower.answer(answers.filter { keep.contains($0.key) }, at: t, size: size)
           self?.showWide(follower, session: session)
         }
