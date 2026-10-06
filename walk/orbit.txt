@@ -1,0 +1,134 @@
+orbit-42446522: 2933 frames, 956 poses, 9 boxes, 2933 lenses, 5864 depth maps
+orbit-42446522: the camera goes round no thing wholly in view
+orbit-44358435: 5238 frames, 1739 poses, 10 boxes, 5238 lenses, 10473 depth maps
+orbit-44358435: the camera goes round no thing wholly in view
+orbit-47895556: 1853 frames, 548 poses, 5 boxes, 1853 lenses, 3704 depth maps
+orbit-47895556: the camera goes round no thing wholly in view
+orbit-47331322: 1880 frames, 609 poses, 16 boxes, 1880 lenses, 3759 depth maps
+orbit-47331322: the camera goes round no thing wholly in view
+orbit-42898497: 12344 frames, 4106 poses, 12 boxes, 12344 lenses, 22115 depth maps
+orbit-42898497: the stool, frames 7220-7399 (6.0 s); 3.06 m to 3.57 m away (x1.2), partly off the picture or close up in 0 frames; the camera travels 277 cm and turns 67 degrees
+orbit-42898497: the phone moved fast in 94 of 180 frames; the 3D box's own lurch 0.9 px; LiDAR inside the cut / the box's middle: 0.92 (180 frames)
+  arkit@true   J 43.1%  lost 73%  on the box 94.0%  slip 0.1 px  lurch 0.9 px  depth off 1% (ends x1.02)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  arkit@far    J 13.5%  lost 92%  on the box 38.3%  slip 0.7 px  lurch 0.8 px  depth off 40% (ends x1.41)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  app@far      J 48.2%  lost 43%  on the box 58.0%  slip 1.2 px  lurch 1.7 px  depth off 46% (ends x1.56)  (44 cuts, 0 refused, 85 carried, 0 measured, 0 laid afresh)
+  steady@true  J 52.6%  lost 43%  on the box 61.6%  slip 0.7 px  lurch 1.3 px  depth off 1% (ends x1.03)  (44 cuts, 18 refused, 0 carried, 0 measured, 0 laid afresh)
+  steady@far   J 48.2%  lost 43%  on the box 58.0%  slip 1.2 px  lurch 1.7 px  depth off 46% (ends x1.56)  (44 cuts, 0 refused, 85 carried, 0 measured, 0 laid afresh)
+  edge@true    J 49.7%  lost 43%  on the box 49.5%  slip 0.6 px  lurch 1.2 px  depth off 10% (ends x0.88)  (89 cuts, 0 refused, 4 carried, 2 measured, 0 laid afresh)
+  edge@far     J 48.9%  lost 43%  on the box 50.1%  slip 0.7 px  lurch 1.3 px  depth off 16% (ends x0.89)  (89 cuts, 0 refused, 11 carried, 5 measured, 0 laid afresh)
+  now@true     J 50.8%  lost 44%  on the box 49.3%  slip 0.9 px  lurch 1.4 px  depth off 8% (ends x0.94)  (179 cuts, 0 refused, 26 carried, 3 measured, 0 laid afresh)
+  now@far      J 50.6%  lost 44%  on the box 49.4%  slip 1.0 px  lurch 1.5 px  depth off 14% (ends x0.98)  (179 cuts, 0 refused, 61 carried, 7 measured, 0 laid afresh)
+  nowe@far     J 50.7%  lost 44%  on the box 49.1%  slip 1.1 px  lurch 1.7 px  depth off 14% (ends x0.98)  (179 cuts, 0 refused, 61 carried, 7 measured, 0 laid afresh)
+  edgesp@far   J 48.9%  lost 43%  on the box 50.1%  slip 0.7 px  lurch 1.3 px  depth off 16% (ends x0.89)  (89 cuts, 0 refused, 11 carried, 5 measured, 0 laid afresh)
+  edgespm@far  J 49.3%  lost 43%  on the box 49.9%  slip 0.9 px  lurch 1.6 px  depth off 16% (ends x0.89)  (89 cuts, 0 refused, 12 carried, 5 measured, 0 laid afresh)
+  edgel@far    J 50.4%  lost 43%  on the box 50.0%  slip 0.6 px  lurch 1.2 px  depth off 9% (ends x0.83)  (89 cuts, 0 refused, 10 carried, 88 measured, 0 laid afresh)
+  shift@true   J 49.3%  lost 44%  on the box 49.2%  slip 1.5 px  lurch 3.0 px  depth off 6% (ends x0.95)  (89 cuts, 0 refused, 0 carried, 3 measured, 1 laid afresh)
+  shiftn@true  J 48.6%  lost 46%  on the box 51.2%  slip 2.4 px  lurch 4.2 px  depth off 10% (ends x1.13)  (89 cuts, 0 refused, 0 carried, 8 measured, 0 laid afresh)
+  flat-none    J 46.0%  lost 47%  on the box 51.5%  slip 3.5 px  lurch 5.7 px  (89 cuts, flat)
+  flat-gyro    J 45.5%  lost 44%  on the box 56.0%  slip 3.1 px  lurch 5.9 px  (89 cuts, flat)
+  flat-flow    J 51.1%  lost 43%  on the box 48.8%  slip 1.5 px  lurch 2.3 px  (89 cuts, flat)
+  flat-every   J 50.8%  lost 44%  on the box 48.7%  slip 1.6 px  lurch 2.3 px  (179 cuts, flat)
+  flat-glide   J 50.8%  lost 44%  on the box 48.7%  slip 1.6 px  lurch 2.3 px  (179 cuts, flat)
+orbit-42897538: 3192 frames, 1043 poses, 15 boxes, 3192 lenses, 6383 depth maps
+orbit-42897538: the table, frames 2090-2269 (6.0 s); 1.46 m to 1.91 m away (x1.3), partly off the picture or close up in 0 frames; the camera travels 329 cm and turns 105 degrees
+orbit-42897538: the phone moved fast in 97 of 180 frames; the 3D box's own lurch 1.2 px; LiDAR inside the cut / the box's middle: 0.92 (180 frames)
+  arkit@true   J 55.5%  lost 44%  on the box 98.6%  slip 0.2 px  lurch 1.2 px  depth off 2% (ends x1.02)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  arkit@far    J 27.2%  lost 80%  on the box 44.3%  slip 1.8 px  lurch 1.2 px  depth off 28% (ends x1.07)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  app@far      J 72.3%  lost 2%  on the box 98.8%  slip 1.7 px  lurch 2.3 px  depth off 40% (ends x1.48)  (44 cuts, 0 refused, 82 carried, 0 measured, 0 laid afresh)
+  steady@true  J 80.9%  lost 0%  on the box 99.5%  slip 1.5 px  lurch 2.5 px  depth off 1% (ends x1.02)  (44 cuts, 0 refused, 4 carried, 0 measured, 0 laid afresh)
+  steady@far   J 72.3%  lost 2%  on the box 98.8%  slip 1.7 px  lurch 2.3 px  depth off 40% (ends x1.48)  (44 cuts, 0 refused, 82 carried, 0 measured, 0 laid afresh)
+  edge@true    J 79.2%  lost 0%  on the box 99.5%  slip 0.8 px  lurch 1.6 px  depth off 0% (ends x1.00)  (89 cuts, 0 refused, 1 carried, 0 measured, 0 laid afresh)
+  edge@far     J 70.9%  lost 2%  on the box 99.4%  slip 1.3 px  lurch 1.9 px  depth off 40% (ends x1.47)  (89 cuts, 0 refused, 81 carried, 0 measured, 0 laid afresh)
+  now@true     J 81.5%  lost 0%  on the box 99.5%  slip 2.0 px  lurch 3.1 px  depth off 0% (ends x1.00)  (179 cuts, 0 refused, 27 carried, 0 measured, 0 laid afresh)
+  now@far      J 80.8%  lost 0%  on the box 99.7%  slip 1.8 px  lurch 2.6 px  depth off 40% (ends x1.49)  (179 cuts, 0 refused, 179 carried, 0 measured, 0 laid afresh)
+  nowe@far     J 81.9%  lost 0%  on the box 99.6%  slip 2.2 px  lurch 3.3 px  depth off 40% (ends x1.49)  (179 cuts, 0 refused, 179 carried, 0 measured, 0 laid afresh)
+  edgesp@far   J 70.9%  lost 2%  on the box 99.4%  slip 1.3 px  lurch 1.9 px  depth off 40% (ends x1.47)  (89 cuts, 0 refused, 81 carried, 0 measured, 0 laid afresh)
+  edgespm@far  J 75.1%  lost 0%  on the box 99.8%  slip 1.6 px  lurch 2.4 px  depth off 40% (ends x1.49)  (89 cuts, 0 refused, 82 carried, 0 measured, 0 laid afresh)
+  edgel@far    J 78.2%  lost 0%  on the box 98.8%  slip 1.0 px  lurch 1.8 px  depth off 12% (ends x0.84)  (89 cuts, 0 refused, 8 carried, 88 measured, 0 laid afresh)
+  shift@true   J 79.2%  lost 1%  on the box 99.3%  slip 1.3 px  lurch 2.6 px  depth off 2% (ends x0.96)  (89 cuts, 0 refused, 0 carried, 0 measured, 1 laid afresh)
+  shiftn@true  J 78.8%  lost 1%  on the box 99.1%  slip 1.3 px  lurch 2.2 px  depth off 3% (ends x0.95)  (89 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  flat-none    J 71.9%  lost 2%  on the box 98.0%  slip 5.4 px  lurch 8.2 px  (89 cuts, flat)
+  flat-gyro    J 63.6%  lost 11%  on the box 97.9%  slip 6.3 px  lurch 11.9 px  (89 cuts, flat)
+  flat-flow    J 83.3%  lost 0%  on the box 99.5%  slip 2.5 px  lurch 3.8 px  (89 cuts, flat)
+  flat-every   J 82.7%  lost 1%  on the box 99.4%  slip 3.3 px  lurch 5.1 px  (179 cuts, flat)
+  flat-glide   J 82.7%  lost 1%  on the box 99.4%  slip 3.3 px  lurch 5.1 px  (179 cuts, flat)
+orbit-47332911: 3020 frames, 1000 poses, 3 boxes, 3020 lenses, 6040 depth maps
+orbit-47332911: the camera goes round no thing wholly in view
+orbit-42898826: 1420 frames, 466 poses, 5 boxes, 1420 lenses, 2838 depth maps
+orbit-42898826: the camera goes round no thing wholly in view
+orbit-47334234: 9186 frames, 3051 poses, 15 boxes, 9186 lenses, 17887 depth maps
+orbit-47334234: the camera goes round no thing wholly in view
+orbit-47895534: 1476 frames, 471 poses, 7 boxes, 1476 lenses, 2947 depth maps
+orbit-47895534: the camera goes round no thing wholly in view
+orbit-42899714: 4596 frames, 1525 poses, 18 boxes, 4596 lenses, 9187 depth maps
+orbit-42899714: the chair, frames 1380-1559 (6.0 s); 1.10 m to 2.46 m away (x2.2), partly off the picture or close up in 0 frames; the camera travels 362 cm and turns 112 degrees
+orbit-42899714: the pin covers only 24% of the chair's box: left out
+orbit-48018732: 2581 frames, 827 poses, 10 boxes, 2581 lenses, 5162 depth maps
+orbit-48018732: the stool, frames 860-1039 (6.0 s); 1.66 m to 1.94 m away (x1.2), partly off the picture or close up in 0 frames; the camera travels 238 cm and turns 77 degrees
+orbit-48018732: the phone moved fast in 56 of 180 frames; the 3D box's own lurch 1.1 px; LiDAR inside the cut / the box's middle: 0.91 (180 frames)
+  arkit@true   J 31.4%  lost 97%  on the box 61.6%  slip 0.4 px  lurch 1.1 px  depth off 5% (ends x0.92)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  arkit@far    J 7.1%  lost 99%  on the box 14.5%  slip 1.7 px  lurch 1.2 px  depth off 30% (ends x1.16)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  app@far      J 41.8%  lost 91%  on the box 52.9%  slip 2.0 px  lurch 2.3 px  depth off 37% (ends x1.33)  (44 cuts, 2 refused, 123 carried, 0 measured, 0 laid afresh)
+  steady@true  J 44.4%  lost 94%  on the box 56.1%  slip 0.8 px  lurch 1.4 px  depth off 6% (ends x0.90)  (44 cuts, 5 refused, 2 carried, 0 measured, 0 laid afresh)
+  steady@far   J 41.8%  lost 91%  on the box 52.9%  slip 2.0 px  lurch 2.3 px  depth off 37% (ends x1.33)  (44 cuts, 2 refused, 123 carried, 0 measured, 0 laid afresh)
+  edge@true    J 45.4%  lost 86%  on the box 56.7%  slip 0.6 px  lurch 1.2 px  depth off 5% (ends x0.91)  (89 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  edge@far     J 44.1%  lost 88%  on the box 55.5%  slip 0.7 px  lurch 1.4 px  depth off 10% (ends x1.04)  (89 cuts, 0 refused, 16 carried, 3 measured, 0 laid afresh)
+  now@true     J 45.7%  lost 74%  on the box 56.7%  slip 2.2 px  lurch 3.5 px  depth off 5% (ends x0.90)  (179 cuts, 0 refused, 22 carried, 0 measured, 0 laid afresh)
+  now@far      J 45.5%  lost 78%  on the box 56.5%  slip 2.2 px  lurch 3.4 px  depth off 8% (ends x0.97)  (179 cuts, 0 refused, 34 carried, 4 measured, 0 laid afresh)
+  nowe@far     J 45.7%  lost 76%  on the box 56.5%  slip 2.3 px  lurch 3.6 px  depth off 8% (ends x0.97)  (179 cuts, 0 refused, 34 carried, 4 measured, 0 laid afresh)
+  edgesp@far   J 44.1%  lost 88%  on the box 55.5%  slip 0.7 px  lurch 1.4 px  depth off 10% (ends x1.04)  (89 cuts, 0 refused, 16 carried, 3 measured, 0 laid afresh)
+  edgespm@far  J 44.5%  lost 90%  on the box 55.8%  slip 1.0 px  lurch 1.6 px  depth off 10% (ends x1.04)  (89 cuts, 0 refused, 17 carried, 3 measured, 0 laid afresh)
+  edgel@far    J 45.4%  lost 86%  on the box 56.7%  slip 0.6 px  lurch 1.3 px  depth off 7% (ends x0.89)  (89 cuts, 0 refused, 8 carried, 88 measured, 0 laid afresh)
+  shift@true   J 45.0%  lost 87%  on the box 56.4%  slip 1.0 px  lurch 2.1 px  depth off 2% (ends x0.98)  (89 cuts, 0 refused, 0 carried, 0 measured, 1 laid afresh)
+  shiftn@true  J 44.8%  lost 87%  on the box 56.3%  slip 1.0 px  lurch 1.8 px  depth off 2% (ends x0.98)  (89 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  flat-none    J 41.2%  lost 95%  on the box 55.2%  slip 4.5 px  lurch 6.9 px  (89 cuts, flat)
+  flat-gyro    J 39.6%  lost 98%  on the box 52.2%  slip 4.3 px  lurch 8.1 px  (89 cuts, flat)
+  flat-flow    J 45.8%  lost 78%  on the box 56.3%  slip 1.6 px  lurch 2.2 px  (89 cuts, flat)
+  flat-every   J 46.1%  lost 71%  on the box 56.7%  slip 3.1 px  lurch 5.2 px  (179 cuts, flat)
+  flat-glide   J 46.1%  lost 71%  on the box 56.7%  slip 3.1 px  lurch 5.2 px  (179 cuts, flat)
+orbit-41069021: 5656 frames, 1878 poses, 18 boxes, 5656 lenses, 11311 depth maps
+orbit-41069021: the table, frames 1780-1959 (6.0 s); 1.35 m to 1.70 m away (x1.3), partly off the picture or close up in 0 frames; the camera travels 172 cm and turns 74 degrees
+orbit-41069021: the phone moved fast in 0 of 180 frames; the 3D box's own lurch 0.6 px; LiDAR inside the cut / the box's middle: 1.00 (180 frames)
+  arkit@true   J 45.4%  lost 52%  on the box 88.5%  slip 0.3 px  lurch 0.6 px  depth off 3% (ends x1.07)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  arkit@far    J 40.1%  lost 72%  on the box 60.0%  slip 0.9 px  lurch 0.6 px  depth off 41% (ends x1.39)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  app@far      J 55.0%  lost 44%  on the box 74.6%  slip 2.9 px  lurch 3.1 px  depth off 46% (ends x1.55)  (44 cuts, 11 refused, 143 carried, 0 measured, 0 laid afresh)
+  steady@true  J 49.3%  lost 54%  on the box 77.7%  slip 1.6 px  lurch 1.8 px  depth off 3% (ends x1.07)  (44 cuts, 28 refused, 0 carried, 0 measured, 0 laid afresh)
+  steady@far   J 55.0%  lost 45%  on the box 74.7%  slip 2.9 px  lurch 3.2 px  depth off 46% (ends x1.56)  (44 cuts, 11 refused, 143 carried, 0 measured, 0 laid afresh)
+  edge@true    J 50.2%  lost 37%  on the box 93.1%  slip 0.6 px  lurch 0.8 px  depth off 3% (ends x1.08)  (89 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  edge@far     J 50.1%  lost 38%  on the box 93.6%  slip 0.7 px  lurch 1.1 px  depth off 50% (ends x1.63)  (89 cuts, 0 refused, 179 carried, 0 measured, 0 laid afresh)
+  now@true     J 51.6%  lost 38%  on the box 92.7%  slip 1.4 px  lurch 2.0 px  depth off 3% (ends x1.08)  (179 cuts, 0 refused, 12 carried, 0 measured, 0 laid afresh)
+  now@far      J 51.7%  lost 38%  on the box 92.9%  slip 1.2 px  lurch 1.5 px  depth off 51% (ends x1.65)  (179 cuts, 0 refused, 179 carried, 0 measured, 0 laid afresh)
+  nowe@far     J 51.7%  lost 38%  on the box 92.7%  slip 1.5 px  lurch 2.0 px  depth off 51% (ends x1.65)  (179 cuts, 0 refused, 179 carried, 0 measured, 0 laid afresh)
+  edgesp@far   J 50.1%  lost 38%  on the box 93.6%  slip 0.7 px  lurch 1.1 px  depth off 50% (ends x1.63)  (89 cuts, 0 refused, 179 carried, 0 measured, 0 laid afresh)
+  edgespm@far  J 50.2%  lost 37%  on the box 93.5%  slip 0.9 px  lurch 1.3 px  depth off 51% (ends x1.64)  (89 cuts, 0 refused, 179 carried, 0 measured, 0 laid afresh)
+  edgel@far    J 50.2%  lost 37%  on the box 92.9%  slip 0.6 px  lurch 0.8 px  depth off 5% (ends x1.00)  (89 cuts, 0 refused, 8 carried, 88 measured, 0 laid afresh)
+  shift@true   J 50.1%  lost 37%  on the box 93.1%  slip 1.2 px  lurch 2.0 px  depth off 8% (ends x1.19)  (89 cuts, 0 refused, 0 carried, 0 measured, 1 laid afresh)
+  shiftn@true  J 50.3%  lost 37%  on the box 93.1%  slip 1.4 px  lurch 2.1 px  depth off 7% (ends x1.16)  (89 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  flat-none    J 48.9%  lost 39%  on the box 92.1%  slip 3.5 px  lurch 5.8 px  (89 cuts, flat)
+  flat-gyro    J 49.9%  lost 37%  on the box 93.7%  slip 3.8 px  lurch 7.2 px  (89 cuts, flat)
+  flat-flow    J 50.3%  lost 37%  on the box 92.7%  slip 1.7 px  lurch 2.6 px  (89 cuts, flat)
+  flat-every   J 51.6%  lost 38%  on the box 92.5%  slip 2.7 px  lurch 4.3 px  (179 cuts, flat)
+  flat-glide   J 51.6%  lost 38%  on the box 92.5%  slip 2.7 px  lurch 4.3 px  (179 cuts, flat)
+orbit-45261631: 2406 frames, 796 poses, 5 boxes, 2406 lenses, 4811 depth maps
+orbit-45261631: the cabinet, frames 1320-1454 (4.5 s); 1.34 m to 1.70 m away (x1.3), partly off the picture or close up in 0 frames; the camera travels 126 cm and turns 31 degrees
+orbit-45261631: the phone moved fast in 0 of 135 frames; the 3D box's own lurch 0.5 px; LiDAR inside the cut / the box's middle: 0.84 (135 frames)
+  arkit@true   J 73.8%  lost 0%  on the box 97.1%  slip 0.1 px  lurch 0.5 px  depth off 0% (ends x1.00)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  arkit@far    J 48.6%  lost 58%  on the box 77.4%  slip 0.9 px  lurch 0.5 px  depth off 37% (ends x1.31)  (0 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  app@far      J 87.5%  lost 0%  on the box 99.7%  slip 1.3 px  lurch 1.4 px  depth off 37% (ends x1.31)  (33 cuts, 0 refused, 101 carried, 0 measured, 0 laid afresh)
+  steady@true  J 92.2%  lost 0%  on the box 99.9%  slip 0.4 px  lurch 0.7 px  depth off 0% (ends x1.00)  (33 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  steady@far   J 87.5%  lost 0%  on the box 99.7%  slip 1.3 px  lurch 1.4 px  depth off 37% (ends x1.31)  (33 cuts, 0 refused, 101 carried, 0 measured, 0 laid afresh)
+  edge@true    J 92.5%  lost 0%  on the box 99.6%  slip 0.7 px  lurch 1.1 px  depth off 0% (ends x1.00)  (67 cuts, 0 refused, 2 carried, 0 measured, 0 laid afresh)
+  edge@far     J 89.3%  lost 0%  on the box 99.5%  slip 0.8 px  lurch 1.1 px  depth off 37% (ends x1.31)  (67 cuts, 0 refused, 115 carried, 0 measured, 0 laid afresh)
+  now@true     J 93.5%  lost 0%  on the box 99.6%  slip 1.4 px  lurch 2.3 px  depth off 0% (ends x1.00)  (134 cuts, 0 refused, 11 carried, 0 measured, 0 laid afresh)
+  now@far      J 92.9%  lost 0%  on the box 99.6%  slip 1.2 px  lurch 2.0 px  depth off 37% (ends x1.31)  (134 cuts, 0 refused, 116 carried, 0 measured, 0 laid afresh)
+  nowe@far     J 93.3%  lost 0%  on the box 99.6%  slip 1.6 px  lurch 2.7 px  depth off 37% (ends x1.31)  (134 cuts, 0 refused, 116 carried, 0 measured, 0 laid afresh)
+  edgesp@far   J 89.3%  lost 0%  on the box 99.5%  slip 0.8 px  lurch 1.1 px  depth off 37% (ends x1.31)  (67 cuts, 0 refused, 115 carried, 0 measured, 0 laid afresh)
+  edgespm@far  J 91.0%  lost 0%  on the box 99.5%  slip 1.3 px  lurch 1.8 px  depth off 37% (ends x1.31)  (67 cuts, 0 refused, 113 carried, 0 measured, 0 laid afresh)
+  edgel@far    J 92.0%  lost 0%  on the box 99.5%  slip 0.6 px  lurch 0.9 px  depth off 19% (ends x0.87)  (67 cuts, 0 refused, 3 carried, 66 measured, 0 laid afresh)
+  shift@true   J 90.6%  lost 2%  on the box 98.2%  slip 2.9 px  lurch 5.3 px  depth off 9% (ends x0.87)  (67 cuts, 0 refused, 0 carried, 0 measured, 1 laid afresh)
+  shiftn@true  J 88.9%  lost 2%  on the box 97.7%  slip 3.9 px  lurch 5.6 px  depth off 10% (ends x0.85)  (67 cuts, 0 refused, 0 carried, 0 measured, 0 laid afresh)
+  flat-none    J 88.5%  lost 0%  on the box 99.4%  slip 4.0 px  lurch 7.1 px  (67 cuts, flat)
+  flat-gyro    J 87.7%  lost 0%  on the box 99.0%  slip 4.2 px  lurch 7.7 px  (67 cuts, flat)
+  flat-flow    J 92.9%  lost 0%  on the box 99.6%  slip 2.1 px  lurch 3.6 px  (67 cuts, flat)
+  flat-every   J 93.6%  lost 0%  on the box 99.6%  slip 2.7 px  lurch 4.9 px  (134 cuts, flat)
+  flat-glide   J 93.6%  lost 0%  on the box 99.6%  slip 2.7 px  lurch 4.9 px  (134 cuts, flat)
