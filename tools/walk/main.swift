@@ -866,6 +866,9 @@ final class FlatRun {
   /// EdgeTAM looks at every frame and answers a frame later (flat-every), rather than every other
   /// frame two frames later.
   let everyFrame: Bool
+  /// Each answer glided into what was shown (FlatFollower.glides) while the phone is still, and
+  /// taken as it is while it moves (flat-glide).
+  let glidesWhileStill: Bool
   /// The answer on its way: about frame `t`, landing at frame `due`.
   var pending: (due: Int, t: Double, cut: EdgeTAMTracker.Cut)?
   var cuts = 0
@@ -874,10 +877,12 @@ final class FlatRun {
   var onBox: [Double] = []
   var middles: [CGPoint?] = []
 
-  init(_ label: String, flow: Bool, gyro: Bool, fast: Bool = false, guided: Bool = false, everyFrame: Bool = false) {
+  init(_ label: String, flow: Bool, gyro: Bool, fast: Bool = false, guided: Bool = false, everyFrame: Bool = false,
+       glidesWhileStill: Bool = false) {
     self.label = label
     self.flow = flow
     self.everyFrame = everyFrame
+    self.glidesWhileStill = glidesWhileStill
     follower.guided = guided
     if gyro {
       follower.turn = { points, a, b in
@@ -902,6 +907,8 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
   FlatRun("flat-flow", flow: true, gyro: true),
   // EdgeTAM looking at every frame, answering a frame later.
   FlatRun("flat-every", flow: true, gyro: true, everyFrame: true),
+  // That, each answer glided into what was shown while the phone is still.
+  FlatRun("flat-glide", flow: true, gyro: true, everyFrame: true, glidesWhileStill: true),
   // Settled, no different from flat-flow in two runs: the gyro while turning fast (flat-fast), the
   // gyro telling the flow where to look (flat-guide).
 ]
@@ -1245,6 +1252,7 @@ for (k, f) in window.enumerated() {
       if let p = run.pending, p.due <= k {
         run.pending = nil
         let ring: [CGPoint]? = p.cut.visible ? OutlineMath.resample(p.cut.outline, scale: size) : nil
+        if run.glidesWhileStill { run.follower.glides = !moving }
         run.follower.answer(["": ring], at: p.t, size: size)
       }
     }
