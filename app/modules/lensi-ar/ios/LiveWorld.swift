@@ -190,7 +190,7 @@ struct LiveShape {
   /// skews, and the cuts blended into it from there come out distorted until the phone stops.
   var faces = LiveShape.turnsToFace
   /// Whether outlines turn to face whoever's looking (`faces`) unless told otherwise.
-  static let turnsToFace = false
+  static let turnsToFace = true
   /// Which way its outline faces (unit, from its middle towards the camera it was last laid or
   /// turned for); nil until it's first turned.
   private(set) var facing: simd_float3?
