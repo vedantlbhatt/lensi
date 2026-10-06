@@ -96,6 +96,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// 82.1% (a cabinet 68.9% -> 82.8%, lost 19% -> 2%), better on seven, the same on one; a washer
   /// fell 79.8% -> 73.6% where EdgeTAM itself cut only part of it (tools/walk's edgesp@far).
   static let edgeSplices = true
+  /// While the phone goes round a pinned thing EdgeTAM looks as often as it does at a thing that
+  /// moves (up to 30 times a second, `segmentLive`), as its outline changes with the view then.
+  /// tools/walk's edgefast@far measures looking at every frame.
+  static let looksWhileMoving = false
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -439,7 +443,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
     // phone that answers in 35 ms and so looks at every frame, the eight DAVIS clips went from J
     // 78.4% to 84.8%, a kicked ball from 60.4% to 77.3% (tools/track's livequick). A still one has
     // ARKit, and the phone keeps cooler.
-    if gap == 0.05, liveShapes.values.contains(where: { $0.pinned && !$0.still }) { gap = 1.0 / 30 }
+    // So too while the phone goes round a still one, whose outline changes with the view then
+    // (`looksWhileMoving`).
+    if gap == 0.05, liveShapes.values.contains(where: { $0.pinned && (!$0.still || Self.looksWhileMoving && phoneMoving) }) { gap = 1.0 / 30 }
     let pose = frame.camera.transform
     let moving = liveShapes.values.contains { simd_length($0.velocity) >= 0.02 }
     if gap < 0.25, !moving, let last = lastSamPose {
