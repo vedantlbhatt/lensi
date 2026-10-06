@@ -46,6 +46,10 @@
 //                thing eased in 150 ms as before rather than 50 (LiveShape.stillEase); edgelq@far
 //                .light and 50 ms;
 //                edgesh@far where it is followed as steadily as now, its shape taken quickly
+//   edgefc@far   edge@far with the outline turned to face the camera as it goes round (LiveShape.faces)
+//                rather than left a flat card laid where it was cut, which foreshortens and skews seen
+//                from further round; edgefs@far that and a still thing's cuts blended as a moving
+//                one's; edgefc@true at its true depth; appfc@far SAM's guide parts turned so
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -610,6 +614,8 @@ final class Run {
   let stillSmoothing: OutlineMath.Smoothing?
   /// How long what's drawn of a still thing eases onto where it is (LiveShape.stillEase), rather than 0.15 s.
   let stillEase: Float?
+  /// Its outline turns to face the camera (LiveShape.faces) rather than staying a card laid where it was cut.
+  let faces: Bool
   /// The world has just moved and it hasn't been cut since (LensiARView.returning).
   var returning = false
   var tracker: EdgeTAMTracker?
@@ -624,8 +630,10 @@ final class Run {
 
   init(_ label: String, start: Float, once: Bool = false, lidar: Bool = false, noflow: Bool = false, tight: Bool = false,
        clamp: Bool = false, sight: Bool = false, edge: Bool = false, shift: Bool = false, replace: Bool = true, whole: Bool = false,
-       skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil) {
+       skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
+       faces: Bool = false) {
     self.label = label
+    self.faces = faces
     self.whole = whole
     self.skipBlur = skipBlur
     self.guided = guided
@@ -664,6 +672,12 @@ let runs = [
   // A still thing's cuts blended in lighter (with the app's 50 ms ease), and what's drawn eased over 150 ms as before.
   Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
   Run("edgeold@far", start: 1.4, noflow: true, sight: true, edge: true, stillEase: 0.15),
+  // The outline turned to face the camera as it goes round (LiveShape.faces), and that with a still
+  // thing's cuts blended in as a moving one's; at its true depth; and SAM's guide parts so.
+  Run("edgefc@far", start: 1.4, noflow: true, sight: true, edge: true, faces: true),
+  Run("edgefs@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .standard, faces: true),
+  Run("edgefc@true", start: 1, noflow: true, sight: true, edge: true, faces: true),
+  Run("appfc@far", start: 1.4, faces: true),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   // Settled: bent rather than moved whole (edgew), blurred cuts left out (edgeb), the flow guided by
   // the poses (edgeg). Their switches stay for another look.
@@ -850,6 +864,7 @@ for (k, f) in window.enumerated() {
           shape = LiveShape(world: world, at: cut.t, follows: true)
           shape.bends = !run.whole
           shape.guided = run.guided
+          shape.faces = run.faces
           if let e = run.stillEase { shape.stillEase = e }
           shape.pinned = true
           shape.depthKnown = cut.depth != nil
@@ -888,6 +903,7 @@ for (k, f) in window.enumerated() {
       var shape = LiveShape(world: laid, at: t, follows: true)
       shape.bends = !run.whole
       shape.guided = run.guided
+      shape.faces = run.faces
       if let e = run.stillEase { shape.stillEase = e }
       shape.pinned = true
       // Pinned at its true depth: as the app pins where LiDAR or ARKit's points put it.
@@ -1008,6 +1024,8 @@ for (k, f) in window.enumerated() {
     var outline: [CGPoint] = []
     var centre: simd_float3?
     if var shape = run.shape {
+      // Turned to face the camera where it is now (LensiARView.layoutLive).
+      shape.face(camera.position)
       let drawn = run.once ? shape.world : shape.draw(at: t)
       run.shape = shape
       outline = camera.upright(drawn) ?? []

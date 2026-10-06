@@ -185,6 +185,15 @@ struct LiveShape {
   /// How long (seconds) what's drawn of a still thing takes to ease onto where it is (`easeStill`;
   /// tools/walk tries quicker).
   var stillEase: Float = LiveShape.easeStill
+  /// Its outline turns to face whoever's looking (`face`), as a thing's silhouette does, rather than
+  /// staying a flat card laid where it was cut: seen from further round, a card foreshortens and
+  /// skews, and the cuts blended into it from there come out distorted until the phone stops.
+  var faces = LiveShape.turnsToFace
+  /// Whether outlines turn to face whoever's looking (`faces`) unless told otherwise.
+  static let turnsToFace = false
+  /// Which way its outline faces (unit, from its middle towards the camera it was last laid or
+  /// turned for); nil until it's first turned.
+  private(set) var facing: simd_float3?
 
   /// What's drawn eases onto where the outline is in about this long (seconds) instead of
   /// jumping when a cut lands: 60 ms was smoother still but fell 4-8 points of J behind on fast
@@ -239,6 +248,9 @@ struct LiveShape {
   /// own speed): its speed only fades.
   mutating func take(_ fresh: [simd_float3], at t: CFTimeInterval, how: OutlineMath.Smoothing = .standard, measure: Bool = true,
                      seenFrom origin: simd_float3? = nil) {
+    // The cut is laid facing the camera that made it: what's there is turned to face it too, so the
+    // two are blended as that camera sees them.
+    if faces, let origin { face(origin) }
     var forwarded = fresh
     var at = t
     if seen > t {
@@ -486,6 +498,8 @@ struct LiveShape {
     } else {
       if dt > 0.005 { velocity = velocity * 0.5 + by / dt * 0.5 }
       world = laid
+      // Laid facing the camera that saw it now.
+      if faces { facing = LiveShape.towards(cb.position, from: OutlineMath.centre(world)) ?? facing }
     }
     judge()
     seen = tb
@@ -494,6 +508,34 @@ struct LiveShape {
     carries.append((t: tb, from: then, to: world))
     carries.removeAll { tb - $0.t > 1 }
     return true
+  }
+
+  /// Turns the outline about its middle to face a camera at `eye` (by the turn that takes the way it
+  /// faced to the way to `eye`), as the thing's silhouette would: what's drawn, its last change
+  /// and what the flow did to it turn with it. Only with `faces`.
+  mutating func face(_ eye: simd_float3) {
+    guard faces else { return }
+    let c = OutlineMath.centre(world)
+    guard let now = LiveShape.towards(eye, from: c) else { return }
+    guard let was = facing else {
+      facing = now
+      return
+    }
+    guard simd_dot(was, now) < 0.999999 else { return }
+    let q = simd_quatf(from: was, to: now)
+    let turn = { (p: simd_float3) in c + q.act(p - c) }
+    world = world.map(turn)
+    if let d = drawn { drawn = d.map(turn) }
+    if let d = lastChange { lastChange = d.map { q.act($0) } }
+    carries = carries.map { (t: $0.t, from: $0.from.map(turn), to: $0.to.map(turn)) }
+    facing = now
+  }
+
+  /// The way from `point` to `eye` (unit); nil when they're as good as the same place.
+  static func towards(_ eye: simd_float3, from point: simd_float3) -> simd_float3? {
+    let v = eye - point
+    let d = simd_length(v)
+    return d > 0.01 ? v / d : nil
   }
 
   /// `points` moved as the outline `from` moved to `to` (the same points, in order): each by the

@@ -391,6 +391,8 @@ final class Run {
   let whole: Bool
   /// How long what's drawn of a still thing eases onto where it is (LiveShape.stillEase), if not the app's.
   let stillEase: Float?
+  /// Its outline turns to face the camera (LiveShape.faces).
+  let faces: Bool
   var onBox: [Double] = []
   var shape: LiveShape?
   var fixedPrompt: (point: CGPoint, box: CGRect)?
@@ -401,10 +403,11 @@ final class Run {
 
   init(_ label: String, every: Int, flow: Bool = false, arkit: Bool = true,
        grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false, whole: Bool = false,
-       stillEase: Float? = nil) {
+       stillEase: Float? = nil, faces: Bool = false) {
     self.label = label
     self.whole = whole
     self.stillEase = stillEase
+    self.faces = faces
     self.every = every
     self.flow = flow
     self.arkit = arkit
@@ -424,6 +427,8 @@ let runs = [
   Run("whole@8", every: 4, flow: true, bySpeed: true, whole: true),
   // The app with what's drawn of a still thing eased over 150 ms, as before (LiveShape.stillEase).
   Run("ease15@8", every: 4, flow: true, bySpeed: true, stillEase: 0.15),
+  // The app with the outline turned to face the camera (LiveShape.faces).
+  Run("face@8", every: 4, flow: true, bySpeed: true, faces: true),
 ]
 
 var reference: [[CGPoint]] = []
@@ -525,6 +530,7 @@ for (k, f) in window.enumerated() {
               run.shape = LiveShape(world: world, at: t, follows: true)
               run.shape?.bends = !run.whole
               if let e = run.stillEase { run.shape?.stillEase = e }
+              run.shape?.faces = run.faces
             }
           } else if var shape = run.shape {
             shape.misses += 1
@@ -535,6 +541,7 @@ for (k, f) in window.enumerated() {
       }
       if var shape = run.shape {
         // What the screen shows: eased (the app now) or as it stands.
+        shape.face(camera.position)
         let drawn = run.flow ? shape.draw(at: t) : shape.placed(at: t)
         run.shape = shape
         outline = camera.upright(drawn) ?? []
