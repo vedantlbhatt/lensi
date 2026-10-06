@@ -38,8 +38,9 @@ enum LiveFlow {
     var h: Int { levels[0].h }
   }
 
-  /// `image` as a Frame, `width` pixels across.
-  static func frame(_ image: CGImage, width: Int = LiveFlow.width) -> Frame? {
+  /// `image` as a Frame, `width` pixels across, `depth` levels deep (each half the last: the deeper,
+  /// the further a point can have moved and still be found).
+  static func frame(_ image: CGImage, width: Int = LiveFlow.width, depth: Int = LiveFlow.levels) -> Frame? {
     let w = width, h = max(Int((Double(image.height) * Double(width) / Double(image.width)).rounded()), 1)
     var grey = [UInt8](repeating: 0, count: w * h)
     let drawn = grey.withUnsafeMutableBytes { raw -> Bool in
@@ -53,10 +54,10 @@ enum LiveFlow {
     guard drawn else { return nil }
     var level = Frame.Level(w: w, h: h, pixels: grey.map { Float($0) }, gx: [], gy: [])
     var out: [Frame.Level] = []
-    for i in 0..<levels {
+    for i in 0..<max(depth, 1) {
       let (gx, gy) = gradients(level.pixels, w: level.w, h: level.h)
       out.append(Frame.Level(w: level.w, h: level.h, pixels: level.pixels, gx: gx, gy: gy))
-      if i < levels - 1 {
+      if i < depth - 1 {
         guard level.w >= 8, level.h >= 8 else { break }
         level = half(level)
       }

@@ -74,6 +74,11 @@ REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60
 # Each answer taken as it is rather than glided into what was shown (on DAVIS that's a little better).
 EDGETRACK_LIVE_MS=60 EDGETRACK_GLIDE=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60noglide.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60noglide.json" "$OUT" shaker-live60noglide live 2>&1 | tee -a "$OUT/summary.txt"
+# The flow's pyramid a level deeper and shallower (a long smeared move found from further down).
+for lv in 5 3; do
+  EDGETRACK_LIVE_MS=60 EDGETRACK_FLOW_LEVELS=$lv LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60-levels$lv.json" "$BOX" >/dev/null 2>&1
+  REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60-levels$lv.json" "$OUT" "shaker-live60-levels$lv" live 2>&1 | tee -a "$OUT/summary.txt"
+done
 # LiveFlow.bend's settings tried on the bottle (tools/track tries the same on DAVIS, bend-*).
 for v in INSET=2 INSET=5 MOST=0.4 SIGMA=1 SIGMA=4 HOME=2 SEEDED=1; do
   name="live60-$(echo "$v" | tr 'A-Z=.' 'a-z--')"

@@ -45,6 +45,8 @@ let loadSeconds = CFAbsoluteTimeGetCurrent() - loadStart
 print(String(format: "models loaded in %.1f s", loadSeconds))
 let encoder = try EdgeTAMTracker.Encoder(models: models)
 let tracker = try EdgeTAMTracker(models: models)
+/// How many levels the flow's pyramid has (LiveFlow.levels; EDGETRACK_FLOW_LEVELS to try others).
+let flowDepth = Int(ProcessInfo.processInfo.environment["EDGETRACK_FLOW_LEVELS"] ?? "") ?? LiveFlow.levels
 
 func r(_ v: Double, _ places: Double = 100000) -> Double { (v * places).rounded() / places }
 
@@ -82,7 +84,7 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool, bending: Live
     let t = Double(g) / fps
     let w = picture.extent.width, h = picture.extent.height
     let size = CGSize(width: w, height: h)
-    follower.add(LiveFlow.frame(image), at: t)
+    follower.add(LiveFlow.frame(image, depth: flowDepth), at: t)
     var answered = -1
     if let p = pending, p.ready <= t + 1e-9 {
       pending = nil
