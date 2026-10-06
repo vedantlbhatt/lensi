@@ -85,9 +85,17 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// The phone is going round (more than 0.3 radians or 10 cm a second).
   private var phoneMoving: Bool { phoneTurn > 0.3 || phoneMove > 0.1 }
   /// A still thing's cuts are blended in lightly (OutlineMath.Smoothing.light) while the phone moves
-  /// round it, as its outline really changes with the view then, and held down hard once it stops
-  /// (tools/walk's edgespm@far).
-  static let lightWhileMoving = false
+  /// round it, as its outline really changes with the view then, and held down hard once it stops.
+  /// With `edgeSplices`, on nine walk-arounds J 82.1% -> 83.1%, better on all nine; going round a
+  /// table, 71.2% -> 75.3% (tools/walk's edgespm@far against edgesp@far and edge@far).
+  static let lightWhileMoving = true
+  /// Up close, the part of a pinned thing on the picture is EdgeTAM's own cut, and only what's off
+  /// the picture is the whole outline moved onto it (LiveTracker.spliced), rather than the whole
+  /// outline moved onto the cut and kept the shape it had when it was last seen whole: as the phone
+  /// goes round a thing up close, its outline kept that old shape. On nine walk-arounds J 79.4% ->
+  /// 82.1% (a cabinet 68.9% -> 82.8%, lost 19% -> 2%), better on seven, the same on one; a washer
+  /// fell 79.8% -> 73.6% where EdgeTAM itself cut only part of it (tools/walk's edgesp@far).
+  static let edgeSplices = true
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -108,7 +116,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// brought on through the frames since by the picture's own pixels (LiveFlow.bend, as 0.5x brings
   /// them on: FlatFollower) and laid from where the phone is then, rather than from where it was,
   /// which at a depth that's only a guess lands off the thing by the phone's step in between.
-  /// tools/walk measures it (edgenow@far).
+  /// Off: going round a table it helped (tools/walk's edgenow@far, J 71.2% -> 75.8%), but on nine
+  /// walk-arounds it was no better (79.0% against 79.4%; a sofa 88.4% -> 82.8%, another 76.6% ->
+  /// 80.2%), nor with the splice (edgespn@far, 82.6% against 82.1%).
   static let bringsForward = false
   /// Taps pin things in space only in live mode; otherwise a tap on the camera does nothing
   /// (things are picked and pinned on the strip: `scrubStart`).
@@ -697,7 +707,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // Up close, the whole outline as it should be, moved onto the part of it on the picture
         // however far that is from where it should be (that's what's stale).
         if !whole, let predicted = p.predicted, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible,
-           let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: p.scaleLimit, scale: upright) {
+           let moved = LiveTracker.follow(cut: seen, predicted: predicted, gate: .any, scaleLimit: p.scaleLimit,
+                                          splice: Self.edgeSplices, scale: upright) {
           ring = moved
         }
         // Where it's measured to be (LiDAR, ARKit's points on it), else as far off as it was along
@@ -719,7 +730,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
         // as the whole thing, or carried far by it, it threw the whole outline about a close-up
         // sink and washer (tools/walk).
         let gate = Self.rescues && edgeRefusals[p.key, default: 0] >= 3 ? LiveTracker.Gate.any : p.gate
-        guard let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: p.scaleLimit, scale: upright) else {
+        guard let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: p.scaleLimit,
+                                                splice: Self.edgeSplices, scale: upright) else {
           edgeRefusals[p.key, default: 0] += 1
           continue
         }
