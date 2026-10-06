@@ -58,25 +58,32 @@ small() {
   fetch "$d" "$id" vga_wide_intrinsics
 }
 
-# Pass 1: which scans have a walk up close and back out (WALK_IDS: these, without asking).
+# Pass 1: which scans have a walk up close and back out, and which go furthest round a thing wholly
+# in view (WALK_IDS, WALK_ORBIT_IDS: these, without asking).
 : > out/walk/picks.txt
+: > out/walk/orbit-picks.txt
 [ -n "${WALK_IDS:-}" ] && IDS=""
 for id in $IDS; do
   d="footage/arkit/$id"
   small "$d" "$id" || continue
   ./walk "$d" out/walk "scene-$id" 240 select 2>&1 | grep '^PICK' | tee -a out/walk/picks.txt
+  WALK_MODE=orbit ./walk "$d" out/walk "orbit-$id" 180 select 2>&1 | grep '^PICK' | tee -a out/walk/orbit-picks.txt
 done
 BEST="${WALK_IDS:-$(sort -k3 -g -r out/walk/picks.txt | awk '$3 > 0 {print $2}' | sed 's/^scene-//' | head -n "$PICK")}"
-echo "Running in full: $BEST"
+ORBITS="${WALK_ORBIT_IDS:-$(sort -k3 -g -r out/walk/orbit-picks.txt | awk '$3 > 0 {print $2}' | sed 's/^orbit-//' | head -n "${WALK_ORBIT_PICK:-6}")}"
+echo "Walking in full: $BEST"
+echo "Going round in full: $ORBITS"
 
-# Pass 2: the best, whole.
-for id in $BEST; do
+# Pass 2: the best, whole: the walk on the walk picks, going round on every scan fetched.
+for id in $(echo $BEST $ORBITS | tr ' ' '\n' | awk 'NF && !seen[$0]++'); do
   d="footage/arkit/$id"
   small "$d" "$id" && fetch "$d" "$id" vga_wide || continue
   fetch "$d" "$id" lowres_depth
   echo "ARKitScenes $id: $(ls "$d/vga_wide" | wc -l) frames, $(ls "$d/vga_wide_intrinsics" 2>/dev/null | wc -l) lenses, $(ls "$d/lowres_depth" 2>/dev/null | wc -l) depth maps, $(du -sh "$d" | cut -f1)"
-  LENSI_MODELS_DIR=models-all ./walk "$d" out/walk "scene-$id" 2>&1 | tee -a out/walk/summary.txt \
-    && python tools/walk/render.py "$d" "out/walk/scene-$id.json" out/walk || echo "FAIL $id"
+  if echo " $(echo $BEST) " | grep -q " $id "; then
+    LENSI_MODELS_DIR=models-all ./walk "$d" out/walk "scene-$id" 2>&1 | tee -a out/walk/summary.txt \
+      && python tools/walk/render.py "$d" "out/walk/scene-$id.json" out/walk || echo "FAIL $id"
+  fi
   # The same scan, going round a thing wholly in view (as a phone goes round a bottle on a table).
   WALK_MODE=orbit LENSI_MODELS_DIR=models-all ./walk "$d" out/walk "orbit-$id" 180 2>&1 | tee -a out/walk/orbit.txt \
     && python tools/walk/render.py "$d" "out/walk/orbit-$id.json" out/walk || echo "FAIL orbit $id"
