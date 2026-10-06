@@ -973,9 +973,9 @@ for (k, f) in window.enumerated() {
     _ = try tracker.start(edgeFrame, box: LiveTracker.bounds(truth))
     edgeTracker = tracker
     if edgeEveryFrame {
-      let every = try EdgeTAMTracker(models: models)
-      _ = try every.start(edgeFrame, box: LiveTracker.bounds(truth))
-      edgeTrackerEvery = every
+      let everyTracker = try EdgeTAMTracker(models: models)
+      _ = try everyTracker.start(edgeFrame, box: LiveTracker.bounds(truth))
+      edgeTrackerEvery = everyTracker
     }
   } else if k > 0 {
     if k % edgeEvery == 0, let tracker = edgeTracker, let edgeFrame { edgeCut = try tracker.step(edgeFrame) }

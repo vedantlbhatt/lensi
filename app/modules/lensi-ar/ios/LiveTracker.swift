@@ -92,8 +92,8 @@ enum LiveTracker {
     let w = { (j: Int) in outline[(ws + j + m) % m] }
     // Where each stretch of `whole` leaves the picture and comes back on to it.
     let out = offRuns.map { r in (run: r, leaves: leaving(w(r.0 - 1), w(r.0)), returns: leaving(w(r.1 + 1), w(r.1))) }
-    let side = max(scale.width, scale.height)
-    let gap = { (a: CGPoint, b: CGPoint) in hypot((a.x - b.x) * scale.width, (a.y - b.y) * scale.height) / side }
+    let longest = max(scale.width, scale.height)
+    let gap = { (a: CGPoint, b: CGPoint) in hypot((a.x - b.x) * scale.width, (a.y - b.y) * scale.height) / longest }
     // Nearest first: the cut reaches the edge where `whole` leaves the picture, and leaves it where
     // `whole` comes back (both run the same way round). Only along the same edges: off a corner, a cut
     // along one edge and `whole` out past the other don't meet, and joined they'd draw a line along
