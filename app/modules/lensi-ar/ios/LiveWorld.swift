@@ -49,6 +49,16 @@ struct FrozenCamera {
     return s
   }
 
+  /// A plane through `point` square to the line of sight to it (rather than to where the camera
+  /// points): how an outline that turns to face the camera (LiveShape.faces) stands.
+  func withSightPlane(through point: simd_float3) -> FrozenCamera {
+    var s = self
+    s.planePoint = point
+    let v = position - point
+    s.planeNormal = simd_length(v) > 1e-4 ? simd_normalize(v) : simd_normalize(-simd_make_float3(transform.columns.2))
+    return s
+  }
+
   /// Where world points land in this camera's upright picture (0…1, the inverse of `ray`);
   /// nil when any is behind it.
   func upright(_ world: [simd_float3]) -> [CGPoint]? {

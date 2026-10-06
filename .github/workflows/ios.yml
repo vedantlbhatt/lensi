@@ -95,7 +95,9 @@ jobs:
           echo "$SHA" > COMMIT.txt
           git init -q && git checkout -q -b ci-track && git add -A
           git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "Tracking results for $SHA"
-          git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-track
+          # main's run and camera-first's can push here in the same minute ("cannot lock ref"):
+          # a forced push just needs another go.
+          ok=0; for i in 1 2 3; do if git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-track; then ok=1; break; fi; sleep $((i * 5)); done; [ $ok = 1 ]
       - name: Verify with Core ML (CPU)
         run: python tools/sam/verify_coreml.py --models build/sam --compute-units CPU_ONLY 2>&1 | tee out/verify-cpu.txt
       - name: Verify with Core ML (all compute units)
@@ -217,4 +219,4 @@ jobs:
           git checkout -q -b ci-results
           git add -A
           git -c user.name="lensi-ci" -c user.email="ci@users.noreply.github.com" commit -q -m "CI results for $SHA (run $RUN)"
-          git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-results
+          ok=0; for i in 1 2 3; do if git push -q -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" ci-results; then ok=1; break; fi; sleep $((i * 5)); done; [ $ok = 1 ]
