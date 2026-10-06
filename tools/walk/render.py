@@ -10,6 +10,7 @@ are drawn as the iPad recorded them, turned so the room's up is up. Writes, top 
   <name>-lidar.mp4         before / now with LiDAR, both pinned 40% too far
   <name>-depth.mp4         ARKit alone at a depth 40% off / at the right depth: what a wrong
                            depth does by itself as the camera moves
+  <name>-face.mp4          EdgeTAM's outline left a flat card / turned to face the camera
 and <name>.mp4, the app now, bigger.
 """
 import json
@@ -40,6 +41,7 @@ CAPTIONS = {
     "edgel@far": "EdgeTAM with LiDAR, pinned 40% too far",
     "shift@true": "EdgeTAM, ARKit's world moved halfway (0.5x and back): laid afresh",
     "shiftn@true": "EdgeTAM, ARKit's world moved halfway (0.5x and back): as before",
+    "edgefc@far": "EdgeTAM, the outline turned to face the camera, pinned 40% too far",
 }
 
 PAIRS = [
@@ -52,6 +54,7 @@ PAIRS = [
     ("edge-far", "steady@far", "edge@far"),
     ("shift", "shiftn@true", "shift@true"),
     ("depth", "arkit@far", "arkit@true"),
+    ("face", "edge@far", "edgefc@far"),
 ]
 
 
