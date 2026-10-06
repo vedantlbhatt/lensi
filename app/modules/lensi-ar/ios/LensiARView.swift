@@ -113,8 +113,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// IoU 0.969 -> 0.973, shake 3.0 -> 2.7 px (tools/edgetrack, EDGETRACK_GAP_MS).
   static let wideLooksWhileTurning = true
   /// What's drawn of a still thing eases onto where it is over 30 ms while the phone moves rather
-  /// than 50 (tools/walk's nowe@far).
-  static let easeWhileMoving = false
+  /// than 50: nine walk-arounds J 84.4% -> 84.8% (better on seven, worse on none), going round a
+  /// table 81.3% -> 82.5%, for slip 3.2 -> 3.5 px (tools/walk's nowe@far).
+  static let easeWhileMoving = true
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
