@@ -19,6 +19,8 @@
 // a pinned thing at 0.5x); EDGETRACK_BEND=0 moves it whole instead (LiveFlow.carry); EDGETRACK_GLIDE=1
 // glides each answer into what was shown rather than taking it as it is (as the app does);
 // EDGETRACK_EDGE_PIN=0 lets a thing that runs off the picture come away from its edge.
+// EDGETRACK_GAP_MS: how long after a look the next may start (50, the app's 20 a second; 30 looks
+// at every frame of a 30 fps clip, as the app does while the phone moves, when answers keep up).
 import CoreImage
 import Foundation
 import ImageIO
@@ -50,6 +52,9 @@ let tracker = try EdgeTAMTracker(models: models)
 let flowDepth = Int(ProcessInfo.processInfo.environment["EDGETRACK_FLOW_LEVELS"] ?? "") ?? LiveFlow.levels
 
 func r(_ v: Double, _ places: Double = 100000) -> Double { (v * places).rounded() / places }
+
+/// How long after a look the next may start (EDGETRACK_GAP_MS).
+let gap = (Double(ProcessInfo.processInfo.environment["EDGETRACK_GAP_MS"] ?? "") ?? 50) / 1000
 
 /// The clip as the phone's camera, followed as the app follows a pinned thing at 0.5x (LensiARView's
 /// wideFrame through FlatFollower). A look starts on a frame only once the last answer is in and
@@ -102,7 +107,7 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool, bending: Live
       if cut.visible { follower.place("", OutlineMath.resample(cut.outline, scale: size), at: t) }
       lastStart = t
       looked = true
-    } else if pending == nil, t - lastStart > 0.05 {
+    } else if pending == nil, t - lastStart > gap {
       let wall = CFAbsoluteTimeGetCurrent()
       let cut = try tracker.step(encoder.encode(picture))
       stepMs.append((CFAbsoluteTimeGetCurrent() - wall) * 1000)

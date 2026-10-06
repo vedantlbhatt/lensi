@@ -68,6 +68,11 @@ for ms in 60 100; do
   EDGETRACK_LIVE_MS=$ms LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live$ms.json" "$BOX" 2>&1 | tee "$OUT/live$ms.txt" | tee -a "$OUT/summary.txt"
   python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live$ms.json" "$OUT" "shaker-live$ms" live 2>&1 | tee -a "$OUT/summary.txt"
 done
+echo "== A phone that answers in 30 ms: up to 20 looks a second, and looking at every frame (as while the phone moves)"
+for gap in 50 30; do
+  EDGETRACK_LIVE_MS=30 EDGETRACK_GAP_MS=$gap LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live30gap$gap.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
+  REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live30gap$gap.json" "$OUT" "shaker-live30gap$gap" live 2>&1 | tee -a "$OUT/summary.txt"
+done
 # The outline moved whole between answers (LiveFlow.carry, the app before LiveFlow.bend).
 EDGETRACK_LIVE_MS=60 EDGETRACK_BEND=0 LENSI_MODELS_DIR="$OUT/models" ./edgetrack footage/shaker "$OUT/live60whole.json" "$BOX" 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 REPORT_VIDEO=0 python tools/edgetam/report.py footage/shaker "$REF" "$OUT/live60whole.json" "$OUT" shaker-live60whole live 2>&1 | tee -a "$OUT/summary.txt"
