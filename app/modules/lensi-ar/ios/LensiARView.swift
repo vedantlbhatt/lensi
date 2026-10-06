@@ -98,12 +98,15 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   static let edgeSplices = true
   /// While the phone goes round a pinned thing EdgeTAM looks as often as it does at a thing that
   /// moves (up to 30 times a second, `segmentLive`), as its outline changes with the view then.
-  /// tools/walk's edgefast@far measures looking at every frame.
-  static let looksWhileMoving = false
+  /// Looking at every frame (tools/walk's edgefast@far), eight walk-arounds went from J 84.1% to
+  /// 85.2% (better on six) and steadier (slip 3.0 -> 2.8 px), and going round a table 79.6% -> 83.6%.
+  static let looksWhileMoving = true
   /// The flow carries outlines while the phone walks round a thing too (over LiveShape.fastMove),
   /// and stops only while it turns fast (a blur): held by ARKit at a depth that's only a guess, an
-  /// outline slides off its thing as the phone walks round it (tools/walk's edgespc@far).
-  static let flowWhileWalking = false
+  /// outline slid off its thing as the phone walked round it. Going round a table at half a metre a
+  /// second, J 79.6% -> 84.2% (at its true depth ARKit alone got 83.9%), eight walk-arounds 84.1% ->
+  /// 84.4%, slip the same (tools/walk's edgespc@far).
+  static let flowWhileWalking = true
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
