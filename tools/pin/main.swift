@@ -389,6 +389,8 @@ final class Run {
   let bySpeed: Bool
   /// Carried by the flow moved whole (LiveFlow.carry) rather than bent with its thing (the app).
   let whole: Bool
+  /// How long what's drawn of a still thing eases onto where it is (LiveShape.stillEase), if not the app's.
+  let stillEase: Float?
   var onBox: [Double] = []
   var shape: LiveShape?
   var fixedPrompt: (point: CGPoint, box: CGRect)?
@@ -398,9 +400,11 @@ final class Run {
   var cuts = 0, refused = 0, carried = 0
 
   init(_ label: String, every: Int, flow: Bool = false, arkit: Bool = true,
-       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false, whole: Bool = false) {
+       grow: CGFloat = LiveTracker.grow, gate: LiveTracker.Gate = .loose, bySpeed: Bool = false, whole: Bool = false,
+       stillEase: Float? = nil) {
     self.label = label
     self.whole = whole
+    self.stillEase = stillEase
     self.every = every
     self.flow = flow
     self.arkit = arkit
@@ -418,6 +422,8 @@ let runs = [
   Run("strict@8", every: 4, flow: true, grow: 0.1, gate: .strict),
   Run("lensi@8", every: 4, flow: true, bySpeed: true),
   Run("whole@8", every: 4, flow: true, bySpeed: true, whole: true),
+  // The app with what's drawn of a still thing eased over 150 ms, as before (LiveShape.stillEase).
+  Run("ease15@8", every: 4, flow: true, bySpeed: true, stillEase: 0.15),
 ]
 
 var reference: [[CGPoint]] = []
@@ -518,6 +524,7 @@ for (k, f) in window.enumerated() {
             } else {
               run.shape = LiveShape(world: world, at: t, follows: true)
               run.shape?.bends = !run.whole
+              if let e = run.stillEase { run.shape?.stillEase = e }
             }
           } else if var shape = run.shape {
             shape.misses += 1

@@ -42,8 +42,9 @@
 //                and carrying it while the phone moves fast too
 //   edge2@far    edge@far again, unchanged: how far two identical runs drift apart
 //   edgestd@far, edgelt@far  a still thing's cuts blended in as a moving one's (.standard) or lighter
-//                (.light) rather than OutlineMath.Smoothing.still; edgeqk@far what's drawn of a still
-//                thing eased in 50 ms rather than 150 (LiveShape.stillEase); edgelq@far both;
+//                (.light) rather than OutlineMath.Smoothing.still; edgeold@far what's drawn of a still
+//                thing eased in 150 ms as before rather than 50 (LiveShape.stillEase); edgelq@far
+//                .light and 50 ms;
 //                edgesh@far where it is followed as steadily as now, its shape taken quickly
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
@@ -660,17 +661,9 @@ let runs = [
 ] + (EdgeTAMTracker.Models.shared == nil ? [] : [
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
-  // edge@far again, unchanged: how far two identical runs drift apart within one run.
-  Run("edge2@far", start: 1.4, noflow: true, sight: true, edge: true),
-  // A still thing's cuts blended in as a moving one's are, or lighter, and what's drawn eased quicker.
-  Run("edgestd@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .standard),
+  // A still thing's cuts blended in lighter (with the app's 50 ms ease), and what's drawn eased over 150 ms as before.
   Run("edgelt@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light),
-  Run("edgeqk@far", start: 1.4, noflow: true, sight: true, edge: true, stillEase: 0.05),
-  Run("edgelq@far", start: 1.4, noflow: true, sight: true, edge: true, stillSmoothing: .light, stillEase: 0.05),
-  // Where it is as steady as now (OutlineMath.Smoothing.still's follow), its shape taken quickly.
-  Run("edgesh@far", start: 1.4, noflow: true, sight: true, edge: true,
-      stillSmoothing: OutlineMath.Smoothing(quiet: 0.15, keepQuiet: 0.3, small: 0.3, keepSmall: 0.15, still: 0.1, followStill: 0.35,
-                                            followMoving: 0.8)),
+  Run("edgeold@far", start: 1.4, noflow: true, sight: true, edge: true, stillEase: 0.15),
   Run("edgel@far", start: 1.4, lidar: true, noflow: true, edge: true),
   // Settled: bent rather than moved whole (edgew), blurred cuts left out (edgeb), the flow guided by
   // the poses (edgeg). Their switches stay for another look.

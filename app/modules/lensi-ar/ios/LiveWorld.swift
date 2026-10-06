@@ -191,10 +191,12 @@ struct LiveShape {
   /// things (tools/track measured 30, 60 and adaptive). That's for a thing that moves.
   static let ease: Float = 0.03
   /// A still thing's: ARKit already holds it where it is however the phone moves (that isn't
-  /// eased at all: the points are in the world), so all a cut or the flow can add is its own
-  /// noise, and on ARKit recordings that tripled how much a still outline lurched from frame to
-  /// frame (tools/pin).
-  static let easeStill: Float = 0.15
+  /// eased at all: the points are in the world), so all a cut or the flow can add is its own noise.
+  /// It was 150 ms, against which tools/pin once measured a still outline lurching three times as
+  /// much eased in the moving thing's 30. But as the view turns round a thing its outline changes,
+  /// and 150 ms trailed that: on nine handheld walk-arounds in one run (tools/walk) 50 ms was
+  /// better on every one, J 76.5% -> 78.0%, for slip 3.0 -> 3.4 px and lurch 2.8 -> 3.4 px.
+  static let easeStill: Float = 0.05
   /// A still thing the flow says moved less than this much of its size in one step (about half
   /// its size a second) didn't: that's the flow's noise (tools/pin).
   static let stillFlow: Float = 0.015
