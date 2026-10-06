@@ -10,7 +10,8 @@
 #
 # First every scan's poses, lenses and boxes alone (a few MB each) say which have the best walk
 # up close and back out; then the best WALK_PICK are fetched whole (1-2 GB each) and run.
-# Writes out/walk: picks.txt, scene-<id>.json, scene-<id>*.mp4, summary.txt.
+# Writes out/walk: picks.txt, scene-<id>.json, scene-<id>*.mp4, summary.txt, and the same scans
+# going round a thing wholly in view (WALK_MODE=orbit): orbit-<id>.json, orbit-<id>*.mp4, orbit.txt.
 set -o pipefail
 mkdir -p out/walk footage/arkit
 BASE=https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw/Validation
@@ -76,6 +77,9 @@ for id in $BEST; do
   echo "ARKitScenes $id: $(ls "$d/vga_wide" | wc -l) frames, $(ls "$d/vga_wide_intrinsics" 2>/dev/null | wc -l) lenses, $(ls "$d/lowres_depth" 2>/dev/null | wc -l) depth maps, $(du -sh "$d" | cut -f1)"
   LENSI_MODELS_DIR=models-all ./walk "$d" out/walk "scene-$id" 2>&1 | tee -a out/walk/summary.txt \
     && python tools/walk/render.py "$d" "out/walk/scene-$id.json" out/walk || echo "FAIL $id"
+  # The same scan, going round a thing wholly in view (as a phone goes round a bottle on a table).
+  WALK_MODE=orbit LENSI_MODELS_DIR=models-all ./walk "$d" out/walk "orbit-$id" 180 2>&1 | tee -a out/walk/orbit.txt \
+    && python tools/walk/render.py "$d" "out/walk/orbit-$id.json" out/walk || echo "FAIL orbit $id"
   # 1-2 GB of frames a scan: gone once it's measured and drawn.
   rm -rf "$d/vga_wide" "$d/lowres_depth"
 done

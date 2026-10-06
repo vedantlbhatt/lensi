@@ -74,6 +74,10 @@
 //   swiftc -O -o walk tools/walk/main.swift app/modules/lensi-ar/ios/{EdgeTAMTracker,SAMSegmenter,OutlineMath,LiveTracker,LiveFlow,LiveWorld,LiveSeg,Analyzer,Detector,FlatFollow}.swift
 //   LENSI_MODELS_DIR=<models> ./walk <scene dir> <out dir> <name> [frames, default 240]
 //
+// WALK_MODE=orbit takes instead the stretch where the camera goes furthest round a thing that stays
+// wholly in view and smallish on the picture (at least 20 degrees round it), as a phone goes round
+// a bottle on a table: no close-up, so what's measured is how the outline keeps up as the view turns.
+//
 // <scene dir> holds an ARKitScenes raw scan: vga_wide/*.png (640x480, 30 fps),
 // vga_wide_intrinsics/*.pincam, lowres_wide.traj, lowres_depth/*.png and the annotation json.
 import CoreGraphics
@@ -385,7 +389,34 @@ struct Candidate {
   let score: Float
 }
 var candidates: [Candidate] = []
-for length in [windowLength, windowLength * 3 / 4, windowLength / 2] where candidates.isEmpty && times.count > length {
+/// WALK_MODE=orbit: instead, the stretch where the camera goes furthest round a thing that stays
+/// wholly in view and smallish on the picture, as a phone goes round a bottle on a table.
+let orbitMode = ProcessInfo.processInfo.environment["WALK_MODE"] == "orbit"
+for length in [windowLength, windowLength * 3 / 4, windowLength / 2] where orbitMode && candidates.isEmpty && times.count > length {
+  for start in stride(from: 0, to: times.count - length, by: 10) {
+    for (i, box) in boxes.enumerated() {
+      guard let c0 = cameras[start], let first = view(box, c0), first.visible >= 0.97, first.area >= 0.01, first.area <= 0.3 else { continue }
+      let from = simd_normalize(c0.position - box.centre)
+      var round: Float = 0, near = Float.greatestFiniteMagnitude, far: Float = 0, fits = true
+      for f in start..<(start + length) {
+        guard let camera = cameras[f], let v = view(box, camera), v.visible >= 0.97, v.area >= 0.005, v.area <= 0.4 else {
+          fits = false
+          break
+        }
+        round = max(round, acos(min(max(simd_dot(from, simd_normalize(camera.position - box.centre)), -1), 1)))
+        near = min(near, v.distance)
+        far = max(far, v.distance)
+      }
+      // At least 20 degrees round it.
+      guard fits, near > 0.1, round >= 0.35 else { continue }
+      let label = box.label.lowercased().replacingOccurrences(of: " ", with: "_")
+        .replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: "/", with: "_")
+      let score = round * (solid.contains(label) ? 1.2 : 1)
+      candidates.append(Candidate(start: start, length: length, box: i, ratio: far / near, close: 0, score: score))
+    }
+  }
+}
+for length in [windowLength, windowLength * 3 / 4, windowLength / 2] where !orbitMode && candidates.isEmpty && times.count > length {
   for start in stride(from: 0, to: times.count - length, by: 10) {
     for (i, box) in boxes.enumerated() {
       guard let first = view(box, cameras[start]), first.visible >= 0.9, first.area >= 0.03, first.area <= 0.5 else { continue }
@@ -427,7 +458,8 @@ for c in candidates {
   }
 }
 guard let best = bestChoice else {
-  print(selectOnly ? "PICK \(name) 0 none" : "\(name): no thing goes from far to close and back while staying in plain view")
+  print(selectOnly ? "PICK \(name) 0 none" : orbitMode ? "\(name): the camera goes round no thing wholly in view"
+    : "\(name): no thing goes from far to close and back while staying in plain view")
   exit(selectOnly ? 0 : 1)
 }
 if selectOnly {

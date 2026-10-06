@@ -22,7 +22,7 @@ jobs:
   footage:
     name: Live SAM on real footage
     runs-on: xcode-27
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
