@@ -107,6 +107,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// second, J 79.6% -> 84.2% (at its true depth ARKit alone got 83.9%), eight walk-arounds 84.1% ->
   /// 84.4%, slip the same (tools/walk's edgespc@far).
   static let flowWhileWalking = true
+  /// At 0.5x, while the phone turns (over 0.3 radians a second, by the gyro) EdgeTAM looks up to 30
+  /// times a second rather than 20, as at 1x while the phone moves (`looksWhileMoving`).
+  static let wideLooksWhileTurning = false
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -1201,12 +1204,13 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// glided into what was shown on this frame and brought on to the newest (FlatFollower), for
   /// drawing (`layoutWide`).
   private func wideFrame(_ buffer: CVPixelBuffer, at t: CFTimeInterval) {
-    // Up to 20 looks a second; fewer once the phone runs hot, as at 1x (`segmentLive`).
+    // Up to 20 looks a second, 30 while the phone turns (`wideLooksWhileTurning`); fewer once it
+    // runs hot, as at 1x (`segmentLive`).
     let gap: CFTimeInterval
     switch ProcessInfo.processInfo.thermalState {
     case .critical: gap = 0.6
     case .serious: gap = 0.25
-    default: gap = 0.05
+    default: gap = Self.wideLooksWhileTurning && (wide?.turnRate ?? 0) > 0.3 ? 1.0 / 30 : 0.05
     }
     guard wideMode, liveSegments, !samBusy, !scrubBusy, let edge = edgeTAM, t - lastWideTime > gap else { return }
     let held = pinOrder.filter { liveShapes[$0]?.pinned == true || flatPins.contains($0) }

@@ -40,6 +40,20 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
   /// The lens across the picture's long side (radians), once the camera is set up.
   private var fieldOfView: Float = 0
 
+  /// How fast the phone is turning (radians a second): the gyro over the last tenth of a second.
+  var turnRate: Float {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let last = turns.last else { return 0 }
+    var sum: Float = 0, n: Float = 0
+    for r in turns.reversed() {
+      guard last.t - r.t < 0.1 else { break }
+      sum += simd_length(r.rate)
+      n += 1
+    }
+    return n > 0 ? sum / n : 0
+  }
+
   /// The newest frame, for a photo.
   var latest: (buffer: CVPixelBuffer, t: CFTimeInterval)? {
     lock.lock()
