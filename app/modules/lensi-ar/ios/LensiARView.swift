@@ -132,6 +132,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// it was as good or better on all nine walk-arounds (84.1% -> 84.3%) and steadier (slip 3.4 ->
   /// 3.2 px, lurch 4.0 -> 3.7), and going round a table 80.3% -> 80.8%.
   static let bringsForward = true
+  /// The phone isn't hot (under ProcessInfo's serious thermal state): what only polishes the
+  /// outline (`bringsForward`) stops while it is, as EdgeTAM itself slows down then (`segmentLive`).
+  static var cool: Bool { ProcessInfo.processInfo.thermalState.rawValue < ProcessInfo.ThermalState.serious.rawValue }
   /// Taps pin things in space only in live mode; otherwise a tap on the camera does nothing
   /// (things are picked and pinned on the strip: `scrubStart`).
   var livePins = false
@@ -581,7 +584,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
           let followed = prompts.filter(\.edge)
           found = try self.followEdge(followed, models: edge, buffer: buffer, camera: camera, upright: upright,
                                       measured: measured, points: points)
-          if Self.bringsForward { found = self.bringOn(found, asked: followed, from: buffer, at: captured) }
+          if Self.bringsForward, Self.cool { found = self.bringOn(found, asked: followed, from: buffer, at: captured) }
         }
         for p in samPrompts {
           // Following a thing: of SAM's candidates, the one that overlaps where it should be wins,
@@ -952,7 +955,7 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   private func flowLive(_ frame: ARFrame) {
     guard liveSegments, sam != nil, !flowBusy, frame.timestamp - lastFlowTime >= 1.0 / 30,
           liveShapes.values.contains(where: { $0.follows && !Self.heldByARKit($0) })
-            || (Self.bringsForward && edgeTAM != nil && liveShapes.values.contains(where: { $0.pinned })) else { return }
+            || (Self.bringsForward && Self.cool && edgeTAM != nil && liveShapes.values.contains(where: { $0.pinned })) else { return }
     flowBusy = true
     lastFlowTime = frame.timestamp
     let buffer = frame.capturedImage
