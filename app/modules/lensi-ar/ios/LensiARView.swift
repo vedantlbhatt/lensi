@@ -126,11 +126,12 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// EdgeTAM's answer about a frame lands 50-100 ms after it, when the phone has moved on: each is
   /// brought on through the frames since by the picture's own pixels (LiveFlow.bend, as 0.5x brings
   /// them on: FlatFollower) and laid from where the phone is then, rather than from where it was,
-  /// which at a depth that's only a guess lands off the thing by the phone's step in between.
-  /// Off: going round a table it helped (tools/walk's edgenow@far, J 71.2% -> 75.8%), but on nine
-  /// walk-arounds it was no better (79.0% against 79.4%; a sofa 88.4% -> 82.8%, another 76.6% ->
-  /// 80.2%), nor with the splice (edgespn@far, 82.6% against 82.1%).
-  static let bringsForward = false
+  /// which at a depth that's only a guess lands off the thing by the phone's step in between. On its
+  /// own it was mixed (tools/walk's edgenow@far: going round a table J 71.2% -> 75.8%, nine
+  /// walk-arounds 79.4% -> 79.0%); with the rest of what the app does now (nowbf@far against now@far)
+  /// it was as good or better on all nine walk-arounds (84.1% -> 84.3%) and steadier (slip 3.4 ->
+  /// 3.2 px, lurch 4.0 -> 3.7), and going round a table 80.3% -> 80.8%.
+  static let bringsForward = true
   /// Taps pin things in space only in live mode; otherwise a tap on the camera does nothing
   /// (things are picked and pinned on the strip: `scrubStart`).
   var livePins = false
