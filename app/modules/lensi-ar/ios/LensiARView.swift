@@ -108,8 +108,10 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// 84.4%, slip the same (tools/walk's edgespc@far).
   static let flowWhileWalking = true
   /// At 0.5x, while the phone turns (over 0.3 radians a second, by the gyro) EdgeTAM looks up to 30
-  /// times a second rather than 20, as at 1x while the phone moves (`looksWhileMoving`).
-  static let wideLooksWhileTurning = false
+  /// times a second rather than 20, as at 1x while the phone moves (`looksWhileMoving`). The bottle
+  /// clip played as a phone whose answers take 30 ms, looking at every frame against 20 a second:
+  /// IoU 0.969 -> 0.973, shake 3.0 -> 2.7 px (tools/edgetrack, EDGETRACK_GAP_MS).
+  static let wideLooksWhileTurning = true
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
