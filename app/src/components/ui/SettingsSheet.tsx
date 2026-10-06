@@ -112,11 +112,18 @@ export function SettingsSheet({ pen, onClose }: { pen: string; onClose: () => vo
             <View style={styles.status}>
               <StatusLine label="Apple Intelligence" ok={apple?.available ?? null} detail={apple ? (apple.available ? (apple.images ? 'Ready · sees images' : 'Ready · text only') : apple.reason) : 'Checking…'} pen={pen} />
               <StatusLine label="Lensi server" ok={cloudOk} detail={cloudOk === null ? 'Checking…' : cloudOk ? serverURL() : `Not reachable at ${serverURL()}`} pen={pen} />
-              {/* EdgeTAM's real speed here, once something's pinned: how often it looks, how late each answer is. */}
+              {/* EdgeTAM's real speed here, once something's pinned: how often it looks, how late each answer is,
+                  and whether the phone is hot enough that it looks less often (LensiARView.segmentLive). */}
               <StatusLine
                 label="Following"
                 ok={live ? live.looksPerSecond >= 10 && live.latencyMs <= 120 : null}
-                detail={live ? `${live.looksPerSecond.toFixed(1)} a second · ${Math.round(live.latencyMs)} ms late` : 'Pin something to measure'}
+                detail={
+                  live
+                    ? `${live.looksPerSecond.toFixed(1)} a second · ${Math.round(live.latencyMs)} ms late${
+                        live.thermal >= 2 ? ' · hot, slowed down' : live.thermal === 1 ? ' · warm' : ''
+                      }`
+                    : 'Pin something to measure'
+                }
                 pen={pen}
               />
             </View>
