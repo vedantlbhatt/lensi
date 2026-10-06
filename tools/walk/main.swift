@@ -907,8 +907,9 @@ let flatRuns: [FlatRun] = EdgeTAMTracker.Models.shared == nil ? [] : [
   FlatRun("flat-flow", flow: true, gyro: true),
   // EdgeTAM looking at every frame, answering a frame later.
   FlatRun("flat-every", flow: true, gyro: true, everyFrame: true),
-  // That, each answer glided into what was shown while the phone is still.
-  FlatRun("flat-glide", flow: true, gyro: true, everyFrame: true, glidesWhileStill: true),
+  // Settled, can't say: each answer glided into what was shown while the phone is still (flat-glide,
+  // glidesWhileStill: true) came out the same as flat-every on all nine, as the phone is never still
+  // for long on a walk-around.
   // Settled, no different from flat-flow in two runs: the gyro while turning fast (flat-fast), the
   // gyro telling the flow where to look (flat-guide).
 ]
