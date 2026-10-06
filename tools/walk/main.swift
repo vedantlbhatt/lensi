@@ -686,6 +686,8 @@ final class Run {
   /// How lightly, rather than OutlineMath.Smoothing.light (edgespx@far: .minimal; edgespz@far: not
   /// blended at all, each cut taken as it is while the phone moves).
   let movingSmoothing: OutlineMath.Smoothing?
+  /// What's drawn of a still thing eases onto where it is this quickly while the phone moves (nowe@far).
+  let movingEase: Float?
   /// EdgeTAM looks at every frame and answers one frame later (30 times a second, as the phone does
   /// when it keeps up: LensiARView.segmentLive's gap), rather than every other frame two frames later.
   let everyFrame: Bool
@@ -723,8 +725,9 @@ final class Run {
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
        faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false,
        bringsForward: Bool = false, rescues: Bool = false, movingSmoothing: OutlineMath.Smoothing? = nil, everyFrame: Bool = false,
-       flowWhileWalking: Bool = false, spliceShare: CGFloat = 0) {
+       flowWhileWalking: Bool = false, spliceShare: CGFloat = 0, movingEase: Float? = nil) {
     self.label = label
+    self.movingEase = movingEase
     self.spliceShare = spliceShare
     self.flowWhileWalking = flowWhileWalking
     self.everyFrame = everyFrame
@@ -769,19 +772,19 @@ let runs = [
   // (as the phone does while it moves, up to 30 times a second).
   Run("edge@true", start: 1, noflow: true, sight: true, edge: true),
   Run("edge@far", start: 1.4, noflow: true, sight: true, edge: true),
-  Run("now@true", start: 1, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true,
-      flowWhileWalking: true),
-  Run("now@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true,
-      flowWhileWalking: true),
+  Run("now@true", start: 1, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true,
+      everyFrame: true, flowWhileWalking: true),
+  Run("now@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true,
+      everyFrame: true, flowWhileWalking: true),
+  // Now, with what's drawn of a still thing eased over 30 ms while the phone moves, not 50.
+  Run("nowe@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true,
+      everyFrame: true, flowWhileWalking: true, movingEase: 0.03),
   // The steps on the way: spliced (edgesp@far), and blended lightly while the phone moves (edgespm@far).
   Run("edgesp@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true),
   Run("edgespm@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true),
-  // Now, with each answer brought on to the newest frame by the flow (LensiARView.bringsForward).
-  Run("nowbf@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, bringsForward: true,
-      everyFrame: true, flowWhileWalking: true),
-  // Now, spliced only where EdgeTAM's cut covers at least 60% of where the thing should be.
-  Run("nowsa@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true,
-      flowWhileWalking: true, spliceShare: 0.6),
+  // Settled: brought on to the newest frame (nowbf@far, now part of now@*: 84.4% -> 84.7%, steadier);
+  // spliced only where EdgeTAM's cut covers 60% of where the thing should be (nowsa@far, spliceShare:
+  // 0.6), no different.
   // Settled in one run: after three refusals in a row the next cut taken however it fits (edgespr@far,
   // rescues: true) changed nothing spliced, which refuses none; blended more lightly still while the
   // phone moves (edgespx@far, movingSmoothing: .minimal) or not at all (edgespz@far) added 0.1-0.2
@@ -947,6 +950,8 @@ for (k, f) in window.enumerated() {
   }
   lastPose = (transform: camera.transform, t: t)
   let fast = phoneTurn > LiveShape.fastTurn || phoneMove > LiveShape.fastMove
+  /// The phone going round (LensiARView.phoneMoving).
+  let moving = phoneTurn > 0.3 || phoneMove > 0.1
   if fast { fastFrames += 1 }
 
   // What it should look like from here.
@@ -958,6 +963,16 @@ for (k, f) in window.enumerated() {
   }
   reference.append(truth)
   let truthBits = raster(truth, w: w, h: h)
+  // Going round a thing, its pin has to be the thing: a cut that covers a sliver of its box (a chair
+  // seen through a glass table top: the bit of its back behind the glass) is followed faithfully by
+  // every run and says nothing about how.
+  if k == 0, orbitMode, let hull = picture(thing, camera) {
+    let covered = LiveTracker.area(truth) / max(LiveTracker.area(LiveTracker.clipped(hull)), 1e-9)
+    guard covered >= 0.25 else {
+      print(String(format: "%@: the pin covers only %.0f%% of the %@'s box: left out", name, covered * 100, thing.label))
+      exit(1)
+    }
+  }
   let boxBits = picture(thing, camera).map { raster($0, w: w, h: h) }
   boxMiddles.append(camera.upright([thing.centre])?.first.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) })
   let trueAhead = -simd_mul(camera.transform.inverse, simd_float4(thing.centre, 1)).z
@@ -1199,6 +1214,7 @@ for (k, f) in window.enumerated() {
     if var shape = run.shape {
       // Turned to face the camera where it is now (LensiARView.layoutLive).
       shape.face(camera.position)
+      if let e = run.movingEase { shape.stillEase = moving ? e : run.stillEase ?? LiveShape.easeStill }
       let drawn = run.once ? shape.world : shape.draw(at: t)
       run.shape = shape
       outline = camera.upright(drawn) ?? []
