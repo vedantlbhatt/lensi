@@ -41,6 +41,12 @@ final class FlatFollower {
   /// The flow starts looking where `turn` says each point went (LiveFlow's prior), rather than
   /// where it was: a fast turn is a long way for it to find on its own.
   var guided = false
+  /// A thing that runs off the picture is outlined only up to its edge; moved with the thing, that
+  /// side would come away from the edge and leave the rest of it outside the outline. Its points
+  /// on the picture's edge stay on it, sliding along it with the thing (`pinned`).
+  var pinsEdges = false
+  /// How near the picture's edge (0…1) a point counts as on it.
+  static let edge: CGFloat = 0.006
 
   private(set) var things: [String: Thing] = [:]
   private var frames: [(t: CFTimeInterval, frame: LiveFlow.Frame?)] = []
@@ -181,10 +187,25 @@ final class FlatFollower {
       if guided, let turn { predict = { turn($0, a.t, b.t) } }
       if let moved = bends ? LiveFlow.bend(outline, from: fa, to: fb, bending, predict: predict)
         : LiveFlow.carry(outline, from: fa, to: fb, predict: predict) {
-        return moved
+        return pinsEdges ? FlatFollower.pinned(moved, was: outline) : moved
       }
     }
-    return turn?(outline, a.t, b.t) ?? outline
+    let turned = turn?(outline, a.t, b.t) ?? outline
+    return pinsEdges ? FlatFollower.pinned(turned, was: outline) : turned
+  }
+
+  /// `moved` (the outline `was`, moved on) with the points that were on the picture's edge put back
+  /// on it, and none past it.
+  static func pinned(_ moved: [CGPoint], was: [CGPoint]) -> [CGPoint] {
+    guard moved.count == was.count else { return moved }
+    return zip(moved, was).map { m, w in
+      var p = m
+      if w.x <= edge { p.x = w.x } else if w.x >= 1 - edge { p.x = w.x }
+      if w.y <= edge { p.y = w.y } else if w.y >= 1 - edge { p.y = w.y }
+      p.x = min(max(p.x, 0), 1)
+      p.y = min(max(p.y, 0), 1)
+      return p
+    }
   }
 
   /// Frames no answer can still need: all but the newest, and those since the look still due.

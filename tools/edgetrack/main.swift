@@ -69,6 +69,7 @@ func live(latency: Double, fps: Double, bends: Bool, glides: Bool, bending: Live
   follower.bends = bends
   follower.glides = glides
   follower.bending = bending
+  follower.pinsEdges = ProcessInfo.processInfo.environment["EDGETRACK_EDGE_PIN"] == "1"
   var out: [[String: Any]] = []
   var pending: Pending?
   var lastStart = -Double.infinity
