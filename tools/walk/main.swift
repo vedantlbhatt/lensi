@@ -66,7 +66,8 @@
 //                (.minimal); edgespz@far not blended at all while it moves; edgefast@far the app now
 //                with EdgeTAM looking at every frame, answering a frame later; edgespc@far the app now
 //                carried by the flow while the phone walks round (over LiveShape.fastMove) but doesn't
-//                turn fast; edgespg@far carried throughout, guided by ARKit's poses
+//                turn fast; edgespg@far carried throughout, guided by ARKit's poses; edgespa@far the
+//                app now spliced only where EdgeTAM's cut covers 60% of where the thing should be
 //   flat-*       0.5x on the same walk (FlatFollower, as LensiARView follows pinned things on the
 //                ultra-wide without ARKit): no world, EdgeTAM's answers on the picture at the phone's
 //                timing, moved on between them by nothing (flat-none), by how the camera turned alone
@@ -687,6 +688,10 @@ final class Run {
   /// walking round a thing at half a metre a second counts as fast, and held by ARKit at a depth
   /// that's only a guess it slides off its thing then.
   let flowWhileWalking: Bool
+  /// Spliced only when EdgeTAM's cut covers at least this much of where the thing should be on the
+  /// picture (by area); less, and it's taken as edge@far takes it (the whole outline moved onto it):
+  /// a washer whose cut was a sliver of it was lost in 16% of frames spliced, 1% moved.
+  let spliceShare: CGFloat
   /// Each cut, as it lands, brought on from the frame it was made from to the newest by the
   /// picture's own pixels (LiveFlow.bend, frame by frame, as FlatFollower brings EdgeTAM's answers
   /// at 0.5x) and laid from where the phone is now, rather than laid from where it was then: at a
@@ -713,8 +718,9 @@ final class Run {
        skipBlur: Bool = false, guided: Bool = false, stillSmoothing: OutlineMath.Smoothing? = nil, stillEase: Float? = nil,
        faces: Bool = false, sightPlane: Bool = false, splice: Bool = false, lightWhileMoving: Bool = false,
        bringsForward: Bool = false, rescues: Bool = false, movingSmoothing: OutlineMath.Smoothing? = nil, everyFrame: Bool = false,
-       flowWhileWalking: Bool = false) {
+       flowWhileWalking: Bool = false, spliceShare: CGFloat = 0) {
     self.label = label
+    self.spliceShare = spliceShare
     self.flowWhileWalking = flowWhileWalking
     self.everyFrame = everyFrame
     self.movingSmoothing = movingSmoothing
@@ -770,6 +776,8 @@ let runs = [
   // carried throughout, the flow starting where ARKit says the outline went (LiveShape.guided).
   Run("edgespc@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, flowWhileWalking: true),
   Run("edgespg@far", start: 1.4, noflow: true, sight: true, edge: true, guided: true, splice: true, lightWhileMoving: true),
+  // The app now, spliced only where EdgeTAM's cut covers at least 60% of where the thing should be.
+  Run("edgespa@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, spliceShare: 0.6),
   // The app now (spliced, lightly while the phone moves) with EdgeTAM looking at every frame.
   Run("edgefast@far", start: 1.4, noflow: true, sight: true, edge: true, splice: true, lightWhileMoving: true, everyFrame: true),
   // Spliced, and while the phone moves blended in more lightly still (.minimal), or not at all.
@@ -1113,7 +1121,9 @@ for (k, f) in window.enumerated() {
           if edgeOf(seen), let predicted = predictedNow, LiveTracker.visibleFraction(predicted) < LiveTracker.wholeVisible {
             let limit: CGFloat = shape.still && shape.depthKnown ? 1.1 : 1.4
             let gate: LiveTracker.Gate = run.rescues && run.refusedInARow >= 3 ? .any : .loose
-            if let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: limit, splice: run.splice, scale: size) {
+            let share = LiveTracker.area(seen) / max(LiveTracker.area(LiveTracker.clipped(predicted)), 1e-9)
+            let splice = run.splice && share >= run.spliceShare
+            if let followed = LiveTracker.follow(cut: seen, predicted: predicted, gate: gate, scaleLimit: limit, splice: splice, scale: size) {
               ring = followed
               run.refusedInARow = 0
             } else {
