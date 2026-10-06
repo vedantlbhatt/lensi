@@ -112,6 +112,9 @@ final class LensiARView: ExpoView, ARSessionDelegate {
   /// clip played as a phone whose answers take 30 ms, looking at every frame against 20 a second:
   /// IoU 0.969 -> 0.973, shake 3.0 -> 2.7 px (tools/edgetrack, EDGETRACK_GAP_MS).
   static let wideLooksWhileTurning = true
+  /// What's drawn of a still thing eases onto where it is over 30 ms while the phone moves rather
+  /// than 50 (tools/walk's nowe@far).
+  static let easeWhileMoving = false
   /// Which pinned things SAM re-cuts next (one or two a frame, in turns).
   private var pinTurn = 0
   /// Between SAM's cuts, followed outlines ride their own pixels (`flowLive`).
@@ -1044,6 +1047,8 @@ final class LensiARView: ExpoView, ARSessionDelegate {
       }
       // Turned to face the phone where it is now, as the thing's silhouette does (LiveShape.faces).
       shape.face(eye.position)
+      // A still thing's outline eases on quicker while the phone moves (`easeWhileMoving`).
+      if Self.easeWhileMoving { shape.stillEase = phoneMoving ? 0.03 : LiveShape.easeStill }
       let drawn = shape.draw(at: now)
       liveShapes[key] = shape
       guard let box = screenBounds(drawn, toCamera: eye.toCamera) else {
