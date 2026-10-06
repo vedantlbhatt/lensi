@@ -1,0 +1,199 @@
+{
+ "id": "08c609c275a1593d8c61c06e511012d11978a7e2",
+ "runtime": "98eb13221c9b",
+ "createdAt": "2026-10-06T14:07:56Z",
+ "message": "tools/walk: flat-glide settled, no different on walk-arounds where the phone is never still for long",
+ "base": "https://raw.githubusercontent.com/vedantlbhatt/lensi/ota/ios/98eb13221c9b/08c609c275a1593d8c61c06e511012d11978a7e2/",
+ "bundle": {
+  "path": "main.jsbundle",
+  "md5": "3423bba51738f857a9757b7e88565cbe",
+  "bytes": 3920039
+ },
+ "assets": [
+  {
+   "path": "assets/assets/demo/board.jpg",
+   "md5": "a85f7d7aae3e58a8860e4a5bd8248a5b",
+   "bytes": 179210
+  },
+  {
+   "path": "assets/assets/demo/cars.jpg",
+   "md5": "e468785a2d7f122ddc635976cec5d50d",
+   "bytes": 132702
+  },
+  {
+   "path": "assets/assets/demo/fruits.jpg",
+   "md5": "b3d5aa2715384a3b7be2a01e9c4fc674",
+   "bytes": 91281
+  },
+  {
+   "path": "assets/assets/demo/groceries.jpg",
+   "md5": "bdb99c6327a4cca18c76f1d5a421785b",
+   "bytes": 71397
+  },
+  {
+   "path": "assets/assets/demo/truck.jpg",
+   "md5": "e4dd21fc69fa41a3fe68cc6353ce498f",
+   "bytes": 144707
+  },
+  {
+   "path": "assets/assets/demo/video/aisle.jpg",
+   "md5": "85df3f1a3d1eb193c45b65f3ad95bc03",
+   "bytes": 61293
+  },
+  {
+   "path": "assets/assets/demo/video/aisle.mp4",
+   "md5": "be9a6dc8f2dc17651e15ce573256a25c",
+   "bytes": 623631
+  },
+  {
+   "path": "assets/assets/demo/video/bottles.jpg",
+   "md5": "02bb1281c9805010ab81ab16d5844a2b",
+   "bytes": 8705
+  },
+  {
+   "path": "assets/assets/demo/video/bottles.mp4",
+   "md5": "cdc6ed0dbfba0c1cc4dc578a57a28c32",
+   "bytes": 177324
+  },
+  {
+   "path": "assets/assets/demo/video/shaker.jpg",
+   "md5": "c46373465663b8c4d279e264dedf1a3e",
+   "bytes": 29342
+  },
+  {
+   "path": "assets/assets/demo/video/shaker.mp4",
+   "md5": "e53b45852e47e1079aa1d93b19f471ce",
+   "bytes": 1455918
+  },
+  {
+   "path": "assets/assets/demo/video/workers.jpg",
+   "md5": "fb51d3dc2b22baf334d8f27c73484417",
+   "bytes": 29645
+  },
+  {
+   "path": "assets/assets/demo/video/workers.mp4",
+   "md5": "1209e9b85dd9a08d0f5bec2c670310b9",
+   "bytes": 426729
+  },
+  {
+   "path": "assets/assets/grain.png",
+   "md5": "34c092cf367e2f8eb79b117854ffcb91",
+   "bytes": 42087
+  },
+  {
+   "path": "assets/node_modules/@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf",
+   "md5": "51b6ad87261f18b6433ec52871ddfabc",
+   "bytes": 342408
+  },
+  {
+   "path": "assets/node_modules/@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf",
+   "md5": "a5f35888d2da465de352e0dcfaf33324",
+   "bytes": 343632
+  },
+  {
+   "path": "assets/node_modules/@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf",
+   "md5": "6e237de4f1f413afa2fcc45c77ac343a",
+   "bytes": 344072
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/arrow_down.png",
+   "md5": "017bc6ba3fc25503e5eb5e53826d48a8",
+   "bytes": 9456
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/error.png",
+   "md5": "d1ea1496f9057eb392d5bbf3732a61b7",
+   "bytes": 469
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/file.png",
+   "md5": "19eeb73b9593a38f8e9f418337fc7d10",
+   "bytes": 138
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/forward.png",
+   "md5": "d8b800c443b8972542883e0b9de2bdc6",
+   "bytes": 188
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/pkg.png",
+   "md5": "ab19f4cbc543357183a20571f68380a3",
+   "bytes": 364
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/back-icon-mask.png",
+   "md5": "0a328cd9c1afd0afe8e3b1ec5165b1b4",
+   "bytes": 653
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/back-icon.png",
+   "md5": "7d40544b395c5949f4646f5e150fe020",
+   "bytes": 290
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/back-icon@2x.png",
+   "md5": "a132ecc4ba5c1517ff83c0fb321bc7fc",
+   "bytes": 405
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/back-icon@3x.png",
+   "md5": "0ea69b5077e7c4696db85dbcba75b0e1",
+   "bytes": 761
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/clear-icon.png",
+   "md5": "61ca7e64b7d605716c57706cef640b9a",
+   "bytes": 220
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/clear-icon@2x.png",
+   "md5": "aff2c65b39a296d4f7e96d0f58169170",
+   "bytes": 334
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/clear-icon@3x.png",
+   "md5": "d8e7601e3df962f83c62371ac14964d8",
+   "bytes": 502
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/close-icon.png",
+   "md5": "d84e297c3b3e49a614248143d53e40ca",
+   "bytes": 141
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/close-icon@2x.png",
+   "md5": "1190ab078c57159f4245a328118fcd9a",
+   "bytes": 201
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/close-icon@3x.png",
+   "md5": "78c625386b4d0690b421eb0fc78f7b9c",
+   "bytes": 266
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/search-icon.png",
+   "md5": "dad2fa9f4394a630f0f9a0d6dabd44bc",
+   "bytes": 317
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/search-icon@2x.png",
+   "md5": "f3a81967828232c893d547162e922764",
+   "bytes": 589
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/react-navigation/elements/search-icon@3x.png",
+   "md5": "d62ddc38b69aff346c20a28774933d6a",
+   "bytes": 839
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/sitemap.png",
+   "md5": "412dd9275b6b48ad28f5e3d81bb1f626",
+   "bytes": 465
+  },
+  {
+   "path": "assets/node_modules/expo-router/assets/unmatched.png",
+   "md5": "20e71bdf79e3a97bf55fd9e164041578",
+   "bytes": 4752
+  }
+ ]
+}
